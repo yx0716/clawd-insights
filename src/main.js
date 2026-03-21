@@ -3,6 +3,8 @@ const http = require("http");
 const path = require("path");
 const fs = require("fs");
 
+const isMac = process.platform === "darwin";
+
 // ── Window size presets ──
 const SIZES = {
   S: { width: 200, height: 200 },
@@ -22,6 +24,8 @@ const i18n = {
     sleep: "Sleep (Do Not Disturb)",
     wake: "Wake Clawd",
     startOnLogin: "Start on Login",
+    showInMenuBar: "Show in Menu Bar",
+    showInDock: "Show in Dock",
     language: "Language",
     quit: "Quit",
   },
@@ -35,6 +39,8 @@ const i18n = {
     sleep: "休眠（免打扰）",
     wake: "唤醒 Clawd",
     startOnLogin: "开机自启",
+    showInMenuBar: "在菜单栏显示",
+    showInDock: "在 Dock 显示",
     language: "语言",
     quit: "退出",
   },
@@ -67,6 +73,7 @@ function savePrefs() {
   const data = {
     x, y, size: currentSize,
     miniMode, preMiniX, preMiniY, lang,
+    showTray, showDock,
   };
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
@@ -174,6 +181,8 @@ let currentSize = "S";
 let contextMenu;
 let doNotDisturb = false;
 let isQuitting = false;
+let showTray = true;
+let showDock = true;
 
 function sendToRenderer(channel, ...args) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
@@ -799,15 +808,56 @@ function startHttpServer() {
 
 // ── System tray ──
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, "../assets/tray-icon.png")).resize({ width: 32, height: 32 });
+  if (tray) return;
+  let icon;
+  if (isMac) {
+    icon = nativeImage.createFromPath(path.join(__dirname, "../assets/tray-iconTemplate.png"));
+    icon.setTemplateImage(true);
+  } else {
+    icon = nativeImage.createFromPath(path.join(__dirname, "../assets/tray-icon.png")).resize({ width: 32, height: 32 });
+  }
   tray = new Tray(icon);
   tray.setToolTip("Clawd Desktop Pet");
   buildTrayMenu();
 }
 
+function destroyTray() {
+  if (!tray) return;
+  tray.destroy();
+  tray = null;
+}
+
+function setShowTray(val) {
+  // Prevent disabling both Menu Bar and Dock — app would become unquittable
+  if (!val && !showDock) return;
+  showTray = val;
+  if (showTray) {
+    createTray();
+  } else {
+    destroyTray();
+  }
+  buildContextMenu();
+  savePrefs();
+}
+
+function setShowDock(val) {
+  if (!isMac || !app.dock) return;
+  // Prevent disabling both Dock and Menu Bar — app would become unquittable
+  if (!val && !showTray) return;
+  showDock = val;
+  if (showDock) {
+    app.dock.show();
+  } else {
+    app.dock.hide();
+  }
+  buildTrayMenu();
+  buildContextMenu();
+  savePrefs();
+}
+
 function buildTrayMenu() {
   if (!tray) return;
-  const menu = Menu.buildFromTemplate([
+  const items = [
     {
       label: doNotDisturb ? t("wake") : t("sleep"),
       click: () => doNotDisturb ? disableDoNotDisturb() : enableDoNotDisturb(),
@@ -821,6 +871,28 @@ function buildTrayMenu() {
         app.setLoginItemSettings({ openAtLogin: menuItem.checked });
       },
     },
+  ];
+  // macOS: Dock and Menu Bar visibility toggles
+  if (isMac) {
+    items.push(
+      { type: "separator" },
+      {
+        label: t("showInMenuBar"),
+        type: "checkbox",
+        checked: showTray,
+        enabled: showTray ? showDock : true, // can't uncheck if Dock is already hidden
+        click: (menuItem) => setShowTray(menuItem.checked),
+      },
+      {
+        label: t("showInDock"),
+        type: "checkbox",
+        checked: showDock,
+        enabled: showDock ? showTray : true, // can't uncheck if Menu Bar is already hidden
+        click: (menuItem) => setShowDock(menuItem.checked),
+      },
+    );
+  }
+  items.push(
     { type: "separator" },
     {
       label: t("language"),
@@ -831,8 +903,8 @@ function buildTrayMenu() {
     },
     { type: "separator" },
     { label: t("quit"), click: () => requestAppQuit() },
-  ]);
-  tray.setContextMenu(menu);
+  );
+  tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 
 // ── Window creation ──
@@ -909,6 +981,15 @@ function createWindow() {
   const prefs = loadPrefs();
   if (prefs && SIZES[prefs.size]) currentSize = prefs.size;
   if (prefs && i18n[prefs.lang]) lang = prefs.lang;
+  // macOS: restore tray/dock visibility from prefs
+  if (isMac && prefs) {
+    if (typeof prefs.showTray === "boolean") showTray = prefs.showTray;
+    if (typeof prefs.showDock === "boolean") showDock = prefs.showDock;
+  }
+  // macOS: apply dock visibility (default hidden)
+  if (isMac && app.dock) {
+    if (showDock) app.dock.show(); else app.dock.hide();
+  }
   const size = SIZES[currentSize];
 
   // Restore saved position, or default to bottom-right of primary display
@@ -950,11 +1031,16 @@ function createWindow() {
   });
 
   win.setFocusable(false);
+  // macOS: show on all Spaces (virtual desktops) and use floating window level
+  if (isMac) {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+    win.setAlwaysOnTop(true, "floating");
+  }
   win.loadFile(path.join(__dirname, "index.html"));
   win.showInactive();
 
   buildContextMenu();
-  createTray();
+  if (!isMac || showTray) createTray();
   ensureContextMenuOwner();
 
   ipcMain.on("show-context-menu", showPetContextMenu);
@@ -1035,11 +1121,14 @@ function createWindow() {
   // Use moveTop() instead of setAlwaysOnTop(false→true) to avoid a brief
   // gap where the window loses TOPMOST status — that gap lets other windows
   // slip above Clawd during window switches.
-  moveTopTimer = setInterval(() => {
-    if (win && !win.isDestroyed()) {
-      win.moveTop();
-    }
-  }, 30000); // every 30s
+  // Not needed on macOS — the window manager maintains z-order correctly.
+  if (!isMac) {
+    moveTopTimer = setInterval(() => {
+      if (win && !win.isDestroyed()) {
+        win.moveTop();
+      }
+    }, 30000); // every 30s
+  }
 
   // ── Display change: re-clamp window to prevent off-screen ──
   screen.on("display-metrics-changed", () => {
@@ -1327,6 +1416,28 @@ function buildContextMenu() {
       label: doNotDisturb ? t("wake") : t("sleep"),
       click: () => doNotDisturb ? disableDoNotDisturb() : enableDoNotDisturb(),
     },
+  ];
+  // macOS: Dock and Menu Bar visibility toggles
+  if (isMac) {
+    template.push(
+      { type: "separator" },
+      {
+        label: t("showInMenuBar"),
+        type: "checkbox",
+        checked: showTray,
+        enabled: showTray ? showDock : true, // can't uncheck if Dock is already hidden
+        click: (menuItem) => setShowTray(menuItem.checked),
+      },
+      {
+        label: t("showInDock"),
+        type: "checkbox",
+        checked: showDock,
+        enabled: showDock ? showTray : true, // can't uncheck if Menu Bar is already hidden
+        click: (menuItem) => setShowDock(menuItem.checked),
+      },
+    );
+  }
+  template.push(
     { type: "separator" },
     {
       label: t("language"),
@@ -1337,7 +1448,7 @@ function buildContextMenu() {
     },
     { type: "separator" },
     { label: t("quit"), click: () => requestAppQuit() },
-  ];
+  );
   contextMenu = Menu.buildFromTemplate(template);
 }
 
@@ -1376,6 +1487,14 @@ if (!gotTheLock) {
   app.on("second-instance", () => {
     if (win) win.showInactive();
   });
+
+  // macOS: hide dock icon early if user previously disabled it
+  if (isMac && app.dock) {
+    const prefs = loadPrefs();
+    if (prefs && prefs.showDock === false) {
+      app.dock.hide();
+    }
+  }
 
   app.whenReady().then(() => {
     createWindow();

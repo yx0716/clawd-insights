@@ -6,6 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:all": "electron-builder --win --mac",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": ["clawd", "desktop-pet", "electron", "claude-code"],
@@ -15,6 +17,19 @@
   "build": {
     "appId": "com.clawd.on-desk",
     "productName": "Clawd on Desk",
+    "mac": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.entertainment",
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
     "win": {
       "icon": "assets/icon.ico",
       "signAndEditExecutable": false,
@@ -35,7 +50,7 @@
     "files": [
       "src/**/*",
       "assets/svg/**/*",
-      "assets/tray-icon.png",
+      "assets/tray-icon*.png",
       "hooks/**/*"
     ],
     "asarUnpack": [
