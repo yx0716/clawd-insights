@@ -10,7 +10,12 @@
     "build:all": "electron-builder --win --mac",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["clawd", "desktop-pet", "electron", "claude-code"],
+  "keywords": [
+    "clawd",
+    "desktop-pet",
+    "electron",
+    "claude-code"
+  ],
   "author": "rullerzhou-afk",
   "license": "MIT",
   "type": "commonjs",
@@ -22,7 +27,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.entertainment",
@@ -36,7 +44,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -61,10 +71,20 @@
         "from": "assets/icon.ico",
         "to": "icon.ico"
       }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "rullerzhou-afk",
+        "repo": "clawd-on-desk"
+      }
     ]
   },
   "devDependencies": {
     "electron": "^41.0.2",
     "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }

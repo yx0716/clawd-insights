@@ -1,7 +1,8 @@
-const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage } = require("electron");
+const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, shell } = require("electron");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
+const { autoUpdater } = require("electron-updater");
 
 const isMac = process.platform === "darwin";
 
@@ -27,6 +28,21 @@ const i18n = {
     showInMenuBar: "Show in Menu Bar",
     showInDock: "Show in Dock",
     language: "Language",
+    checkForUpdates: "Check for Updates",
+    checkingForUpdates: "Checking for Updates…",
+    updateAvailable: "Update Available",
+    updateAvailableMsg: "v{version} is available. Download and install now?",
+    updateAvailableMacMsg: "v{version} is available. Open the download page?",
+    updateNotAvailable: "You're Up to Date",
+    updateNotAvailableMsg: "Clawd v{version} is the latest version.",
+    updateDownloading: "Downloading Update…",
+    updateReady: "Update Ready",
+    updateReadyMsg: "v{version} has been downloaded. Restart now to update?",
+    updateError: "Update Error",
+    updateErrorMsg: "Failed to check for updates. Please try again later.",
+    restartNow: "Restart Now",
+    restartLater: "Later",
+    download: "Download",
     quit: "Quit",
   },
   zh: {
@@ -42,6 +58,21 @@ const i18n = {
     showInMenuBar: "在菜单栏显示",
     showInDock: "在 Dock 显示",
     language: "语言",
+    checkForUpdates: "检查更新",
+    checkingForUpdates: "正在检查更新…",
+    updateAvailable: "发现新版本",
+    updateAvailableMsg: "v{version} 已发布，是否下载并安装？",
+    updateAvailableMacMsg: "v{version} 已发布，是否打开下载页面？",
+    updateNotAvailable: "已是最新版本",
+    updateNotAvailableMsg: "Clawd v{version} 已是最新版本。",
+    updateDownloading: "正在下载更新…",
+    updateReady: "更新就绪",
+    updateReadyMsg: "v{version} 已下载完成，是否立即重启以完成更新？",
+    updateError: "更新失败",
+    updateErrorMsg: "检查更新失败，请稍后再试。",
+    restartNow: "立即重启",
+    restartLater: "稍后",
+    download: "下载",
     quit: "退出",
   },
 };
@@ -1019,6 +1050,14 @@ function buildTrayMenu() {
   items.push(
     { type: "separator" },
     {
+      label: getUpdateMenuLabel(),
+      enabled: updateStatus !== "checking" && updateStatus !== "downloading",
+      click: () => updateStatus === "ready"
+        ? autoUpdater.quitAndInstall(false, true)
+        : checkForUpdates(true),
+    },
+    { type: "separator" },
+    {
       label: t("language"),
       submenu: [
         { label: "English", type: "radio", checked: lang === "en", click: () => setLanguage("en") },
@@ -1029,6 +1068,127 @@ function buildTrayMenu() {
     { label: t("quit"), click: () => requestAppQuit() },
   );
   tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+// ── Auto-updater ──
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+let updateStatus = "idle"; // idle | checking | available | downloading | ready | error
+
+function setupAutoUpdater() {
+  autoUpdater.on("update-available", (info) => {
+    updateStatus = "available";
+    const wasManual = manualUpdateCheck;
+    manualUpdateCheck = false;
+    rebuildAllMenus();
+    // Silent check during DND/mini: skip dialog, just update menu label
+    if (!wasManual && (doNotDisturb || miniMode)) return;
+    if (isMac) {
+      // macOS: no code signing → can't auto-update, open GitHub Releases page instead
+      dialog.showMessageBox({
+        type: "info",
+        title: t("updateAvailable"),
+        message: t("updateAvailableMacMsg").replace("{version}", info.version),
+        buttons: [t("download"), t("restartLater")],
+        defaultId: 0,
+        noLink: true,
+      }).then(({ response }) => {
+        if (response === 0) {
+          shell.openExternal("https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest");
+        }
+      });
+    } else {
+      // Windows: auto-download
+      dialog.showMessageBox({
+        type: "info",
+        title: t("updateAvailable"),
+        message: t("updateAvailableMsg").replace("{version}", info.version),
+        buttons: [t("download"), t("restartLater")],
+        defaultId: 0,
+        noLink: true,
+      }).then(({ response }) => {
+        if (response === 0) {
+          updateStatus = "downloading";
+          rebuildAllMenus();
+          autoUpdater.downloadUpdate();
+        }
+      });
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    updateStatus = "idle";
+    rebuildAllMenus();
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      dialog.showMessageBox({
+        type: "info",
+        title: t("updateNotAvailable"),
+        message: t("updateNotAvailableMsg").replace("{version}", app.getVersion()),
+        noLink: true,
+      });
+    }
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    updateStatus = "ready";
+    rebuildAllMenus();
+    dialog.showMessageBox({
+      type: "info",
+      title: t("updateReady"),
+      message: t("updateReadyMsg").replace("{version}", info.version),
+      buttons: [t("restartNow"), t("restartLater")],
+      defaultId: 0,
+      noLink: true,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.quitAndInstall(false, true);
+      }
+    });
+  });
+
+  autoUpdater.on("error", () => {
+    updateStatus = "error";
+    rebuildAllMenus();
+    if (manualUpdateCheck) {
+      manualUpdateCheck = false;
+      dialog.showMessageBox({
+        type: "error",
+        title: t("updateError"),
+        message: t("updateErrorMsg"),
+        noLink: true,
+      });
+    }
+  });
+}
+
+let manualUpdateCheck = false;
+
+function checkForUpdates(manual = false) {
+  if (updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "available") return;
+  manualUpdateCheck = manual;
+  updateStatus = "checking";
+  rebuildAllMenus();
+  autoUpdater.checkForUpdates().catch(() => {
+    updateStatus = "error";
+    manualUpdateCheck = false;
+    rebuildAllMenus();
+  });
+}
+
+function getUpdateMenuLabel() {
+  switch (updateStatus) {
+    case "checking": return t("checkingForUpdates");
+    case "downloading": return t("updateDownloading");
+    case "ready": return t("updateReady");
+    default: return t("checkForUpdates");
+  }
+}
+
+function rebuildAllMenus() {
+  buildTrayMenu();
+  buildContextMenu();
 }
 
 // ── Window creation ──
@@ -1580,6 +1740,14 @@ function buildContextMenu() {
   template.push(
     { type: "separator" },
     {
+      label: getUpdateMenuLabel(),
+      enabled: updateStatus !== "checking" && updateStatus !== "downloading",
+      click: () => updateStatus === "ready"
+        ? autoUpdater.quitAndInstall(false, true)
+        : checkForUpdates(true),
+    },
+    { type: "separator" },
+    {
       label: t("language"),
       submenu: [
         { label: "English", type: "radio", checked: lang === "en", click: () => setLanguage("en") },
@@ -1647,6 +1815,10 @@ if (!gotTheLock) {
     } catch (err) {
       console.warn("Clawd: failed to auto-register hooks:", err.message);
     }
+
+    // Auto-updater: setup event handlers + silent check after 5s
+    setupAutoUpdater();
+    setTimeout(() => checkForUpdates(false), 5000);
   });
 
   app.on("before-quit", () => {
