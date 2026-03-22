@@ -2,7 +2,6 @@ const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, sh
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
-const { autoUpdater } = require("electron-updater");
 
 const isMac = process.platform === "darwin";
 
@@ -1064,13 +1063,27 @@ function buildTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 
-// ── Auto-updater ──
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
+// ── Auto-updater (lazy-loaded to avoid slowing startup) ──
+let _autoUpdater = null;
+function getAutoUpdater() {
+  if (!_autoUpdater) {
+    try {
+      _autoUpdater = require("electron-updater").autoUpdater;
+      _autoUpdater.autoDownload = false;
+      _autoUpdater.autoInstallOnAppQuit = true;
+    } catch {
+      console.warn("Clawd: electron-updater not available, auto-update disabled");
+      return null;
+    }
+  }
+  return _autoUpdater;
+}
 
 let updateStatus = "idle"; // idle | checking | available | downloading | ready | error
 
 function setupAutoUpdater() {
+  const autoUpdater = getAutoUpdater();
+  if (!autoUpdater) return;
   autoUpdater.on("update-available", (info) => {
     const wasManual = manualUpdateCheck;
     manualUpdateCheck = false;
@@ -1169,7 +1182,9 @@ function checkForUpdates(manual = false) {
   manualUpdateCheck = manual;
   updateStatus = "checking";
   rebuildAllMenus();
-  autoUpdater.checkForUpdates().then((result) => {
+  const au = getAutoUpdater();
+  if (!au) return;
+  au.checkForUpdates().then((result) => {
     // Dev mode: electron-updater resolves null without emitting events
     if (!result) {
       updateStatus = "idle";
@@ -1188,7 +1203,7 @@ function getUpdateMenuItem() {
     label: getUpdateMenuLabel(),
     enabled: updateStatus !== "checking" && updateStatus !== "downloading",
     click: () => updateStatus === "ready"
-      ? autoUpdater.quitAndInstall(false, true)
+      ? getAutoUpdater()?.quitAndInstall(false, true)
       : checkForUpdates(true),
   };
 }
