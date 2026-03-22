@@ -807,6 +807,7 @@ function initFocusHelper() {
     stdio: ["pipe", "ignore", "ignore"],
   });
   // Pre-compile the C# type (once, ~500ms, non-blocking)
+  psProc.on("error", () => { psProc = null; }); // Spawn failure (powershell.exe not found, etc.)
   psProc.stdin.on("error", () => {}); // Suppress EPIPE if process exits unexpectedly
   psProc.stdin.write(PS_FOCUS_ADDTYPE + "\n");
   psProc.on("exit", () => { psProc = null; });

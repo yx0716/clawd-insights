@@ -74,8 +74,8 @@ function getStablePid() {
   return lastGoodPid;
 }
 
-// Start resolution immediately (runs during stdin buffering, not after)
-getStablePid();
+// Pre-resolve on SessionStart (runs during stdin buffering, not after)
+if (event === "SessionStart") getStablePid();
 
 // Read stdin for session_id (Claude Code pipes JSON with session metadata)
 const chunks = [];
