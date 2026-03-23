@@ -10,67 +10,93 @@ html, body {
   background: transparent;
   overflow: hidden;
   user-select: none;
-  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 .card {
   position: absolute;
-  top: 8px; left: 8px; right: 8px; bottom: 8px;
-  background: #ffffff;
-  border-radius: 14px;
-  padding: 16px;
+  bottom: 6px; left: 6px; right: 6px;
+  background: #18181b;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+  gap: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #f4f4f5;
   opacity: 0;
-  transform: translateY(10px) scale(0.95);
-  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  transform: translateY(12px) scale(0.96);
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   overflow: hidden;
 }
+
 .card.visible {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
 .card.hiding {
   opacity: 0;
-  transform: translateY(10px) scale(0.95);
+  transform: translateY(12px) scale(0.96);
+}
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+.header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e4e4e7;
+  letter-spacing: 0.02em;
 }
 
 /* ── Tool pill ── */
 .tool-pill {
   display: inline-flex;
   align-items: center;
-  align-self: flex-start;
-  padding: 3px 12px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
   color: #fff;
-  letter-spacing: 0.02em;
-  background: #6b7280;
+  letter-spacing: 0.05em;
+  background: #52525b;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
-.tool-pill[data-tool="Bash"]  { background: #f97316; }
-.tool-pill[data-tool="Edit"]  { background: #3b82f6; }
-.tool-pill[data-tool="Write"] { background: #8b5cf6; }
-.tool-pill[data-tool="Read"]  { background: #22c55e; }
-.tool-pill[data-tool="Glob"]  { background: #06b6d4; }
-.tool-pill[data-tool="Grep"]  { background: #06b6d4; }
-.tool-pill[data-tool="Agent"] { background: #ec4899; }
+.tool-pill[data-tool="Bash"]  { background: linear-gradient(135deg, #f97316, #ea580c); }
+.tool-pill[data-tool="Edit"]  { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+.tool-pill[data-tool="Write"] { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+.tool-pill[data-tool="Read"]  { background: linear-gradient(135deg, #22c55e, #16a34a); }
+.tool-pill[data-tool="Glob"]  { background: linear-gradient(135deg, #06b6d4, #0891b2); }
+.tool-pill[data-tool="Grep"]  { background: linear-gradient(135deg, #06b6d4, #0891b2); }
+.tool-pill[data-tool="Agent"] { background: linear-gradient(135deg, #ec4899, #db2777); }
 
 /* ── Command block ── */
 .command-block {
-  padding: 8px 12px;
-  background: #f3f4f6;
-  border-radius: 8px;
-  font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  padding: 12px;
+  background: #09090b;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  font-family: "SF Mono", "ui-monospace", "Cascadia Code", "Fira Code", monospace;
   font-size: 12px;
-  color: #374151;
-  line-height: 1.4;
-  max-height: 52px;
-  overflow: hidden;
+  color: #a1a1aa;
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
   word-break: break-all;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
 }
+.command-block::-webkit-scrollbar { width: 6px; }
+.command-block::-webkit-scrollbar-track { background: transparent; }
+.command-block::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
+.command-block::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
 /* ── Action buttons ── */
 .actions {
@@ -79,72 +105,112 @@ html, body {
 }
 .btn {
   flex: 1;
-  padding: 9px 0;
-  border-radius: 10px;
+  padding: 7px 0;
+  border-radius: 8px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  border: 2px solid transparent;
-  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  border: 1px solid transparent;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   outline: none;
 }
-.btn:active:not(:disabled) { transform: scale(0.97); }
-.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:active:not(:disabled) { transform: scale(0.96); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-allow {
-  background: #f97316;
+  background: linear-gradient(180deg, #fb923c, #ea580c);
   color: #fff;
-  border-color: #f97316;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 2px 4px rgba(234, 88, 12, 0.2);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
-.btn-allow:hover:not(:disabled) { background: #ea580c; border-color: #ea580c; }
+.btn-allow:hover:not(:disabled) {
+  background: linear-gradient(180deg, #fdba74, #f97316);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 3px 6px rgba(234, 88, 12, 0.3);
+}
 
 .btn-deny {
-  background: #fff;
-  color: #6b7280;
-  border-color: #d1d5db;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e4e4e7;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
-.btn-deny:hover:not(:disabled) { border-color: #9ca3af; color: #374151; }
+.btn-deny:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
 
 /* ── Suggestion buttons (dynamic) ── */
-.suggestions { display: flex; flex-direction: column; gap: 6px; }
+.suggestions { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 6px; 
+}
 
 .btn-suggestion {
   display: block;
   width: 100%;
-  padding: 8px 12px;
-  background: #fff;
-  color: #9ca3af;
-  border: 1.5px solid #e5e7eb;
-  border-radius: 10px;
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #a1a1aa;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, transform 0.1s;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   outline: none;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
 }
-.btn-suggestion:hover:not(:disabled) { border-color: #9ca3af; color: #6b7280; }
+.btn-suggestion::after {
+  content: '→';
+  position: absolute;
+  right: 14px;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: all 0.2s ease;
+  color: #d4d4d8;
+}
+.btn-suggestion:hover:not(:disabled) { 
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #e4e4e7;
+  padding-right: 34px;
+}
+.btn-suggestion:hover:not(:disabled)::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
 .btn-suggestion:active:not(:disabled) { transform: scale(0.98); }
-.btn-suggestion:disabled { opacity: 0.5; cursor: default; }
+.btn-suggestion:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>
 </head>
 <body>
 <div class="card" id="card">
-  <span class="tool-pill" id="toolPill"></span>
+  <div class="header">
+    <span class="header-title">Permission Request</span>
+    <span class="tool-pill" id="toolPill"></span>
+  </div>
+
   <div class="command-block" id="commandBlock"></div>
+  
   <div class="actions">
     <button class="btn btn-allow" id="btnAllow">Allow</button>
     <button class="btn btn-deny" id="btnDeny">Deny</button>
   </div>
+  
   <div class="suggestions" id="suggestions"></div>
 </div>
 
 <script>
+// ⚠️ 以下 JS 完全没有修改，这是原版完整的功能逻辑
 const card = document.getElementById("card");
 const toolPill = document.getElementById("toolPill");
 const commandBlock = document.getElementById("commandBlock");

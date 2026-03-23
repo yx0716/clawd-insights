@@ -1156,7 +1156,7 @@ function stopTopmostWatchdog() {
 
 function getBubblePosition() {
   const bw = 340, bh = 260;
-  const margin = 16;
+  const margin = 4;
 
   // Fixed position: bottom-left corner of the pet's display
   const petBounds = win.getBounds();
@@ -1164,7 +1164,7 @@ function getBubblePosition() {
   const cy = petBounds.y + petBounds.height / 2;
   const wa = getNearestWorkArea(cx, cy);
 
-  const x = wa.x + margin;
+  const x = wa.x + wa.width - bw - margin;
   const y = wa.y + wa.height - bh - margin;
 
   return { x, y, width: bw, height: bh };
