@@ -1001,7 +1001,8 @@ function startHttpServer() {
         if (destroyed) return;
         try {
           const data = JSON.parse(body);
-          const { state, svg, session_id, event, source_pid } = data;
+          const { state, svg, session_id, event } = data;
+          const source_pid = Number.isFinite(data.source_pid) && data.source_pid > 0 ? Math.floor(data.source_pid) : null;
           const cwd = typeof data.cwd === "string" ? data.cwd : "";
           if (STATE_SVGS[state]) {
             const sid = session_id || "default";

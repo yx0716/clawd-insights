@@ -38,11 +38,11 @@ const TERMINAL_NAMES_WIN = new Set([
   "windowsterminal.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
   "code.exe", "alacritty.exe", "wezterm-gui.exe", "mintty.exe",
   "conemu64.exe", "conemu.exe", "hyper.exe", "tabby.exe",
-  "antigravity.exe", "warp.exe", "iterm.exe",
+  "antigravity.exe", "warp.exe", "iterm.exe", "ghostty.exe",
 ]);
 const TERMINAL_NAMES_MAC = new Set([
   "terminal", "iterm2", "alacritty", "wezterm-gui", "kitty",
-  "hyper", "tabby", "warp",
+  "hyper", "tabby", "warp", "ghostty",
 ]);
 
 const SYSTEM_BOUNDARY_WIN = new Set(["explorer.exe", "services.exe", "winlogon.exe", "svchost.exe"]);
