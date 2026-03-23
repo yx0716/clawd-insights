@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, shell, globalShortcut } = require("electron");
+const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, shell } = require("electron");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
@@ -655,24 +655,26 @@ function wakeFromDoze() {
 // ── Session management ──
 const ONESHOT_STATES = new Set(["attention", "error", "sweeping", "notification", "carrying"]);
 
-function updateSession(sessionId, state, event, sourcePid) {
-  // Preserve existing sourcePid — only SessionStart sends it, other events reuse cached value
+function updateSession(sessionId, state, event, sourcePid, cwd) {
+  // Preserve existing sourcePid/cwd — only SessionStart sends them, other events reuse cached
   const existing = sessions.get(sessionId);
   const srcPid = sourcePid || (existing && existing.sourcePid) || null;
+  const srcCwd = cwd || (existing && existing.cwd) || "";
 
   if (event === "SessionEnd") {
     sessions.delete(sessionId);
   } else if (state === "attention" || state === "notification" || SLEEP_SEQUENCE.has(state)) {
     // Stop/notification/sleep: session goes idle — if work continues, new hooks will re-set
-    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid });
+    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
   } else if (ONESHOT_STATES.has(state)) {
     // Other oneshots (error/sweeping/notification/carrying):
     // preserve session's previous state so auto-return resolves correctly
     if (existing) {
       existing.updatedAt = Date.now();
       if (sourcePid) existing.sourcePid = sourcePid;
+      if (cwd) existing.cwd = cwd;
     } else {
-      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid });
+      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
     }
   } else {
     // Preserve juggling: subagent's own tool use (PreToolUse/PostToolUse)
@@ -680,7 +682,7 @@ function updateSession(sessionId, state, event, sourcePid) {
     if (existing && existing.state === "juggling" && state === "working" && event !== "SubagentStop") {
       existing.updatedAt = Date.now();
     } else {
-      sessions.set(sessionId, { state, updatedAt: Date.now(), sourcePid: srcPid });
+      sessions.set(sessionId, { state, updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
     }
   }
   cleanStaleSessions();
@@ -803,7 +805,7 @@ function buildSessionSubmenu() {
   // Collect sessions, sorted by priority desc then updatedAt desc
   const entries = [];
   for (const [id, s] of sessions) {
-    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid });
+    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid, cwd: s.cwd });
   }
   if (entries.length === 0) {
     return [{ label: t("noSessions"), enabled: false }];
@@ -819,11 +821,11 @@ function buildSessionSubmenu() {
   return entries.map((e) => {
     const emoji = STATE_EMOJI[e.state] || "";
     const stateText = t(STATE_LABEL_KEY[e.state] || "sessionIdle");
-    const shortId = e.id.length > 6 ? e.id.slice(0, 6) + ".." : e.id;
+    const name = e.cwd ? path.basename(e.cwd) : (e.id.length > 6 ? e.id.slice(0, 6) + ".." : e.id);
     const elapsed = formatElapsed(now - e.updatedAt);
     const hasPid = !!e.sourcePid;
     return {
-      label: `${emoji} ${shortId}  ${stateText}  ${elapsed}`,
+      label: `${emoji} ${name}  ${stateText}  ${elapsed}`,
       enabled: hasPid,
       click: hasPid ? () => focusTerminalWindow(e.sourcePid) : undefined,
     };
@@ -988,7 +990,7 @@ function startHttpServer() {
         if (destroyed) return;
         try {
           const data = JSON.parse(body);
-          const { state, svg, session_id, event, source_pid } = data;
+          const { state, svg, session_id, event, source_pid, cwd } = data;
           if (STATE_SVGS[state]) {
             const sid = session_id || "default";
             // mini-* states are internal — only allow via direct SVG override (test scripts)
@@ -1003,7 +1005,7 @@ function startHttpServer() {
               const safeSvg = path.basename(svg);
               setState(state, safeSvg);
             } else {
-              updateSession(sid, state, event, source_pid);
+              updateSession(sid, state, event, source_pid, cwd);
             }
             res.writeHead(200);
             res.end("ok");
@@ -1485,6 +1487,32 @@ function createWindow() {
     if (bestPid) focusTerminalWindow(bestPid);
   });
 
+  ipcMain.on("show-session-menu", () => {
+    if (menuOpen) return;
+    const items = buildSessionSubmenu();
+    const menu = Menu.buildFromTemplate(items);
+    const owner = ensureContextMenuOwner();
+    if (!owner) return;
+
+    const cursor = screen.getCursorScreenPoint();
+    owner.setBounds({ x: cursor.x, y: cursor.y, width: 1, height: 1 });
+    owner.show();
+    owner.focus();
+
+    menuOpen = true;
+    menu.popup({
+      window: owner,
+      callback: () => {
+        menuOpen = false;
+        if (owner && !owner.isDestroyed()) owner.hide();
+        if (win && !win.isDestroyed()) {
+          win.showInactive();
+          win.moveTop();
+        }
+      },
+    });
+  });
+
   startMainTick();
   startHttpServer();
   startStaleCleanup();
@@ -1922,18 +1950,10 @@ if (!gotTheLock) {
     // Auto-updater: setup event handlers + silent check after 5s
     setupAutoUpdater();
     setTimeout(() => checkForUpdates(false), 5000);
-
-    // Global shortcut: pop up session list for quick switching
-    globalShortcut.register("CmdOrCtrl+Shift+S", () => {
-      const items = buildSessionSubmenu();
-      const menu = Menu.buildFromTemplate(items);
-      menu.popup();
-    });
   });
 
   app.on("before-quit", () => {
     isQuitting = true;
-    globalShortcut.unregisterAll();
     savePrefs();
     if (pendingTimer) clearTimeout(pendingTimer);
     if (autoReturnTimer) clearTimeout(autoReturnTimer);

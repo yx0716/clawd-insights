@@ -76,7 +76,11 @@ document.addEventListener("pointerup", (e) => {
     const wasDrag = didDrag;
     stopDrag();
     if (!wasDrag) {
-      handleClick(e.clientX);
+      if (e.ctrlKey || e.metaKey) {
+        window.electronAPI.showSessionMenu();
+      } else {
+        handleClick(e.clientX);
+      }
     }
   }
 });

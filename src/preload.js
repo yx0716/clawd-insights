@@ -14,4 +14,5 @@ contextBridge.exposeInMainWorld("electronAPI", {
   exitMiniMode: () => ipcRenderer.send("exit-mini-mode"),
   dragEnd: () => ipcRenderer.send("drag-end"),
   focusTerminal: () => ipcRenderer.send("focus-terminal"),
+  showSessionMenu: () => ipcRenderer.send("show-session-menu"),
 });

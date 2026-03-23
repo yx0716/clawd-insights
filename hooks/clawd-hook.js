@@ -84,22 +84,25 @@ let sent = false;
 process.stdin.on("data", (c) => chunks.push(c));
 process.stdin.on("end", () => {
   let sessionId = "default";
+  let cwd = "";
   try {
     const payload = JSON.parse(Buffer.concat(chunks).toString());
     sessionId = payload.session_id || "default";
+    cwd = payload.cwd || "";
   } catch {}
-  send(sessionId);
+  send(sessionId, cwd);
 });
 
 // Safety: if stdin doesn't end in 400ms, send with default session
 // (200ms was too aggressive on slow machines / AV scanning)
-setTimeout(() => send("default"), 400);
+setTimeout(() => send("default", ""), 400);
 
-function send(sessionId) {
+function send(sessionId, cwd) {
   if (sent) return;
   sent = true;
 
   const body = { state, session_id: sessionId, event };
+  if (cwd) body.cwd = cwd;
   // Always walk to stable terminal PID — process.ppid is an ephemeral shell
   // that dies when the hook exits, so it's useless for later focus calls
   body.source_pid = getStablePid();
