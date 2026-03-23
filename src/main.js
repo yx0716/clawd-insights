@@ -1763,7 +1763,7 @@ function createWindow() {
     if (typeof behavior === "string" && behavior.startsWith("suggestion:")) {
       const idx = parseInt(behavior.split(":")[1], 10);
       const suggestion = pendingPermission.suggestions?.[idx];
-      if (!suggestion) return; // invalid index — ignore, don't auto-allow
+      if (!suggestion) { resolvePermission("deny", "Invalid suggestion index"); return; }
       // Transform suggestion to updatedPermissions format
       if (suggestion.type === "addRules") {
         pendingPermission.resolvedSuggestion = {
