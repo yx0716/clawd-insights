@@ -52,8 +52,6 @@ const i18n = {
     sessionJustNow: "just now",
     sessionMinAgo: "{n}m ago",
     sessionHrAgo: "{n}h ago",
-    permissionAllow: "\u2713 Allow",
-    permissionDeny: "\u2717 Deny",
     quit: "Quit",
   },
   zh: {
@@ -94,8 +92,6 @@ const i18n = {
     sessionJustNow: "刚刚",
     sessionMinAgo: "{n}分钟前",
     sessionHrAgo: "{n}小时前",
-    permissionAllow: "\u2713 批准",
-    permissionDeny: "\u2717 拒绝",
     quit: "退出",
   },
 };
@@ -296,7 +292,8 @@ let pendingState = null; // tracks what state is waiting in pendingTimer
 // ── Permission bubble ──
 const PERMISSION_TIMEOUT_MS = 30_000;
 let bubble = null;
-let pendingPermission = null;  // { res, timer, abortHandler, toolName, toolInput, sessionId }
+let pendingPermission = null;  // { res, timer, abortHandler }
+let bubbleHideTimer = null;
 
 function setState(newState, svgOverride) {
   if (doNotDisturb) return;
@@ -1087,7 +1084,7 @@ function startHttpServer() {
           const abortHandler = () => {
             if (res.writableFinished) return;
             if (pendingPermission && pendingPermission.res === res) {
-                clearTimeout(pendingPermission.timer);
+              clearTimeout(pendingPermission.timer);
               pendingPermission = null;
               hideBubble();
             }
@@ -1099,7 +1096,7 @@ function startHttpServer() {
             resolvePermission("deny", "Timed out — no response from Clawd bubble");
           }, PERMISSION_TIMEOUT_MS);
 
-          pendingPermission = { res, timer, abortHandler, toolName, toolInput, sessionId };
+          pendingPermission = { res, timer, abortHandler };
 
           // Show or reuse bubble window
           showPermissionBubble(toolName, toolInput);
@@ -1124,6 +1121,14 @@ function startHttpServer() {
     } else {
       console.error("HTTP server error:", err.message);
     }
+  });
+}
+
+// ── alwaysOnTop recovery (Windows DWM can strip TOPMOST flag) ──
+function guardAlwaysOnTop(w) {
+  if (isMac) return;
+  w.on("always-on-top-changed", (_, isOnTop) => {
+    if (!isOnTop && w && !w.isDestroyed()) w.setAlwaysOnTop(true);
   });
 }
 
@@ -1160,6 +1165,9 @@ function getBubblePosition() {
 function showPermissionBubble(toolName, toolInput) {
   const pos = getBubblePosition();
 
+  // Cancel any pending hide animation from a previous request
+  if (bubbleHideTimer) { clearTimeout(bubbleHideTimer); bubbleHideTimer = null; }
+
   if (bubble && !bubble.isDestroyed()) {
     // Reuse existing bubble window — reposition and send new data
     bubble.setBounds(pos);
@@ -1194,8 +1202,8 @@ function showPermissionBubble(toolName, toolInput) {
 
   bubble.loadFile(path.join(__dirname, "bubble.html"));
 
-  // Wait for renderer ready before sending data
-  bubble.webContents.on("did-finish-load", () => {
+  // Wait for renderer ready before sending data (once — avoid stale replay on reload)
+  bubble.webContents.once("did-finish-load", () => {
     sendBubbleData(toolName, toolInput);
   });
 
@@ -1209,14 +1217,7 @@ function showPermissionBubble(toolName, toolInput) {
     }
   });
 
-  // Recover alwaysOnTop if stripped (same as pet window)
-  if (!isMac) {
-    bubble.on("always-on-top-changed", (_, isOnTop) => {
-      if (!isOnTop && bubble && !bubble.isDestroyed()) {
-        bubble.setAlwaysOnTop(true);
-      }
-    });
-  }
+  guardAlwaysOnTop(bubble);
 }
 
 function sendBubbleData(toolName, toolInput) {
@@ -1266,7 +1267,9 @@ function resolvePermission(behavior, message) {
 function hideBubble() {
   if (bubble && !bubble.isDestroyed()) {
     bubble.webContents.send("permission-hide");
-    setTimeout(() => {
+    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+    bubbleHideTimer = setTimeout(() => {
+      bubbleHideTimer = null;
       if (bubble && !bubble.isDestroyed()) bubble.hide();
     }, 250);
   }
@@ -1771,17 +1774,7 @@ function createWindow() {
     win.webContents.reload();
   });
 
-  // ── alwaysOnTop recovery (Windows DWM can drop z-order) ──
-  // Alt key, Win key, and fullscreen games can strip the TOPMOST flag.
-  // Listen for the event and re-assert immediately instead of polling.
-  // Not needed on macOS — the window manager maintains z-order correctly.
-  if (!isMac) {
-    win.on("always-on-top-changed", (_, isOnTop) => {
-      if (!isOnTop && win && !win.isDestroyed()) {
-        win.setAlwaysOnTop(true);
-      }
-    });
-  }
+  guardAlwaysOnTop(win);
 
   // ── Display change: re-clamp window to prevent off-screen ──
   screen.on("display-metrics-changed", () => {
@@ -2185,11 +2178,11 @@ if (!gotTheLock) {
     if (idleLookReturnTimer) clearTimeout(idleLookReturnTimer);
     stopStaleCleanup();
     killFocusHelper();
-    // Clean up pending permission request
+    // Clean up pending permission request — send explicit deny so Claude Code doesn't hang
     if (pendingPermission) {
-      clearTimeout(pendingPermission.timer);
-      pendingPermission = null;
+      resolvePermission("deny", "Clawd is quitting");
     }
+    if (bubbleHideTimer) { clearTimeout(bubbleHideTimer); bubbleHideTimer = null; }
     if (bubble && !bubble.isDestroyed()) bubble.destroy();
     if (httpServer) httpServer.close();
   });

@@ -173,8 +173,7 @@ function formatDetail(name, input) {
   if (!input || typeof input !== "object") return "";
   if (name === "Bash" && input.command) return truncate(input.command, 120);
   if ((name === "Edit" || name === "Write" || name === "Read") && input.file_path) return truncate(input.file_path, 120);
-  if (name === "Glob" && input.pattern) return truncate(input.pattern, 120);
-  if (name === "Grep" && input.pattern) return truncate(input.pattern, 120);
+  if ((name === "Glob" || name === "Grep") && input.pattern) return truncate(input.pattern, 120);
   // Fallback: show first string value
   for (const v of Object.values(input)) {
     if (typeof v === "string") return truncate(v, 100);
