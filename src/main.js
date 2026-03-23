@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, shell } = require("electron");
+const { app, BrowserWindow, screen, Menu, Tray, ipcMain, nativeImage, dialog, shell, globalShortcut } = require("electron");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
@@ -42,6 +42,16 @@ const i18n = {
     restartNow: "Restart Now",
     restartLater: "Later",
     download: "Download",
+    sessions: "Sessions",
+    noSessions: "No active sessions",
+    sessionWorking: "Working",
+    sessionThinking: "Thinking",
+    sessionJuggling: "Juggling",
+    sessionIdle: "Idle",
+    sessionSleeping: "Sleeping",
+    sessionJustNow: "just now",
+    sessionMinAgo: "{n}m ago",
+    sessionHrAgo: "{n}h ago",
     quit: "Quit",
   },
   zh: {
@@ -72,6 +82,16 @@ const i18n = {
     restartNow: "立即重启",
     restartLater: "稍后",
     download: "下载",
+    sessions: "会话",
+    noSessions: "无活跃会话",
+    sessionWorking: "工作中",
+    sessionThinking: "思考中",
+    sessionJuggling: "多任务",
+    sessionIdle: "空闲",
+    sessionSleeping: "睡眠",
+    sessionJustNow: "刚刚",
+    sessionMinAgo: "{n}分钟前",
+    sessionHrAgo: "{n}小时前",
     quit: "退出",
   },
 };
@@ -758,6 +778,56 @@ function getJugglingSvg() {
     if (s.state === "juggling") n++;
   }
   return n >= 2 ? "clawd-working-conducting.svg" : "clawd-working-juggling.svg";
+}
+
+// ── Session Dashboard (submenu for context menu + hotkey) ──
+const STATE_EMOJI = {
+  working: "\u{1F528}", thinking: "\u{1F914}", juggling: "\u{1F939}",
+  idle: "\u{1F4A4}", sleeping: "\u{1F4A4}",
+};
+const STATE_LABEL_KEY = {
+  working: "sessionWorking", thinking: "sessionThinking", juggling: "sessionJuggling",
+  idle: "sessionIdle", sleeping: "sessionSleeping",
+};
+
+function formatElapsed(ms) {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return t("sessionJustNow");
+  const min = Math.floor(sec / 60);
+  if (min < 60) return t("sessionMinAgo").replace("{n}", min);
+  const hr = Math.floor(min / 60);
+  return t("sessionHrAgo").replace("{n}", hr);
+}
+
+function buildSessionSubmenu() {
+  // Collect sessions, sorted by priority desc then updatedAt desc
+  const entries = [];
+  for (const [id, s] of sessions) {
+    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid });
+  }
+  if (entries.length === 0) {
+    return [{ label: t("noSessions"), enabled: false }];
+  }
+  entries.sort((a, b) => {
+    const pa = STATE_PRIORITY[a.state] || 0;
+    const pb = STATE_PRIORITY[b.state] || 0;
+    if (pb !== pa) return pb - pa;
+    return b.updatedAt - a.updatedAt;
+  });
+
+  const now = Date.now();
+  return entries.map((e) => {
+    const emoji = STATE_EMOJI[e.state] || "";
+    const stateText = t(STATE_LABEL_KEY[e.state] || "sessionIdle");
+    const shortId = e.id.length > 6 ? e.id.slice(0, 6) + ".." : e.id;
+    const elapsed = formatElapsed(now - e.updatedAt);
+    const hasPid = !!e.sourcePid;
+    return {
+      label: `${emoji} ${shortId}  ${stateText}  ${elapsed}`,
+      enabled: hasPid,
+      click: hasPid ? () => focusTerminalWindow(e.sourcePid) : undefined,
+    };
+  });
 }
 
 // ── Do Not Disturb ──
@@ -1751,6 +1821,11 @@ function buildContextMenu() {
       label: doNotDisturb ? t("wake") : t("sleep"),
       click: () => doNotDisturb ? disableDoNotDisturb() : enableDoNotDisturb(),
     },
+    { type: "separator" },
+    {
+      label: `${t("sessions")} (${sessions.size})`,
+      submenu: buildSessionSubmenu(),
+    },
   ];
   // macOS: Dock and Menu Bar visibility toggles
   if (isMac) {
@@ -1847,10 +1922,18 @@ if (!gotTheLock) {
     // Auto-updater: setup event handlers + silent check after 5s
     setupAutoUpdater();
     setTimeout(() => checkForUpdates(false), 5000);
+
+    // Global shortcut: pop up session list for quick switching
+    globalShortcut.register("CmdOrCtrl+Shift+S", () => {
+      const items = buildSessionSubmenu();
+      const menu = Menu.buildFromTemplate(items);
+      menu.popup();
+    });
   });
 
   app.on("before-quit", () => {
     isQuitting = true;
+    globalShortcut.unregisterAll();
     savePrefs();
     if (pendingTimer) clearTimeout(pendingTimer);
     if (autoReturnTimer) clearTimeout(autoReturnTimer);
