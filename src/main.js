@@ -1046,6 +1046,8 @@ function startHttpServer() {
       });
     } else if (req.method === "POST" && req.url === "/permission") {
       // ── Permission HTTP hook — Claude Code sends PermissionRequest here ──
+      const permDebugLog = path.join(app.getPath("userData"), "permission-debug.log");
+      fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] /permission hit | DND=${doNotDisturb} pending=${!!pendingPermission}\n`);
       let body = "";
       let bodySize = 0;
       let destroyed = false;
@@ -1059,6 +1061,7 @@ function startHttpServer() {
 
         // DND mode: return empty 200 so Claude Code falls back to terminal prompt
         if (doNotDisturb) {
+          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] SKIPPED: DND mode\n`);
           res.writeHead(200);
           res.end();
           return;
@@ -1067,6 +1070,7 @@ function startHttpServer() {
         // Already handling a permission request: return empty 200 for the new one
         // (let Claude Code fall back to terminal, keep current bubble intact)
         if (pendingPermission) {
+          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] SKIPPED: already pending\n`);
           res.writeHead(200);
           res.end();
           return;
@@ -1077,6 +1081,7 @@ function startHttpServer() {
           const toolName = typeof data.tool_name === "string" ? data.tool_name : "Unknown";
           const toolInput = data.tool_input && typeof data.tool_input === "object" ? data.tool_input : {};
           const sessionId = data.session_id || "default";
+          const hookEventName = data.hook_event_name || "PermissionRequest";
 
           // Detect client disconnect (e.g. Claude Code timeout or user cancel).
           // Listen on res "close" — fires when the connection drops.
@@ -1096,9 +1101,10 @@ function startHttpServer() {
             resolvePermission("deny", "Timed out — no response from Clawd bubble");
           }, PERMISSION_TIMEOUT_MS);
 
-          pendingPermission = { res, timer, abortHandler };
+          pendingPermission = { res, timer, abortHandler, hookEventName };
 
           // Show or reuse bubble window
+          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] showing bubble: event=${hookEventName} tool=${toolName} session=${sessionId}\n`);
           showPermissionBubble(toolName, toolInput);
         } catch {
           res.writeHead(400);
@@ -1270,14 +1276,26 @@ function resolvePermission(behavior, message) {
     return;
   }
 
-  const responseBody = {
-    hookSpecificOutput: {
-      hookEventName: "PermissionRequest",
-      decision: { behavior },
-    },
-  };
-  if (behavior === "deny" && message) {
-    responseBody.hookSpecificOutput.decision.message = message;
+  const { hookEventName } = pendingPermission;
+  let responseBody;
+  if (hookEventName === "PreToolUse") {
+    // PreToolUse response: permissionDecision "allow" | "deny"
+    responseBody = {
+      hookSpecificOutput: {
+        permissionDecision: behavior === "allow" ? "allow" : "deny",
+      },
+    };
+  } else {
+    // PermissionRequest response: decision.behavior "allow" | "deny"
+    responseBody = {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior },
+      },
+    };
+    if (behavior === "deny" && message) {
+      responseBody.hookSpecificOutput.decision.message = message;
+    }
   }
 
   res.writeHead(200, { "Content-Type": "application/json" });

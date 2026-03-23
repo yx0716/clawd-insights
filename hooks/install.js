@@ -28,12 +28,25 @@ const HOOK_EVENTS = [
 const MARKER = "clawd-hook.js";
 const HTTP_MARKER = "23333/permission";
 
-// HTTP hooks: PermissionRequest uses bidirectional HTTP hook for decision collection
+// HTTP hooks: bidirectional HTTP hooks for permission decision collection
+// - PermissionRequest: fires for Bash commands needing approval
+// - PreToolUse (Edit|Write): fires before Edit/Write tool execution
 const HTTP_HOOKS = {
   PermissionRequest: {
-    type: "http",
-    url: "http://127.0.0.1:23333/permission",
-    timeout: 60,  // seconds — generous buffer over our 30s bubble timeout
+    matcher: "",
+    hook: {
+      type: "http",
+      url: "http://127.0.0.1:23333/permission",
+      timeout: 60,
+    },
+  },
+  PreToolUse: {
+    matcher: "Edit|Write",
+    hook: {
+      type: "http",
+      url: "http://127.0.0.1:23333/permission",
+      timeout: 60,
+    },
   },
 };
 
@@ -105,14 +118,14 @@ function registerHooks(options = {}) {
     added++;
   }
 
-  // Register HTTP hooks (PermissionRequest decision collection)
-  for (const [event, hookDef] of Object.entries(HTTP_HOOKS)) {
+  // Register HTTP hooks (permission decision collection)
+  for (const [event, { matcher, hook }] of Object.entries(HTTP_HOOKS)) {
     if (!Array.isArray(settings.hooks[event])) {
       settings.hooks[event] = [];
       changed = true;
     }
 
-    // Check if HTTP hook already registered
+    // Check if HTTP hook already registered (by URL marker + matcher)
     const httpExists = settings.hooks[event].some((entry) => {
       if (!entry || typeof entry !== "object") return false;
       // Flat format: { type: "http", url }
@@ -130,8 +143,8 @@ function registerHooks(options = {}) {
     }
 
     settings.hooks[event].push({
-      matcher: "",
-      hooks: [hookDef],
+      matcher,
+      hooks: [hook],
     });
     added++;
   }
