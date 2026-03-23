@@ -125,16 +125,14 @@ html, body {
   color: #fff;
   letter-spacing: 0.05em;
   background: #52525b;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.2);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
 }
-.tool-pill[data-tool="Bash"]  { background: linear-gradient(135deg, #f97316, #ea580c); }
-.tool-pill[data-tool="Edit"]  { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-.tool-pill[data-tool="Write"] { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
-.tool-pill[data-tool="Read"]  { background: linear-gradient(135deg, #22c55e, #16a34a); }
-.tool-pill[data-tool="Glob"]  { background: linear-gradient(135deg, #06b6d4, #0891b2); }
-.tool-pill[data-tool="Grep"]  { background: linear-gradient(135deg, #06b6d4, #0891b2); }
-.tool-pill[data-tool="Agent"] { background: linear-gradient(135deg, #ec4899, #db2777); }
+.tool-pill[data-tool="Bash"]  { background: #d97757; }
+.tool-pill[data-tool="Edit"]  { background: #5b8dd9; }
+.tool-pill[data-tool="Write"] { background: #8b7ec7; }
+.tool-pill[data-tool="Read"]  { background: #5a9e6f; }
+.tool-pill[data-tool="Glob"]  { background: #5a9eab; }
+.tool-pill[data-tool="Grep"]  { background: #5a9eab; }
+.tool-pill[data-tool="Agent"] { background: #c47a9a; }
 
 /* ── Command block ── */
 .command-block {
@@ -177,15 +175,12 @@ html, body {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-allow {
-  background: linear-gradient(180deg, #fb923c, #ea580c);
+  background: #d97757;
   color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 2px 4px rgba(234, 88, 12, 0.2);
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
+  border: 1px solid transparent;
 }
 .btn-allow:hover:not(:disabled) {
-  background: linear-gradient(180deg, #fdba74, #f97316);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 3px 6px rgba(234, 88, 12, 0.3);
+  background: #c4684a;
 }
 
 .btn-deny {
@@ -299,15 +294,19 @@ function getSuggestionLabel(s, lang) {
     if (s.mode === "plan") return lang === "zh" ? "\u5207\u6362\u5230 Plan \u6A21\u5F0F" : "Switch to plan mode";
     return s.mode;
   }
-  if (s.type === "addRules" && s.ruleContent) {
-    if (s.ruleContent.includes("**")) {
-      // Glob pattern — show directory name
-      const dir = s.ruleContent.split("**")[0].replace(/[\\/]$/, "").split(/[\\/]/).pop() || s.ruleContent;
-      const label = lang === "zh" ? `\u5141\u8BB8 ${s.toolName || ""} \u5728 ${dir}/` : `Allow ${s.toolName || ""} in ${dir}/`;
-      return label;
+  if (s.type === "addRules") {
+    // Support both flat (toolName/ruleContent) and nested (rules:[]) formats
+    const rule = Array.isArray(s.rules) && s.rules[0] ? s.rules[0] : s;
+    const rc = rule.ruleContent || s.ruleContent;
+    const tn = rule.toolName || s.toolName || "";
+    if (rc) {
+      if (rc.includes("**")) {
+        const dir = rc.split("**")[0].replace(/[\\/]$/, "").split(/[\\/]/).pop() || rc;
+        return lang === "zh" ? `\u5141\u8BB8 ${tn} \u5728 ${dir}/` : `Allow ${tn} in ${dir}/`;
+      }
+      const short = rc.length > 30 ? rc.slice(0, 29) + "\u2026" : rc;
+      return lang === "zh" ? `\u59CB\u7EC8\u5141\u8BB8 \`${short}\`` : `Always allow \`${short}\``;
     }
-    const short = s.ruleContent.length > 30 ? s.ruleContent.slice(0, 29) + "\u2026" : s.ruleContent;
-    return lang === "zh" ? `\u59CB\u7EC8\u5141\u8BB8 \`${short}\`` : `Always allow \`${short}\``;
   }
   return lang === "zh" ? "\u59CB\u7EC8\u5141\u8BB8" : "Always allow";
 }

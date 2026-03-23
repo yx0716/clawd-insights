@@ -1291,8 +1291,10 @@ function resolvePermission(behavior, message) {
     },
   };
 
+  const body = JSON.stringify(responseBody);
+  fs.appendFileSync(path.join(app.getPath("userData"), "permission-debug.log"), `[${new Date().toISOString()}] response: ${body}\n`);
   res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(responseBody));
+  res.end(body);
 
   pendingPermission = null;
   hideBubble();
@@ -1778,13 +1780,16 @@ function createWindow() {
       const idx = parseInt(behavior.split(":")[1], 10);
       const suggestion = pendingPermission.suggestions?.[idx];
       if (!suggestion) { resolvePermission("deny", "Invalid suggestion index"); return; }
-      // Transform suggestion to updatedPermissions format
+      fs.appendFileSync(dbg, `[${new Date().toISOString()}] suggestion raw: ${JSON.stringify(suggestion)}\n`);
+      // Pass suggestion through as updatedPermissions — handle both flat and nested formats
       if (suggestion.type === "addRules") {
+        const rules = Array.isArray(suggestion.rules) ? suggestion.rules
+          : [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }];
         pendingPermission.resolvedSuggestion = {
           type: "addRules",
           destination: suggestion.destination || "localSettings",
           behavior: suggestion.behavior || "allow",
-          rules: [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }],
+          rules,
         };
       } else if (suggestion.type === "setMode") {
         pendingPermission.resolvedSuggestion = {
