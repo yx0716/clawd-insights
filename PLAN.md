@@ -66,12 +66,12 @@ vscode.window.registerUriHandler({
 ```
 
 **实施要点**：
-- [ ] 创建 `extensions/vscode/` 目录，编写扩展（package.json + extension.js）
-- [ ] 注册 URI handler：`vscode://clawd.terminal-focus?pid=<PID>`
-- [ ] `focusTerminalWindow()` 优先用 URI scheme 跳转，fallback 到现有 EnumWindows 方案
-- [ ] 支持 VS Code + Cursor（两者共用 URI scheme 机制，publisher ID 不同）
-- [ ] 考虑自动安装（Electron 启动时检测 VS Code 扩展目录，自动 symlink）
-- [ ] macOS 兼容（`open vscode://...` 替代 Windows 的 `start vscode://...`）
+- [x] 创建 `extensions/vscode/` 目录，编写扩展（package.json + extension.js）
+- [x] 注册 URI handler：`vscode://clawd.clawd-terminal-focus?pids=<PID_CHAIN>`（PID 链匹配，兼容中间进程）
+- [x] `focusTerminalWindow()` 优先用 URI scheme 跳转，fallback 到现有 EnumWindows 方案
+- [x] 支持 VS Code + Cursor（`vscode://` vs `cursor://`，hook 自动检测 code.exe/cursor.exe）
+- [x] 自动安装（Electron 启动时检测 `~/.vscode/extensions` 和 `~/.cursor/extensions`，自动复制扩展）
+- [x] macOS 兼容（`shell.openExternal()` 跨平台，macOS 额外检测 full comm path 解决 Electron binary 名问题）
 
 **工作量**：小（扩展本身 ~30 行，主要工作在集成和自动安装）
 

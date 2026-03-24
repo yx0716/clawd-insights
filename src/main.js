@@ -194,7 +194,7 @@ const IDLE_LOOK_DURATION = 10000;  // idle-look CSS loop is 10s
 const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "waking"]);
 
 // ── Session tracking ──
-const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd }
+const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd, editor, pidChain }
 const SESSION_STALE_MS = 300000; // 5 min cleanup
 const WORKING_STALE_MS = 30000;  // 30s: working/thinking with no new event → decay to idle
 const STATE_PRIORITY = {
@@ -659,7 +659,7 @@ function wakeFromDoze() {
 // ── Session management ──
 const ONESHOT_STATES = new Set(["attention", "error", "sweeping", "notification", "carrying"]);
 
-function updateSession(sessionId, state, event, sourcePid, cwd) {
+function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain) {
   // PermissionRequest command hook: show notification animation only, don't mutate session.
   // The HTTP hook runs in parallel and handles the actual decision. If we set session to idle
   // here, it can overwrite a newer "working" state after the user approves.
@@ -668,16 +668,20 @@ function updateSession(sessionId, state, event, sourcePid, cwd) {
     return;
   }
 
-  // Preserve existing sourcePid/cwd — only SessionStart sends them, other events reuse cached
+  // Preserve existing fields — only SessionStart sends them all, other events reuse cached
   const existing = sessions.get(sessionId);
   const srcPid = sourcePid || (existing && existing.sourcePid) || null;
   const srcCwd = cwd || (existing && existing.cwd) || "";
+  const srcEditor = editor || (existing && existing.editor) || null;
+  const srcPidChain = (pidChain && pidChain.length) ? pidChain : (existing && existing.pidChain) || null;
+
+  const base = { sourcePid: srcPid, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain };
 
   if (event === "SessionEnd") {
     sessions.delete(sessionId);
   } else if (state === "attention" || state === "notification" || SLEEP_SEQUENCE.has(state)) {
     // Stop/notification/sleep: session goes idle — if work continues, new hooks will re-set
-    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
+    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), ...base });
   } else if (ONESHOT_STATES.has(state)) {
     // Other oneshots (error/sweeping/notification/carrying):
     // preserve session's previous state so auto-return resolves correctly
@@ -685,8 +689,10 @@ function updateSession(sessionId, state, event, sourcePid, cwd) {
       existing.updatedAt = Date.now();
       if (sourcePid) existing.sourcePid = sourcePid;
       if (cwd) existing.cwd = cwd;
+      if (editor) existing.editor = editor;
+      if (pidChain && pidChain.length) existing.pidChain = pidChain;
     } else {
-      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
+      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), ...base });
     }
   } else {
     // Preserve juggling: subagent's own tool use (PreToolUse/PostToolUse)
@@ -694,7 +700,7 @@ function updateSession(sessionId, state, event, sourcePid, cwd) {
     if (existing && existing.state === "juggling" && state === "working" && event !== "SubagentStop") {
       existing.updatedAt = Date.now();
     } else {
-      sessions.set(sessionId, { state, updatedAt: Date.now(), sourcePid: srcPid, cwd: srcCwd });
+      sessions.set(sessionId, { state, updatedAt: Date.now(), ...base });
     }
   }
   cleanStaleSessions();
@@ -828,7 +834,7 @@ function buildSessionSubmenu() {
   // Collect sessions, sorted by priority desc then updatedAt desc
   const entries = [];
   for (const [id, s] of sessions) {
-    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid, cwd: s.cwd });
+    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid, cwd: s.cwd, editor: s.editor, pidChain: s.pidChain });
   }
   if (entries.length === 0) {
     return [{ label: t("noSessions"), enabled: false }];
@@ -850,7 +856,7 @@ function buildSessionSubmenu() {
     return {
       label: `${emoji} ${name}  ${stateText}  ${elapsed}`,
       enabled: hasPid,
-      click: hasPid ? () => focusTerminalWindow(e.sourcePid, e.cwd) : undefined,
+      click: hasPid ? () => focusTerminalWindow(e.sourcePid, e.cwd, e.editor, e.pidChain) : undefined,
     };
   });
 }
@@ -991,8 +997,32 @@ function killFocusHelper() {
   if (psProc) { psProc.kill(); psProc = null; }
 }
 
-function focusTerminalWindow(sourcePid, cwd) {
+function focusTerminalWindow(sourcePid, cwd, editor, pidChain) {
   if (!sourcePid) return;
+
+  // Legacy focus for reliable window activation (ALT key trick + SetForegroundWindow)
+  focusTerminalWindowLegacy(sourcePid, cwd);
+
+  // VS Code / Cursor: request precise terminal tab switch via extension's HTTP server.
+  // Delayed so legacy PowerShell focus completes first (it's fire-and-forget via stdin).
+  if (editor && pidChain && pidChain.length) {
+    setTimeout(() => {
+      const body = JSON.stringify({ pids: pidChain });
+      for (let port = 23456; port <= 23460; port++) {
+        const tabReq = http.request({
+          hostname: "127.0.0.1", port, path: "/focus-tab", method: "POST",
+          headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+          timeout: 300,
+        }, () => {});
+        tabReq.on("error", () => {});
+        tabReq.on("timeout", () => tabReq.destroy());
+        tabReq.end(body);
+      }
+    }, 800);
+  }
+}
+
+function focusTerminalWindowLegacy(sourcePid, cwd) {
   // Build candidate folder names from cwd for title matching (deepest first).
   // e.g. "C:\Users\X\GPT_Test\redbook" → ['redbook', 'GPT_Test']
   // Cursor window title typically shows workspace root, which may not be the deepest folder.
@@ -1007,8 +1037,6 @@ function focusTerminalWindow(sourcePid, cwd) {
     }
   }
   if (isMac) {
-    // macOS: walk up process tree via ps, then activate via osascript
-    // TODO: community contributor — test and refine on real macOS hardware
     const script = `
       set pid to ${sourcePid}
       repeat 8 times
@@ -1072,6 +1100,8 @@ function startHttpServer() {
           const { state, svg, session_id, event } = data;
           const source_pid = Number.isFinite(data.source_pid) && data.source_pid > 0 ? Math.floor(data.source_pid) : null;
           const cwd = typeof data.cwd === "string" ? data.cwd : "";
+          const editor = (data.editor === "code" || data.editor === "cursor") ? data.editor : null;
+          const pidChain = Array.isArray(data.pid_chain) ? data.pid_chain.filter(n => Number.isFinite(n) && n > 0) : null;
           if (STATE_SVGS[state]) {
             const sid = session_id || "default";
             // mini-* states are internal — only allow via direct SVG override (test scripts)
@@ -1097,7 +1127,7 @@ function startHttpServer() {
               const safeSvg = path.basename(svg);
               setState(state, safeSvg);
             } else {
-              updateSession(sid, state, event, source_pid, cwd);
+              updateSession(sid, state, event, source_pid, cwd, editor, pidChain);
             }
             res.writeHead(200);
             res.end("ok");
@@ -1796,18 +1826,17 @@ function createWindow() {
 
   ipcMain.on("focus-terminal", () => {
     // Find the best session to focus: prefer highest priority (non-idle), then most recent
-    let bestPid = null, bestCwd = "", bestTime = 0, bestPriority = -1;
+    let best = null, bestTime = 0, bestPriority = -1;
     for (const [, s] of sessions) {
       if (!s.sourcePid) continue;
       const pri = STATE_PRIORITY[s.state] || 0;
       if (pri > bestPriority || (pri === bestPriority && s.updatedAt > bestTime)) {
-        bestPid = s.sourcePid;
-        bestCwd = s.cwd;
+        best = s;
         bestTime = s.updatedAt;
         bestPriority = pri;
       }
     }
-    if (bestPid) focusTerminalWindow(bestPid, bestCwd);
+    if (best) focusTerminalWindow(best.sourcePid, best.cwd, best.editor, best.pidChain);
   });
 
   ipcMain.on("show-session-menu", () => {
@@ -2251,6 +2280,53 @@ function resizeWindow(sizeKey) {
   savePrefs();
 }
 
+// ── Auto-install VS Code / Cursor terminal-focus extension ──
+const EXT_ID = "clawd.clawd-terminal-focus";
+const EXT_VERSION = "0.1.0";
+const EXT_DIR_NAME = `${EXT_ID}-${EXT_VERSION}`;
+
+function installTerminalFocusExtension() {
+  const os = require("os");
+  const home = os.homedir();
+
+  // Extension source — in dev: ../extensions/vscode/, in packaged: app.asar.unpacked/
+  let extSrc = path.join(__dirname, "..", "extensions", "vscode");
+  extSrc = extSrc.replace("app.asar" + path.sep, "app.asar.unpacked" + path.sep);
+
+  if (!fs.existsSync(extSrc)) {
+    console.log("Clawd: terminal-focus extension source not found, skipping auto-install");
+    return;
+  }
+
+  const targets = [
+    path.join(home, ".vscode", "extensions"),
+    path.join(home, ".cursor", "extensions"),
+  ];
+
+  const filesToCopy = ["package.json", "extension.js"];
+  let installed = 0;
+
+  for (const extRoot of targets) {
+    if (!fs.existsSync(extRoot)) continue; // editor not installed
+    const dest = path.join(extRoot, EXT_DIR_NAME);
+    // Skip if already installed (check package.json exists)
+    if (fs.existsSync(path.join(dest, "package.json"))) continue;
+    try {
+      fs.mkdirSync(dest, { recursive: true });
+      for (const file of filesToCopy) {
+        fs.copyFileSync(path.join(extSrc, file), path.join(dest, file));
+      }
+      installed++;
+      console.log(`Clawd: installed terminal-focus extension to ${dest}`);
+    } catch (err) {
+      console.warn(`Clawd: failed to install extension to ${dest}:`, err.message);
+    }
+  }
+  if (installed > 0) {
+    console.log(`Clawd: terminal-focus extension installed to ${installed} editor(s). Restart VS Code/Cursor to activate.`);
+  }
+}
+
 // ── Single instance lock ──
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -2280,6 +2356,11 @@ if (!gotTheLock) {
       if (added > 0) console.log(`Clawd: auto-registered ${added} Claude Code hooks`);
     } catch (err) {
       console.warn("Clawd: failed to auto-register hooks:", err.message);
+    }
+
+    // Auto-install VS Code/Cursor terminal-focus extension
+    try { installTerminalFocusExtension(); } catch (err) {
+      console.warn("Clawd: failed to auto-install terminal-focus extension:", err.message);
     }
 
     // Auto-updater: setup event handlers + silent check after 5s
