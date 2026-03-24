@@ -197,6 +197,7 @@ const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "
 const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd }
 const SESSION_STALE_MS = 300000; // 5 min cleanup
 const WORKING_STALE_MS = 30000;  // 30s: working/thinking with no new event → decay to idle
+const TERMINAL_DISMISS_GRACE_MS = 2000; // ignore late hooks from previous tool call
 const STATE_PRIORITY = {
   error: 8, notification: 7, sweeping: 6, attention: 5,
   carrying: 4, juggling: 4, working: 3, thinking: 2, idle: 1, sleeping: 0,
@@ -290,8 +291,9 @@ let lastWakeCursorX = null, lastWakeCursorY = null;
 let pendingState = null; // tracks what state is waiting in pendingTimer
 
 // ── Permission bubble (stacking) ──
-// Each entry: { res, abortHandler, suggestions, sessionId, bubble, hideTimer, toolName, toolInput, resolvedSuggestion }
+// Each entry: { res, abortHandler, suggestions, sessionId, bubble, hideTimer, toolName, toolInput, resolvedSuggestion, createdAt, measuredHeight }
 const pendingPermissions = [];
+let permDebugLog = null; // set after app.whenReady()
 
 function setState(newState, svgOverride) {
   if (doNotDisturb) return;
@@ -1085,9 +1087,11 @@ function startHttpServer() {
             // hooks from the PREVIOUS tool call (~900ms) can cause false positives,
             // so we ignore events arriving within 2s of the permission being created.
             if (event !== "PermissionRequest") {
-              const matchPerm = pendingPermissions.find(p => p.sessionId === sid);
-              if (matchPerm && Date.now() - matchPerm.createdAt > 2000) {
-                resolvePermissionEntry(matchPerm, "deny", "User answered in terminal");
+              const now = Date.now();
+              for (const perm of [...pendingPermissions]) {
+                if (perm.sessionId === sid && now - perm.createdAt > TERMINAL_DISMISS_GRACE_MS) {
+                  resolvePermissionEntry(perm, "deny", "User answered in terminal");
+                }
               }
             }
             if (svg) {
@@ -1111,8 +1115,7 @@ function startHttpServer() {
       });
     } else if (req.method === "POST" && req.url === "/permission") {
       // ── Permission HTTP hook — Claude Code sends PermissionRequest here ──
-      const permDebugLog = path.join(app.getPath("userData"), "permission-debug.log");
-      fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] /permission hit | DND=${doNotDisturb} pending=${pendingPermissions.length}\n`);
+      permLog(`/permission hit | DND=${doNotDisturb} pending=${pendingPermissions.length}`);
       let body = "";
       let bodySize = 0;
       let destroyed = false;
@@ -1126,15 +1129,8 @@ function startHttpServer() {
 
         // DND mode: explicitly deny so Claude Code falls back to terminal prompt
         if (doNotDisturb) {
-          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] SKIPPED: DND mode\n`);
-          const dndBody = JSON.stringify({
-            hookSpecificOutput: {
-              hookEventName: "PermissionRequest",
-              decision: { behavior: "deny", message: "Clawd is in Do Not Disturb mode" },
-            },
-          });
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(dndBody);
+          permLog("SKIPPED: DND mode");
+          sendPermissionResponse(res, "deny", "Clawd is in Do Not Disturb mode");
           return;
         }
 
@@ -1149,7 +1145,7 @@ function startHttpServer() {
           const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now() };
           const abortHandler = () => {
             if (res.writableFinished) return;
-            fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] abortHandler fired\n`);
+            permLog("abortHandler fired");
             resolvePermissionEntry(permEntry, "deny", "Client disconnected");
           };
           permEntry.abortHandler = abortHandler;
@@ -1157,7 +1153,7 @@ function startHttpServer() {
 
           pendingPermissions.push(permEntry);
 
-          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] showing bubble: tool=${toolName} session=${sessionId} suggestions=${suggestions.length} stack=${pendingPermissions.length}\n`);
+          permLog(`showing bubble: tool=${toolName} session=${sessionId} suggestions=${suggestions.length} stack=${pendingPermissions.length}`);
           showPermissionBubble(permEntry);
         } catch {
           res.writeHead(400);
@@ -1336,10 +1332,26 @@ function resolvePermissionEntry(permEntry, behavior, message) {
     decision.updatedPermissions = [permEntry.resolvedSuggestion];
   }
 
+  sendPermissionResponse(res, decision);
+}
+
+function permLog(msg) {
+  if (!permDebugLog) return;
+  fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] ${msg}\n`);
+}
+
+function sendPermissionResponse(res, decisionOrBehavior, message) {
+  let decision;
+  if (typeof decisionOrBehavior === "string") {
+    decision = { behavior: decisionOrBehavior };
+    if (message) decision.message = message;
+  } else {
+    decision = decisionOrBehavior;
+  }
   const responseBody = JSON.stringify({
     hookSpecificOutput: { hookEventName: "PermissionRequest", decision },
   });
-  fs.appendFileSync(path.join(app.getPath("userData"), "permission-debug.log"), `[${new Date().toISOString()}] response: ${responseBody}\n`);
+  permLog(`response: ${responseBody}`);
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(responseBody);
 }
@@ -1815,18 +1827,17 @@ function createWindow() {
   });
 
   ipcMain.on("permission-decide", (event, behavior) => {
-    const dbg = path.join(app.getPath("userData"), "permission-debug.log");
     // Identify which permission this bubble belongs to via sender webContents
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     const perm = pendingPermissions.find(p => p.bubble === senderWin);
-    fs.appendFileSync(dbg, `[${new Date().toISOString()}] IPC permission-decide: behavior=${behavior} matched=${!!perm}\n`);
+    permLog(`IPC permission-decide: behavior=${behavior} matched=${!!perm}`);
     if (!perm) return;
     // "suggestion:N" — user picked a permission suggestion
     if (typeof behavior === "string" && behavior.startsWith("suggestion:")) {
       const idx = parseInt(behavior.split(":")[1], 10);
       const suggestion = perm.suggestions?.[idx];
       if (!suggestion) { resolvePermissionEntry(perm, "deny", "Invalid suggestion index"); return; }
-      fs.appendFileSync(dbg, `[${new Date().toISOString()}] suggestion raw: ${JSON.stringify(suggestion)}\n`);
+      permLog(`suggestion raw: ${JSON.stringify(suggestion)}`);
       if (suggestion.type === "addRules") {
         const rules = Array.isArray(suggestion.rules) ? suggestion.rules
           : [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }];
@@ -2262,6 +2273,7 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    permDebugLog = path.join(app.getPath("userData"), "permission-debug.log");
     createWindow();
 
     // Auto-register Claude Code hooks on every launch (dedup-safe)
