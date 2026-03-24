@@ -65,16 +65,17 @@
 
 html, body {
   width: 100%; height: 100%;
+  margin: 0;
   background: transparent;
   overflow: hidden;
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+body { padding: 6px; }
 
 .card {
-  position: absolute;
-  bottom: 6px; left: 6px; right: 6px;
+  position: relative;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 16px;
@@ -350,6 +351,12 @@ function show(data) {
 
   card.classList.remove("hiding");
   card.classList.add("visible");
+
+  // Measure actual rendered height and report to main process for precise stacking
+  requestAnimationFrame(() => {
+    const h = card.offsetHeight + 12; // 12 = 6px padding top + 6px padding bottom
+    window.bubbleAPI.reportHeight(h);
+  });
 }
 
 function hide() {

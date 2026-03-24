@@ -289,10 +289,9 @@ let lastWakeCursorX = null, lastWakeCursorY = null;
 
 let pendingState = null; // tracks what state is waiting in pendingTimer
 
-// ── Permission bubble ──
-let bubble = null;
-let pendingPermission = null;  // { res, abortHandler, hookEventName }
-let bubbleHideTimer = null;
+// ── Permission bubble (stacking) ──
+// Each entry: { res, abortHandler, suggestions, sessionId, bubble, hideTimer, toolName, toolInput, resolvedSuggestion }
+const pendingPermissions = [];
 
 function setState(newState, svgOverride) {
   if (doNotDisturb) return;
@@ -860,8 +859,8 @@ function enableDoNotDisturb() {
   if (doNotDisturb) return;
   doNotDisturb = true;
   sendToRenderer("dnd-change", true);
-  // Dismiss any pending permission bubble — DND means no interaction
-  if (pendingPermission) resolvePermission("deny", "DND enabled");
+  // Dismiss all pending permission bubbles — DND means no interaction
+  for (const perm of [...pendingPermissions]) resolvePermissionEntry(perm, "deny", "DND enabled");
   if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; pendingState = null; }
   if (autoReturnTimer) { clearTimeout(autoReturnTimer); autoReturnTimer = null; }
   stopWakePoll();
@@ -1084,8 +1083,9 @@ function startHttpServer() {
             // session that has a pending permission bubble, the user answered in terminal.
             // PermissionRequest fires on BOTH /state (command hook) and /permission (HTTP hook)
             // simultaneously — we must ignore it here to avoid instantly dismissing our own bubble.
-            if (pendingPermission && pendingPermission.sessionId === sid && event !== "PermissionRequest") {
-              resolvePermission("deny", "User answered in terminal");
+            if (event !== "PermissionRequest") {
+              const matchPerm = pendingPermissions.find(p => p.sessionId === sid);
+              if (matchPerm) resolvePermissionEntry(matchPerm, "deny", "User answered in terminal");
             }
             if (svg) {
               // Direct SVG override (test-demo.sh, manual curl) — bypass session logic
@@ -1109,7 +1109,7 @@ function startHttpServer() {
     } else if (req.method === "POST" && req.url === "/permission") {
       // ── Permission HTTP hook — Claude Code sends PermissionRequest here ──
       const permDebugLog = path.join(app.getPath("userData"), "permission-debug.log");
-      fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] /permission hit | DND=${doNotDisturb} pending=${!!pendingPermission}\n`);
+      fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] /permission hit | DND=${doNotDisturb} pending=${pendingPermissions.length}\n`);
       let body = "";
       let bodySize = 0;
       let destroyed = false;
@@ -1129,15 +1129,6 @@ function startHttpServer() {
           return;
         }
 
-        // Already handling a permission request: return empty 200 for the new one
-        // (let Claude Code fall back to terminal, keep current bubble intact)
-        if (pendingPermission) {
-          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] SKIPPED: already pending\n`);
-          res.writeHead(200);
-          res.end();
-          return;
-        }
-
         try {
           const data = JSON.parse(body);
           const toolName = typeof data.tool_name === "string" ? data.tool_name : "Unknown";
@@ -1146,25 +1137,19 @@ function startHttpServer() {
           const suggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
 
           // Detect client disconnect (e.g. Claude Code timeout or user answered in terminal).
-          // Listen on res "close" — fires when the TCP connection drops.
-          // Skip if we already sent our response (writableFinished).
-          // NOTE: do NOT listen on req "close" — it fires as soon as the request body is
-          // fully consumed (req.on("end")), which is immediately, not on client disconnect.
+          const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null };
           const abortHandler = () => {
             if (res.writableFinished) return;
-            fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] abortHandler fired: pending=${!!pendingPermission} match=${pendingPermission?.res === res}\n`);
-            if (pendingPermission && pendingPermission.res === res) {
-              pendingPermission = null;
-              hideBubble();
-            }
+            fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] abortHandler fired\n`);
+            resolvePermissionEntry(permEntry, "deny", "Client disconnected");
           };
+          permEntry.abortHandler = abortHandler;
           res.on("close", abortHandler);
 
-          pendingPermission = { res, abortHandler, suggestions, sessionId };
+          pendingPermissions.push(permEntry);
 
-          // Show or reuse bubble window
-          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] showing bubble: tool=${toolName} session=${sessionId} suggestions=${suggestions.length}\n`);
-          showPermissionBubble(toolName, toolInput);
+          fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] showing bubble: tool=${toolName} session=${sessionId} suggestions=${suggestions.length} stack=${pendingPermissions.length}\n`);
+          showPermissionBubble(permEntry);
         } catch {
           res.writeHead(400);
           res.end("bad json");
@@ -1210,7 +1195,9 @@ function startTopmostWatchdog() {
   if (isMac || topmostWatchdog) return;
   topmostWatchdog = setInterval(() => {
     if (win && !win.isDestroyed()) win.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
-    if (bubble && !bubble.isDestroyed() && bubble.isVisible()) bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+    for (const perm of pendingPermissions) {
+      if (perm.bubble && !perm.bubble.isDestroyed() && perm.bubble.isVisible()) perm.bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+    }
   }, TOPMOST_WATCHDOG_MS);
 }
 
@@ -1220,42 +1207,44 @@ function stopTopmostWatchdog() {
 
 // ── Permission bubble window ──
 
-function getBubblePosition(suggestionCount) {
-  const bw = 340;
-  // Base height covers header + command block + Allow/Deny buttons + padding
-  // Each suggestion button adds ~37px (7px padding*2 + 12px font + 1px border + 6px gap)
-  const bh = 200 + (suggestionCount || 0) * 37;
-  const margin = 4;
 
-  // Fixed position: bottom-right corner of the nearest display
+
+// Fallback height before renderer reports actual measurement
+function estimateBubbleHeight(sugCount) {
+  return 200 + (sugCount || 0) * 37;
+}
+
+function repositionBubbles() {
+  // Stack bubbles from bottom-right upward. Newest (last in array) at bottom.
+  const margin = 8;
+  const gap = 6;
+  const bw = 340;
   const petBounds = win.getBounds();
   const cx = petBounds.x + petBounds.width / 2;
   const cy = petBounds.y + petBounds.height / 2;
   const wa = getNearestWorkArea(cx, cy);
-
   const x = wa.x + wa.width - bw - margin;
-  const y = wa.y + wa.height - bh - margin;
 
-  return { x, y, width: bw, height: bh };
+  let yBottom = wa.y + wa.height - margin;
+  // Iterate in reverse: newest bubble (end of array) gets the bottom slot
+  for (let i = pendingPermissions.length - 1; i >= 0; i--) {
+    const perm = pendingPermissions[i];
+    const bh = perm.measuredHeight || estimateBubbleHeight((perm.suggestions || []).length);
+    const y = yBottom - bh;
+    yBottom = y - gap;
+    if (perm.bubble && !perm.bubble.isDestroyed()) {
+      perm.bubble.setBounds({ x, y, width: bw, height: bh });
+    }
+  }
 }
 
-function showPermissionBubble(toolName, toolInput) {
-  const sugCount = pendingPermission ? (pendingPermission.suggestions || []).length : 0;
-  const pos = getBubblePosition(sugCount);
+function showPermissionBubble(permEntry) {
+  const sugCount = (permEntry.suggestions || []).length;
+  const bh = estimateBubbleHeight(sugCount);
+  // Temporary position — repositionBubbles() will finalize after renderer reports real height
+  const pos = { x: 0, y: 0, width: 340, height: bh };
 
-  // Cancel any pending hide animation from a previous request
-  if (bubbleHideTimer) { clearTimeout(bubbleHideTimer); bubbleHideTimer = null; }
-
-  if (bubble && !bubble.isDestroyed()) {
-    // Reuse existing bubble window — reposition and send new data
-    bubble.setBounds(pos);
-    bubble.showInactive();
-    sendBubbleData(toolName, toolInput);
-    if (!isMac) setTimeout(() => { if (bubble && !bubble.isDestroyed()) bubble.focus(); }, 100);
-    return;
-  }
-
-  bubble = new BrowserWindow({
+  const bub = new BrowserWindow({
     width: pos.width,
     height: pos.height,
     x: pos.x,
@@ -1274,95 +1263,75 @@ function showPermissionBubble(toolName, toolInput) {
     },
   });
 
+  permEntry.bubble = bub;
+
   if (isMac) {
-    bubble.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-    bubble.setAlwaysOnTop(true, "floating");
+    bub.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+    bub.setAlwaysOnTop(true, "floating");
   } else {
-    bubble.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+    bub.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
   }
 
-  bubble.loadFile(path.join(__dirname, "bubble.html"));
+  bub.loadFile(path.join(__dirname, "bubble.html"));
 
-  // Wait for renderer ready before sending data (once — avoid stale replay on reload)
-  bubble.webContents.once("did-finish-load", () => {
-    sendBubbleData(toolName, toolInput);
-    // On Windows, transparent windows need explicit focus to receive clicks
-    if (!isMac) setTimeout(() => { if (bubble && !bubble.isDestroyed()) bubble.focus(); }, 100);
+  bub.webContents.once("did-finish-load", () => {
+    bub.webContents.send("permission-show", {
+      toolName: permEntry.toolName,
+      toolInput: permEntry.toolInput,
+      suggestions: permEntry.suggestions || [],
+      lang,
+    });
+    if (!isMac) setTimeout(() => { if (bub && !bub.isDestroyed()) bub.focus(); }, 100);
   });
 
-  bubble.showInactive();
+  repositionBubbles();
+  bub.showInactive();
 
-  // If user closes bubble via Alt+F4 etc → treat as deny
-  bubble.on("closed", () => {
-    bubble = null;
-    if (pendingPermission) {
-      resolvePermission("deny", "Bubble window closed by user");
+  bub.on("closed", () => {
+    const idx = pendingPermissions.indexOf(permEntry);
+    if (idx !== -1) {
+      resolvePermissionEntry(permEntry, "deny", "Bubble window closed by user");
     }
   });
 
-  guardAlwaysOnTop(bubble);
+  guardAlwaysOnTop(bub);
 }
 
-function sendBubbleData(toolName, toolInput) {
-  if (!bubble || bubble.isDestroyed()) return;
-  const suggestions = pendingPermission ? pendingPermission.suggestions : [];
-  bubble.webContents.send("permission-show", {
-    toolName,
-    toolInput,
-    suggestions,
-    lang,
-  });
-}
+function resolvePermissionEntry(permEntry, behavior, message) {
+  const idx = pendingPermissions.indexOf(permEntry);
+  if (idx === -1) return;
+  pendingPermissions.splice(idx, 1);
 
-function resolvePermission(behavior, message) {
-  if (!pendingPermission) return;
+  const { res, abortHandler, bubble: bub } = permEntry;
+  if (abortHandler) res.removeListener("close", abortHandler);
 
-  const { res, abortHandler } = pendingPermission;
-  // Remove abort listener to avoid double-resolve after we send the response
-  if (abortHandler) {
-    res.removeListener("close", abortHandler);
-  }
-
-  // Guard: client may have disconnected
-  if (res.writableEnded || res.destroyed) {
-    pendingPermission = null;
-    hideBubble();
-    return;
-  }
-
-  const decision = { behavior: behavior === "deny" ? "deny" : "allow" };
-  if (behavior === "deny" && message) {
-    decision.message = message;
-  }
-  // If resolving with a permission suggestion, attach updatedPermissions
-  if (pendingPermission.resolvedSuggestion) {
-    decision.updatedPermissions = [pendingPermission.resolvedSuggestion];
-  }
-  const responseBody = {
-    hookSpecificOutput: {
-      hookEventName: "PermissionRequest",
-      decision,
-    },
-  };
-
-  const body = JSON.stringify(responseBody);
-  fs.appendFileSync(path.join(app.getPath("userData"), "permission-debug.log"), `[${new Date().toISOString()}] response: ${body}\n`);
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(body);
-
-  pendingPermission = null;
-  hideBubble();
-}
-
-function hideBubble() {
-  if (bubble && !bubble.isDestroyed()) {
-    bubble.webContents.send("permission-hide");
-    if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
-    bubbleHideTimer = setTimeout(() => {
-      bubbleHideTimer = null;
-      if (bubble && !bubble.isDestroyed()) bubble.hide();
+  // Hide this bubble (fade out + destroy)
+  if (bub && !bub.isDestroyed()) {
+    bub.webContents.send("permission-hide");
+    if (permEntry.hideTimer) clearTimeout(permEntry.hideTimer);
+    permEntry.hideTimer = setTimeout(() => {
+      if (bub && !bub.isDestroyed()) bub.destroy();
     }, 250);
   }
+
+  // Reposition remaining bubbles to fill the gap
+  repositionBubbles();
+
+  // Guard: client may have disconnected
+  if (res.writableEnded || res.destroyed) return;
+
+  const decision = { behavior: behavior === "deny" ? "deny" : "allow" };
+  if (behavior === "deny" && message) decision.message = message;
+  if (permEntry.resolvedSuggestion) {
+    decision.updatedPermissions = [permEntry.resolvedSuggestion];
+  }
+
+  const responseBody = JSON.stringify({
+    hookSpecificOutput: { hookEventName: "PermissionRequest", decision },
+  });
+  fs.appendFileSync(path.join(app.getPath("userData"), "permission-debug.log"), `[${new Date().toISOString()}] response: ${responseBody}\n`);
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(responseBody);
 }
 
 // ── System tray ──
@@ -1826,36 +1795,47 @@ function createWindow() {
     popupMenuAt(Menu.buildFromTemplate(buildSessionSubmenu()));
   });
 
-  ipcMain.on("permission-decide", (_, behavior) => {
+  ipcMain.on("bubble-height", (event, height) => {
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const perm = pendingPermissions.find(p => p.bubble === senderWin);
+    if (perm && typeof height === "number" && height > 0) {
+      perm.measuredHeight = Math.ceil(height);
+      repositionBubbles();
+    }
+  });
+
+  ipcMain.on("permission-decide", (event, behavior) => {
     const dbg = path.join(app.getPath("userData"), "permission-debug.log");
-    fs.appendFileSync(dbg, `[${new Date().toISOString()}] IPC permission-decide: behavior=${behavior} pending=${!!pendingPermission}\n`);
-    if (!pendingPermission) return;
+    // Identify which permission this bubble belongs to via sender webContents
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const perm = pendingPermissions.find(p => p.bubble === senderWin);
+    fs.appendFileSync(dbg, `[${new Date().toISOString()}] IPC permission-decide: behavior=${behavior} matched=${!!perm}\n`);
+    if (!perm) return;
     // "suggestion:N" — user picked a permission suggestion
     if (typeof behavior === "string" && behavior.startsWith("suggestion:")) {
       const idx = parseInt(behavior.split(":")[1], 10);
-      const suggestion = pendingPermission.suggestions?.[idx];
-      if (!suggestion) { resolvePermission("deny", "Invalid suggestion index"); return; }
+      const suggestion = perm.suggestions?.[idx];
+      if (!suggestion) { resolvePermissionEntry(perm, "deny", "Invalid suggestion index"); return; }
       fs.appendFileSync(dbg, `[${new Date().toISOString()}] suggestion raw: ${JSON.stringify(suggestion)}\n`);
-      // Pass suggestion through as updatedPermissions — handle both flat and nested formats
       if (suggestion.type === "addRules") {
         const rules = Array.isArray(suggestion.rules) ? suggestion.rules
           : [{ toolName: suggestion.toolName, ruleContent: suggestion.ruleContent }];
-        pendingPermission.resolvedSuggestion = {
+        perm.resolvedSuggestion = {
           type: "addRules",
           destination: suggestion.destination || "localSettings",
           behavior: suggestion.behavior || "allow",
           rules,
         };
       } else if (suggestion.type === "setMode") {
-        pendingPermission.resolvedSuggestion = {
+        perm.resolvedSuggestion = {
           type: "setMode",
           mode: suggestion.mode,
           destination: suggestion.destination || "localSettings",
         };
       }
-      resolvePermission("allow");
+      resolvePermissionEntry(perm, "allow");
     } else {
-      resolvePermission(behavior === "allow" ? "allow" : "deny");
+      resolvePermissionEntry(perm, behavior === "allow" ? "allow" : "deny");
     }
   });
 
@@ -2302,12 +2282,10 @@ if (!gotTheLock) {
     stopStaleCleanup();
     stopTopmostWatchdog();
     killFocusHelper();
-    // Clean up pending permission request — send explicit deny so Claude Code doesn't hang
-    if (pendingPermission) {
-      resolvePermission("deny", "Clawd is quitting");
+    // Clean up all pending permission requests — send explicit deny so Claude Code doesn't hang
+    for (const perm of [...pendingPermissions]) {
+      resolvePermissionEntry(perm, "deny", "Clawd is quitting");
     }
-    if (bubbleHideTimer) { clearTimeout(bubbleHideTimer); bubbleHideTimer = null; }
-    if (bubble && !bubble.isDestroyed()) bubble.destroy();
     if (httpServer) httpServer.close();
   });
 
