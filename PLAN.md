@@ -4,7 +4,7 @@
 
 一个桌面宠物（Windows + macOS），基于 Claude Code 吉祥物 Clawd（像素风螃蟹），能感知 Claude Code 的工作状态并做出对应动画反应。
 
-**已完成里程碑**：MVP → 状态感知 → 交互打磨 → 生命感（眼球追踪/点击反应/睡眠序列）→ macOS 适配 → GitHub 发布（v0.3.2）→ 终端定位（v0.3.3）→ 权限审批气泡（v0.3.4）
+**已完成里程碑**：MVP → 状态感知 → 交互打磨 → 生命感（眼球追踪/点击反应/睡眠序列）→ macOS 适配 → GitHub 发布（v0.3.2）→ 终端定位（v0.3.3）→ 权限审批气泡（v0.3.4）→ blocking 权限审批（v0.3.5）
 
 ---
 
@@ -37,6 +37,141 @@
 
 ---
 
+## 借鉴 Masko Code 的改进（2026-03-24 调研 [RousselPaul/masko-code](https://github.com/RousselPaul/masko-code)）
+
+> Masko Code 是 Swift 原生 macOS 应用，支持 Claude Code / Codex / Copilot 三个 agent。
+> 它在"工具"维度很强（权限审批、终端跳转、多 agent），但缺少桌宠灵魂（无眼球追踪、无物理反应、无睡眠序列）。
+> 以下是我们要借鉴的三个核心功能。
+
+### M1. VS Code 扩展精确终端 tab 跳转（优先级：高）
+
+**现状**：我们用 `EnumWindows` + 窗口标题匹配，能定位到正确的**窗口**，但同一窗口内多个终端 tab 无法区分。
+
+**目标**：写一个极简 VS Code/Cursor 扩展（~30 行），通过 URI scheme + PID 匹配精确切到对应终端 tab。
+
+**Masko 的实现（23 行）**：
+```javascript
+// vscode://masko.terminal-focus?pid=12345
+vscode.window.registerUriHandler({
+  async handleUri(uri) {
+    const pid = parseInt(new URLSearchParams(uri.query).get('pid'));
+    for (const terminal of vscode.window.terminals) {
+      if (await terminal.processId === pid) {
+        terminal.show(false);
+        return;
+      }
+    }
+  }
+});
+```
+
+**实施要点**：
+- [ ] 创建 `extensions/vscode/` 目录，编写扩展（package.json + extension.js）
+- [ ] 注册 URI handler：`vscode://clawd.terminal-focus?pid=<PID>`
+- [ ] `focusTerminalWindow()` 优先用 URI scheme 跳转，fallback 到现有 EnumWindows 方案
+- [ ] 支持 VS Code + Cursor（两者共用 URI scheme 机制，publisher ID 不同）
+- [ ] 考虑自动安装（Electron 启动时检测 VS Code 扩展目录，自动 symlink）
+- [ ] macOS 兼容（`open vscode://...` 替代 Windows 的 `start vscode://...`）
+
+**工作量**：小（扩展本身 ~30 行，主要工作在集成和自动安装）
+
+### M2. 崩溃恢复 + 进程存活检测（优先级：高）
+
+**现状**：如果 Clawd 在 Claude Code 运行中重启，会一直停在 idle 直到下一个 hook 事件。无法检测孤儿会话。
+
+**目标**：定期检测 Claude Code / Codex 进程是否还活着，自动清理孤儿会话，支持会话重新激活。
+
+**Masko 的实现**：
+- 每 2 分钟 `pgrep` 检查进程存活
+- 1 小时以上无活动的孤儿会话自动 end
+- 每 3 秒轮询 transcript JSONL 尾部 4KB，检测 `[Request interrupted by user]`
+- 会话结束后如果新事件到来，可以重新激活
+
+**实施要点**：
+- [ ] 新增 `sessionReconciler` 定时器（2 分钟间隔）
+- [ ] Windows：`Get-Process` / `wmic` 检查 claude.exe / codex.exe 进程是否存活
+- [ ] macOS：`pgrep -f claude` / `pgrep -f codex`
+- [ ] 孤儿会话判定：进程已死 + 最后活动超过 N 分钟 → 自动 `updateSession(sid, "sleeping")`
+- [ ] 中断检测：定期读 transcript 文件尾部，检测 `[Request interrupted by user]`（可选，优先级低）
+- [ ] 会话重新激活：已 end 的 session 收到新事件时重新 activate
+
+**工作量**：中等
+
+### M3. 多 Agent 适配器架构（优先级：中）
+
+**现状**：所有代码硬编码绑定 Claude Code。hook 脚本、事件映射、状态机都混在一起。
+
+**目标**：抽象出 Agent 适配层，让支持新 agent（Codex、Copilot）只需新增配置 + hook 脚本，不碰核心逻辑。
+
+**Masko 的架构（端口-适配器模式）**：
+```
+AgentAdapter 协议（端口）
+  ├─ ClaudeCodeAdapter → HTTP hook (curl POST, 阻塞式 PermissionRequest)
+  ├─ CodexAdapter      → 日志轮询 (~/.codex/sessions/*.jsonl, 1s 间隔)
+  └─ CopilotAdapter    → 复用 HTTP server (注入 source:"copilot" 字段)
+
+MaskoEventBus（回调转发）
+  → EventProcessor（统一处理）
+  → SessionStore（跨 agent 会话追踪）
+  → OverlayStateMachine（动画状态切换）
+```
+
+**Codex CLI 的现实限制（2026-03-24 更新）**：
+- **Windows 上 hooks 完全禁用**（源码 hardcoded，非 bug）
+- 仅 4 个事件：SessionStart、UserPromptSubmit、PreToolUse、Stop
+- 没有 HTTP hook 类型，只有 command
+- PreToolUse 只能 deny，不能 approve（不能做 bubble 审批）
+- 没有 PostToolUse、SubagentStart/Stop、Notification、PermissionRequest
+- Masko 的解决方案：不用 hook，**日志轮询** `~/.codex/sessions/*.jsonl`
+
+**实施方案**：
+
+不搞 Masko 那种重度 OOP 适配器（我们是 Node.js 单文件架构），用轻量配置驱动：
+
+```javascript
+// agents/claude-code.js
+module.exports = {
+  name: "Claude Code",
+  processNames: { win: ["claude.exe"], mac: ["claude"] },
+  hookScript: "clawd-hook.js",
+  eventMap: {
+    SessionStart: "idle", UserPromptSubmit: "thinking",
+    PreToolUse: "working", PostToolUse: "working",
+    // ... 完整映射
+  },
+  supportsHttpHook: true,       // 支持 blocking 权限审批
+  supportsPermissionApproval: true,
+};
+
+// agents/codex.js
+module.exports = {
+  name: "Codex CLI",
+  processNames: { win: ["codex.exe"], mac: ["codex"] },
+  sessionLogDir: "~/.codex/sessions",  // 日志轮询路径
+  eventSource: "log-poll",             // 不走 hook，走日志轮询
+  eventMap: {
+    SessionStart: "idle", UserPromptSubmit: "thinking",
+    PreToolUse: "working", Stop: "attention",
+  },
+  supportsHttpHook: false,
+  supportsPermissionApproval: false,   // 只能聚焦终端
+};
+```
+
+- [ ] 提取 `agents/` 配置目录，每个 agent 一个配置文件
+- [ ] `main.js` 的 `updateSession()` 从 agent 配置读事件映射（替代硬编码）
+- [ ] 新增 Codex 日志轮询模块（`agents/codex-log-monitor.js`）
+  - 监听 `~/.codex/sessions/*.jsonl` 文件变化
+  - 增量读取新行，解析 record type → 映射为统一事件
+  - 注入到现有 `updateSession()` 流程
+- [ ] Codex hook 安装脚本（macOS/Linux 用 command hook，Windows 用日志轮询 fallback）
+- [ ] 会话来源标记：`AgentSession` 加 `agentSource` 字段，右键菜单/dashboard 显示来源图标
+- [ ] 权限 bubble 根据 agent 能力调整 UI（Codex：只显示 "Jump to Terminal" 按钮，不显示 Allow/Deny）
+
+**工作量**：大（涉及架构重构 + Codex 日志解析 + 新 hook 脚本 + UI 适配）
+
+---
+
 ## 第五阶段：效率工具化
 
 **目标：Clawd 不只是陪伴，还能提升工作效率。**
@@ -50,6 +185,7 @@
 - [x] 预热 PowerShell + ALT 键绕过 + SetForegroundWindow 激活窗口（秒跳）
 - [x] 多会话时，跳转到当前最高优先级的会话对应窗口
 - [x] 单击即跳转（所有状态），不影响双击/四击反应动画
+- [x] 多窗口终端焦点：EnumWindows + 窗口标题匹配（v0.3.5）
 
 **macOS（✅ 已验证，PR #10 by PixelCookie-zyf，2026-03-23）：**
 - [x] 预留 macOS 分支（`isMac` 判断），osascript 激活框架已写
@@ -102,6 +238,8 @@
 - [x] `setMode` 响应补全 `destination` 字段（符合 Claude Code schema）
 - [x] Windows 反斜杠路径兼容（suggestion label 分割）
 - [x] macOS 验证通过：透明窗口无需 `focus()` hack，Allow/Deny/suggestions 均正常（PR #10，2026-03-23）
+- [x] 多气泡堆叠：toast 风格从下往上叠，动态高度测量（v0.3.5）
+- [x] 真正的 blocking 审批：移除 command hook 干扰 + 删除 "User answered in terminal" 误判（v0.3.5）
 
 详细实施方案见 `docs/plan-permission-bubble.md`。
 
@@ -113,21 +251,47 @@
 
 `claude -p` 管道调用时跳过 hook 事件，避免批量脚本让桌宠疯狂闪切。Notchi 的做法是在 hook 脚本里检测父进程是否带 `-p`/`--print` 参数。目前鹿鹿的使用场景全是交互式，暂时不需要。
 
-### Codex 适配（搁置，2026-03-22 调研结论）
+---
 
-**搁置原因**：Codex hook 系统太不成熟，且 Clawd 本身是 Claude Code 形象，做 Codex 适配定位不清晰。
+## 竞品调研备忘
 
-**调研结果备忘（省得以后重新查）**：
+### Masko Code（2026-03-24 调研）
 
-- Codex CLI 的 hooks 引擎于 v0.114.0（2026-03-11）才合并，需要手动开启 feature flag：`codex -c features.codex_hooks=true`
-- **目前只有 3 个事件**：`SessionStart`、`Stop`、`UserPromptSubmit`（v0.116.0 加入）
-- **缺失关键事件**：PreToolUse、PostToolUse、SubagentStart/Stop、Notification 全没有 → 无法区分 working/typing/building/juggling
-- Hook 配置在 `~/.codex/hooks.json`，格式类似 Claude Code 但字段不同（有 `timeout`、`statusMessage` 等）
-- 事件通过 stdin JSON 传递，字段包含 `hook_event_name`、`session_id`、`cwd`、`model`、`permission_mode` 等
-- OpenAI 社区在催更多事件（Issue #2109，69+ 评论），但截至 2026-03-22 未落地
-- **Masko Code 的做法**：不用 hook，直接轮询 `~/.codex/sessions/*.jsonl` 日志文件（每秒读新增行），绕开了 hook 系统的限制
-- 社区 fork（stellarlinkco/codex）有完整 hooks 实现，但非官方
-- 如果以后要做，两条路：(A) 等官方补齐事件后写 hook 脚本；(B) 学 Masko 轮询 JSONL 日志（不依赖 hook，但绑定日志格式）
+**项目**：[RousselPaul/masko-code](https://github.com/RousselPaul/masko-code)，Swift 原生 macOS 应用，263 星
+
+**技术栈差异**：
+
+| 维度 | Clawd | Masko |
+|------|-------|-------|
+| 运行时 | Electron (Node.js) | Swift 原生 |
+| 动画 | SVG（DOM 操作 + 眼球追踪） | HEVC 视频（Alpha 通道透明） |
+| 窗口 | 1 个透明窗口 + N 个 bubble | 3 个 NSPanel（吉祥物 + HUD + 权限面板） |
+| Agent | 仅 Claude Code | Claude Code + Codex + Copilot |
+| 状态机 | 硬编码优先级状态机 | JSON 配置驱动（可换角色） |
+| 权限 | HTTP hook blocking + bubble UI | 完整审批系统（队列 + 键盘 + 折叠） |
+| 终端跳转 | EnumWindows + 窗口标题 | 13 种终端分级 + VS Code 扩展精确到 tab |
+| 平台 | Windows + macOS | 仅 macOS |
+
+**我们的优势**：眼球追踪、点击/拖拽反应、睡眠序列、极简模式、DND、跨平台、像素风美术
+**Masko 的优势**：权限审批完整度、终端跳转精度、多 Agent 支持、崩溃恢复、可换角色
+
+**已借鉴**：blocking 权限审批（v0.3.5）
+**待借鉴**：VS Code 扩展 tab 跳转（M1）、崩溃恢复（M2）、多 Agent 适配（M3）
+
+### Codex CLI Hooks 系统（2026-03-24 调研）
+
+**关键发现**：
+
+- Hooks 引擎名为 `ClaudeHooksEngine`（直接借鉴 Claude Code 协议）
+- **Windows 上 hooks 完全禁用**（源码 hardcoded）
+- 仅 4 个事件：SessionStart、UserPromptSubmit、PreToolUse、Stop
+- 没有 HTTP hook 类型，只有 command
+- PreToolUse 只能 deny，不能 approve
+- 缺失：PostToolUse、SubagentStart/Stop、Notification、PermissionRequest、SessionEnd 等
+- stdin JSON 格式与 Claude Code 高度相似（session_id、cwd、hook_event_name 等）
+- hooks.json 配置格式与 Claude Code 的 settings.json hooks 几乎相同
+- 社区在催更多事件（Issue #2109，69+ 评论），截至 2026-03-24 未落地
+- **对我们的影响**：Codex 支持必须走日志轮询（`~/.codex/sessions/*.jsonl`），不能依赖 hook
 
 ---
 
@@ -139,6 +303,8 @@
 | 动画格式 | SVG（CSS 动画驱动） | 透明背景、可操作内部 DOM（眼球追踪）、无损缩放 |
 | 状态通信 | 本地 HTTP 服务（127.0.0.1:23333） | 零延迟、无文件并发问题、hook 脚本只需一个 POST 请求 |
 | 美术风格 | 像素风 | 跟随官方 Clawd 设计 |
+| 权限审批通信 | HTTP hook blocking（非 command hook） | Claude Code 原生支持 HTTP hook 的请求-响应模式，command hook 只能 fire-and-forget |
+| Codex 事件源 | 日志轮询（非 hook） | Codex Windows hooks 禁用 + 事件集合太少，日志文件包含完整信息 |
 
 ---
 
@@ -149,3 +315,5 @@
 | Electron 内存占用太大 | 迁移到 Tauri（前端代码可复用） |
 | ~~权限审批的双向通信复杂度高~~ | ~~先做只读通知，后续迭代双向~~ ✅ 已通过 HTTP hook 解决 |
 | 自动更新签名问题 | Windows 未签名会触发 SmartScreen，评估代码签名成本 |
+| Codex 日志格式变更 | 日志轮询绑定 JSONL 格式，格式变更需跟进适配 |
+| VS Code 扩展分发 | 自动安装到扩展目录 vs 发布到 Marketplace（后者需审核） |

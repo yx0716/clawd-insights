@@ -1079,13 +1079,17 @@ function startHttpServer() {
               res.end("mini states require svg override");
               return;
             }
-            // With the HTTP hook blocking Claude Code, it cannot proceed until we
-            // respond.  Any /state events arriving while a permission is pending are
-            // just late-arriving hooks from the previous tool call — not evidence that
-            // the user answered in the terminal.  The only legitimate dismiss paths:
-            //   1. User clicks Allow/Deny on the bubble
-            //   2. HTTP connection closes (Claude Code timeout or crash) → abortHandler
-            //   3. DND activated / app quitting
+            // If the user answered in the terminal, Claude Code proceeds and fires
+            // new hook events.  We detect this by checking for non-PermissionRequest
+            // /state events for sessions with pending permissions.  BUT late-arriving
+            // hooks from the PREVIOUS tool call (~900ms) can cause false positives,
+            // so we ignore events arriving within 2s of the permission being created.
+            if (event !== "PermissionRequest") {
+              const matchPerm = pendingPermissions.find(p => p.sessionId === sid);
+              if (matchPerm && Date.now() - matchPerm.createdAt > 2000) {
+                resolvePermissionEntry(matchPerm, "deny", "User answered in terminal");
+              }
+            }
             if (svg) {
               // Direct SVG override (test-demo.sh, manual curl) — bypass session logic
               // Sanitize: strip path separators to prevent directory traversal
@@ -1142,7 +1146,7 @@ function startHttpServer() {
           const suggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
 
           // Detect client disconnect (e.g. Claude Code timeout or user answered in terminal).
-          const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null };
+          const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now() };
           const abortHandler = () => {
             if (res.writableFinished) return;
             fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] abortHandler fired\n`);
