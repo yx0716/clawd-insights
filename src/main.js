@@ -1281,7 +1281,8 @@ function showPermissionBubble(permEntry) {
       suggestions: permEntry.suggestions || [],
       lang,
     });
-    if (!isMac) setTimeout(() => { if (bub && !bub.isDestroyed()) bub.focus(); }, 100);
+    // Don't call bub.focus() — it steals focus from terminal and can trigger
+    // false "User answered in terminal" denials in Claude Code, wasting tokens.
   });
 
   repositionBubbles();
