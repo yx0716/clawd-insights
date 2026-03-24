@@ -850,7 +850,7 @@ function buildSessionSubmenu() {
     return {
       label: `${emoji} ${name}  ${stateText}  ${elapsed}`,
       enabled: hasPid,
-      click: hasPid ? () => focusTerminalWindow(e.sourcePid) : undefined,
+      click: hasPid ? () => focusTerminalWindow(e.sourcePid, e.cwd) : undefined,
     };
   });
 }
@@ -896,12 +896,20 @@ const { execFile, spawn } = require("child_process");
 const PS_FOCUS_ADDTYPE = `
 Add-Type @"
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 public class WinFocus {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int maxCount);
+    [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
     public static void Focus(IntPtr hWnd) {
         if (hWnd == IntPtr.Zero) return;
         if (IsIconic(hWnd)) ShowWindow(hWnd, 9);
@@ -909,16 +917,49 @@ public class WinFocus {
         keybd_event(0x12, 0, 2, UIntPtr.Zero);
         SetForegroundWindow(hWnd);
     }
+    public static IntPtr FindByPidTitle(uint targetPid, string sub) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, _) => {
+            if (!IsWindowVisible(hWnd)) return true;
+            uint pid; GetWindowThreadProcessId(hWnd, out pid);
+            if (pid != targetPid) return true;
+            int len = GetWindowTextLength(hWnd);
+            if (len == 0) return true;
+            var sb = new StringBuilder(len + 1);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            if (sb.ToString().IndexOf(sub, StringComparison.OrdinalIgnoreCase) >= 0) {
+                found = hWnd;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 }
 "@
 `;
 
-function makeFocusCmd(sourcePid) {
+function makeFocusCmd(sourcePid, cwdCandidates) {
+  // Walk up the process tree (same proven logic as before).
+  // When we find the process with MainWindowHandle, try title-matching first
+  // to support multi-window editors (Cursor/VS Code). Fall back to MainWindowHandle.
+  const psNames = cwdCandidates.length
+    ? cwdCandidates.map(c => `'${c.replace(/'/g, "''")}'`).join(",")
+    : "";
+  const titleMatchBlock = psNames ? `
+        $matched = $false
+        foreach ($name in @(${psNames})) {
+            $hwnd = [WinFocus]::FindByPidTitle([uint32]$curPid, $name)
+            if ($hwnd -ne [IntPtr]::Zero) {
+                [WinFocus]::Focus($hwnd); $matched = $true; break
+            }
+        }
+        if ($matched) { break }` : "";
   return `
 $curPid = ${sourcePid}
 for ($i = 0; $i -lt 8; $i++) {
     $proc = Get-Process -Id $curPid -ErrorAction SilentlyContinue
-    if ($proc -and $proc.MainWindowHandle -ne 0) {
+    if ($proc -and $proc.MainWindowHandle -ne 0) {${titleMatchBlock}
         [WinFocus]::Focus($proc.MainWindowHandle)
         break
     }
@@ -950,8 +991,21 @@ function killFocusHelper() {
   if (psProc) { psProc.kill(); psProc = null; }
 }
 
-function focusTerminalWindow(sourcePid) {
+function focusTerminalWindow(sourcePid, cwd) {
   if (!sourcePid) return;
+  // Build candidate folder names from cwd for title matching (deepest first).
+  // e.g. "C:\Users\X\GPT_Test\redbook" → ['redbook', 'GPT_Test']
+  // Cursor window title typically shows workspace root, which may not be the deepest folder.
+  const cwdCandidates = [];
+  if (cwd) {
+    let dir = cwd;
+    for (let i = 0; i < 3; i++) {
+      const name = path.basename(dir);
+      if (!name || name === dir || /^[A-Z]:$/i.test(name)) break;
+      cwdCandidates.push(name);
+      dir = path.dirname(dir);
+    }
+  }
   if (isMac) {
     // macOS: walk up process tree via ps, then activate via osascript
     // TODO: community contributor — test and refine on real macOS hardware
@@ -981,7 +1035,7 @@ function focusTerminalWindow(sourcePid) {
   }
 
   // Windows: send command to persistent PowerShell process (near-instant)
-  const cmd = makeFocusCmd(sourcePid);
+  const cmd = makeFocusCmd(sourcePid, cwdCandidates);
   if (psProc && psProc.stdin.writable) {
     psProc.stdin.write(cmd + "\n");
   } else {
@@ -1754,17 +1808,18 @@ function createWindow() {
 
   ipcMain.on("focus-terminal", () => {
     // Find the best session to focus: prefer highest priority (non-idle), then most recent
-    let bestPid = null, bestTime = 0, bestPriority = -1;
+    let bestPid = null, bestCwd = "", bestTime = 0, bestPriority = -1;
     for (const [, s] of sessions) {
       if (!s.sourcePid) continue;
       const pri = STATE_PRIORITY[s.state] || 0;
       if (pri > bestPriority || (pri === bestPriority && s.updatedAt > bestTime)) {
         bestPid = s.sourcePid;
+        bestCwd = s.cwd;
         bestTime = s.updatedAt;
         bestPriority = pri;
       }
     }
-    if (bestPid) focusTerminalWindow(bestPid);
+    if (bestPid) focusTerminalWindow(bestPid, bestCwd);
   });
 
   ipcMain.on("show-session-menu", () => {
