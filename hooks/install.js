@@ -20,7 +20,7 @@ const HOOK_EVENTS = [
   "PreCompact",
   "PostCompact",
   "Notification",
-  "PermissionRequest",
+  // PermissionRequest: handled by HTTP_HOOKS (blocking), not command hook
   "Elicitation",
   "WorktreeCreate",
 ];

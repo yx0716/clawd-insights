@@ -17,7 +17,7 @@ const EVENT_TO_STATE = {
   PreCompact: "sweeping",
   PostCompact: "attention",
   Notification: "notification",
-  PermissionRequest: "notification",
+  // PermissionRequest is handled by HTTP hook (blocking) — not command hook
   Elicitation: "notification",
   WorktreeCreate: "carrying",
 };

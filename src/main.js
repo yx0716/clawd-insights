@@ -1079,14 +1079,13 @@ function startHttpServer() {
               res.end("mini states require svg override");
               return;
             }
-            // If a new hook event (not PermissionRequest itself) arrives for the same
-            // session that has a pending permission bubble, the user answered in terminal.
-            // PermissionRequest fires on BOTH /state (command hook) and /permission (HTTP hook)
-            // simultaneously — we must ignore it here to avoid instantly dismissing our own bubble.
-            if (event !== "PermissionRequest") {
-              const matchPerm = pendingPermissions.find(p => p.sessionId === sid);
-              if (matchPerm) resolvePermissionEntry(matchPerm, "deny", "User answered in terminal");
-            }
+            // With the HTTP hook blocking Claude Code, it cannot proceed until we
+            // respond.  Any /state events arriving while a permission is pending are
+            // just late-arriving hooks from the previous tool call — not evidence that
+            // the user answered in the terminal.  The only legitimate dismiss paths:
+            //   1. User clicks Allow/Deny on the bubble
+            //   2. HTTP connection closes (Claude Code timeout or crash) → abortHandler
+            //   3. DND activated / app quitting
             if (svg) {
               // Direct SVG override (test-demo.sh, manual curl) — bypass session logic
               // Sanitize: strip path separators to prevent directory traversal
@@ -1121,11 +1120,17 @@ function startHttpServer() {
       req.on("end", () => {
         if (destroyed) return;
 
-        // DND mode: return empty 200 so Claude Code falls back to terminal prompt
+        // DND mode: explicitly deny so Claude Code falls back to terminal prompt
         if (doNotDisturb) {
           fs.appendFileSync(permDebugLog, `[${new Date().toISOString()}] SKIPPED: DND mode\n`);
-          res.writeHead(200);
-          res.end();
+          const dndBody = JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "PermissionRequest",
+              decision: { behavior: "deny", message: "Clawd is in Do Not Disturb mode" },
+            },
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(dndBody);
           return;
         }
 
