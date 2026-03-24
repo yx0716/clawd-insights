@@ -8,7 +8,7 @@
 
 一个能实时感知 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 工作状态的桌面宠物。Clawd 住在你的屏幕上——你提问时它思考，工具运行时它打字，子代理工作时它杂耍，任务完成时它庆祝，你离开时它睡觉。
 
-> 仅支持 Windows 11。需要 Node.js 和 Claude Code。
+> 支持 Windows 11 和 macOS。需要 Node.js 和 Claude Code。
 
 ## 功能特性
 
@@ -71,6 +71,13 @@ node hooks/install.js
 # 启动 Clawd
 npm start
 ```
+
+### macOS 说明
+
+- **源码运行**（`npm start`）：Intel 和 Apple Silicon 均可直接使用。
+- **DMG 安装包**：未签名 Apple 开发者证书，macOS Gatekeeper 会拦截。解决方法：
+  - 右键点击应用 → **打开** → 在弹窗中点击 **打开**，或
+  - 在终端运行 `xattr -cr /Applications/Clawd\ on\ Desk.app`
 
 ## 工作原理
 

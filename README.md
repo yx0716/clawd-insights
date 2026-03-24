@@ -8,7 +8,7 @@
 
 A desktop pet that reacts to your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions in real-time. Clawd lives on your screen — thinking when you prompt, typing when tools run, juggling subagents, celebrating when tasks complete, and sleeping when you're away.
 
-> Windows 11 only. Requires Node.js and Claude Code.
+> Supports Windows 11 and macOS. Requires Node.js and Claude Code.
 
 ## Features
 
@@ -71,6 +71,13 @@ node hooks/install.js
 # Start Clawd
 npm start
 ```
+
+### macOS Notes
+
+- **From source** (`npm start`): works out of the box on Intel and Apple Silicon.
+- **DMG installer**: the app is not signed with an Apple Developer certificate, so macOS Gatekeeper will block it. To open:
+  - Right-click the app → **Open** → click **Open** in the dialog, or
+  - Run `xattr -cr /Applications/Clawd\ on\ Desk.app` in Terminal.
 
 ## How It Works
 
