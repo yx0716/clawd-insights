@@ -980,17 +980,40 @@ function makeFocusCmd(sourcePid, cwdCandidates) {
             }
         }
         if ($matched) { break }` : "";
+  // Windows Terminal fallback: same title matching but against WT windows
+  const wtTitleMatch = psNames ? `
+    $wtProcs = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue
+    foreach ($wt in $wtProcs) {
+        if ($wt.MainWindowHandle -eq 0) { continue }
+        foreach ($name in @(${psNames})) {
+            $hwnd = [WinFocus]::FindByPidTitle([uint32]$wt.Id, $name)
+            if ($hwnd -ne [IntPtr]::Zero) {
+                [WinFocus]::Focus($hwnd); $focused = $true; break
+            }
+        }
+        if ($focused) { break }
+    }` : "";
+
   return `
 $curPid = ${sourcePid}
+$focused = $false
 for ($i = 0; $i -lt 8; $i++) {
     $proc = Get-Process -Id $curPid -ErrorAction SilentlyContinue
-    if ($proc -and $proc.MainWindowHandle -ne 0) {${titleMatchBlock}
+    if (-not $proc -or $proc.ProcessName -eq 'explorer') { break }
+    if ($proc.MainWindowHandle -ne 0) {${titleMatchBlock}
         [WinFocus]::Focus($proc.MainWindowHandle)
+        $focused = $true
         break
     }
     $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$curPid" -ErrorAction SilentlyContinue
     if (-not $cim -or $cim.ParentProcessId -eq 0 -or $cim.ParentProcessId -eq $curPid) { break }
     $curPid = $cim.ParentProcessId
+}
+if (-not $focused) {${wtTitleMatch}
+    if (-not $focused) {
+        $wt = Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($wt -and $wt.MainWindowHandle -ne 0) { [WinFocus]::Focus($wt.MainWindowHandle) }
+    }
 }
 `;
 }
