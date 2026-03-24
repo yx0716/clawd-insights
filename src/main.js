@@ -197,7 +197,6 @@ const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "
 const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd }
 const SESSION_STALE_MS = 300000; // 5 min cleanup
 const WORKING_STALE_MS = 30000;  // 30s: working/thinking with no new event → decay to idle
-const TERMINAL_DISMISS_GRACE_MS = 2000; // ignore late hooks from previous tool call
 const STATE_PRIORITY = {
   error: 8, notification: 7, sweeping: 6, attention: 5,
   carrying: 4, juggling: 4, working: 3, thinking: 2, idle: 1, sleeping: 0,
@@ -1081,15 +1080,13 @@ function startHttpServer() {
               res.end("mini states require svg override");
               return;
             }
-            // If the user answered in the terminal, Claude Code proceeds and fires
-            // new hook events.  We detect this by checking for non-PermissionRequest
-            // /state events for sessions with pending permissions.  BUT late-arriving
-            // hooks from the PREVIOUS tool call (~900ms) can cause false positives,
-            // so we ignore events arriving within 2s of the permission being created.
-            if (event !== "PermissionRequest") {
-              const now = Date.now();
+            // Detect "user answered in terminal": only PostToolUse/PostToolUseFailure
+            // reliably indicate the tool ran or was rejected (i.e. permission resolved).
+            // Other events (PreToolUse, Notification, etc.) are too noisy — late hooks
+            // from previous tool calls cause false dismissals.
+            if (event === "PostToolUse" || event === "PostToolUseFailure" || event === "Stop") {
               for (const perm of [...pendingPermissions]) {
-                if (perm.sessionId === sid && now - perm.createdAt > TERMINAL_DISMISS_GRACE_MS) {
+                if (perm.sessionId === sid) {
                   resolvePermissionEntry(perm, "deny", "User answered in terminal");
                 }
               }
