@@ -273,6 +273,7 @@ let idleWasActive = false;
 let lastEyeDx = 0, lastEyeDy = 0;
 let forceEyeResend = false;
 let forceMouseStateRefresh = false;
+let eyeResendTimer = null;
 
 // ── Mini Mode ──
 const MINI_OFFSET_RATIO = 0.486;
@@ -396,8 +397,9 @@ function applyState(state, svgOverride) {
   currentSvg = svg;
 
   // Force eye resend after SVG load completes (~300ms)
+  if (eyeResendTimer) { clearTimeout(eyeResendTimer); eyeResendTimer = null; }
   if (state === "idle" || state === "mini-idle") {
-    setTimeout(() => { forceEyeResend = true; }, 300);
+    eyeResendTimer = setTimeout(() => { eyeResendTimer = null; forceEyeResend = true; }, 300);
   }
 
   // Update hit box based on SVG
@@ -1330,7 +1332,6 @@ function startTopmostWatchdog() {
       // the resulting setIgnoreMouseEvents call undoes the HWND fix.
       if (!dragLocked) {
         win.showInactive();
-        forceEyeResend = true;
       }
     }
     for (const perm of pendingPermissions) {
