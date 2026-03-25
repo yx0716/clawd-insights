@@ -164,6 +164,19 @@ assets/
   gif/               # 录制的 GIF（用于文档展示）
 ```
 
+## 参与贡献
+
+Clawd on Desk 是一个社区驱动的项目。欢迎提 Bug、提需求、提 PR。查看 [open issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) 或直接提交 PR。
+
+### 贡献者
+
+感谢每一位让 Clawd 变得更好的贡献者：
+
+- [@PixelCookie-zyf](https://github.com/PixelCookie-zyf) — macOS 适配、终端聚焦、权限气泡验证
+- [@yujiachen-y](https://github.com/yujiachen-y) — 随 Claude Code 自动启动
+- [@AooooooZzzz](https://github.com/AooooooZzzz) — ELECTRON_RUN_AS_NODE 启动修复、Windows 10 兼容
+- [@purefkh](https://github.com/purefkh) — macOS Dock 可见性修复
+
 ## 致谢
 
 - Clawd 像素画参考自 [clawd-tank](https://github.com/marciogranzotto/clawd-tank) by [@marciogranzotto](https://github.com/marciogranzotto)

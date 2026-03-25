@@ -196,6 +196,19 @@ assets/
   gif/               # Recorded GIFs for documentation
 ```
 
+## Contributing
+
+Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pull requests are all welcome. If you'd like to contribute, check out the [open issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) or submit a PR directly.
+
+### Contributors
+
+Thanks to everyone who has helped make Clawd better:
+
+- [@PixelCookie-zyf](https://github.com/PixelCookie-zyf) — macOS adaptation, terminal focus, permission bubble validation
+- [@yujiachen-y](https://github.com/yujiachen-y) — auto-start with Claude Code
+- [@AooooooZzzz](https://github.com/AooooooZzzz) — ELECTRON_RUN_AS_NODE launch fix, Windows 10 compatibility
+- [@purefkh](https://github.com/purefkh) — macOS dock visibility fix
+
 ## Acknowledgments
 
 - Clawd pixel art reference from [clawd-tank](https://github.com/marciogranzotto/clawd-tank) by [@marciogranzotto](https://github.com/marciogranzotto)
