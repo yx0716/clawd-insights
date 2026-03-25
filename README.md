@@ -196,9 +196,30 @@ assets/
   gif/               # Recorded GIFs for documentation
 ```
 
+## Known Limitations
+
+| Limitation | Details |
+|---|---|
+| **Codex CLI: no terminal focus** | Codex sessions use JSONL log polling which doesn't carry terminal PID info. Clicking Clawd won't jump to the Codex terminal. Claude Code and Copilot CLI work fine. |
+| **Codex CLI: Windows hooks disabled** | Codex hardcodes hooks off on Windows, so we poll log files instead. This means ~1.5s latency vs near-instant for hook-based agents. |
+| **Copilot CLI: manual hook setup** | Copilot hooks require manually creating `~/.copilot/hooks/hooks.json`. Claude Code and Codex work out of the box. |
+| **Copilot CLI: no permission bubble** | Copilot's `preToolUse` hook only supports deny, not the full allow/deny flow. Permission bubbles only work with Claude Code. |
+| **macOS auto-update** | No Apple code signing — macOS users must download updates manually from GitHub Releases. |
+| **No test framework for Electron** | Unit tests cover agents and log polling, but the Electron main process (state machine, windows, tray) has no automated tests. |
+
+### Roadmap
+
+Some things we'd like to explore in the future:
+
+- Codex terminal focus via process tree lookup from `codex.exe` PID
+- Auto-registration of Copilot CLI hooks (like we do for Claude Code)
+- Sound effects for state transitions (blocked by Electron autoplay policy)
+- Custom character skins / animations
+- Hook uninstall script for clean app removal
+
 ## Contributing
 
-Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pull requests are all welcome. If you'd like to contribute, check out the [open issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) or submit a PR directly.
+Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pull requests are all welcome — open an [issue](https://github.com/rullerzhou-afk/clawd-on-desk/issues) to discuss or submit a PR directly.
 
 ### Contributors
 

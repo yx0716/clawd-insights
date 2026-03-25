@@ -164,9 +164,30 @@ assets/
   gif/               # 录制的 GIF（用于文档展示）
 ```
 
+## 已知限制
+
+| 限制 | 说明 |
+|------|------|
+| **Codex CLI：无法跳转终端** | Codex 通过 JSONL 日志轮询，日志中不含终端 PID，点击桌宠无法跳转到 Codex 终端。Claude Code 和 Copilot CLI 正常。 |
+| **Codex CLI：Windows hooks 禁用** | Codex 在 Windows 上硬编码禁用了 hooks，因此走日志轮询，延迟约 1.5 秒（hook 方式几乎无延迟）。 |
+| **Copilot CLI：需手动配置 hooks** | Copilot 需要手动创建 `~/.copilot/hooks/hooks.json`。Claude Code 和 Codex 开箱即用。 |
+| **Copilot CLI：无权限气泡** | Copilot 的 `preToolUse` 只支持拒绝，无法做完整的允许/拒绝审批流。权限气泡仅支持 Claude Code。 |
+| **macOS 自动更新** | 无 Apple 代码签名，macOS 用户需从 GitHub Releases 手动下载更新。 |
+| **Electron 主进程无自动化测试** | 单元测试覆盖了 agent 配置和日志轮询，但状态机、窗口管理、托盘等 Electron 逻辑暂无自动化测试。 |
+
+### 未来计划
+
+一些我们想探索的方向：
+
+- Codex 终端聚焦（通过 `codex.exe` PID 反查进程树）
+- Copilot CLI hooks 自动注册（像 Claude Code 那样开箱即用）
+- 状态切换音效（目前被 Electron autoplay policy 阻塞）
+- 自定义角色皮肤 / 动画
+- Hook 卸载脚本（干净移除应用）
+
 ## 参与贡献
 
-Clawd on Desk 是一个社区驱动的项目。欢迎提 Bug、提需求、提 PR。查看 [open issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) 或直接提交 PR。
+Clawd on Desk 是一个社区驱动的项目。欢迎提 Bug、提需求、提 PR —— 在 [Issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) 里聊或直接提交 PR。
 
 ### 贡献者
 
