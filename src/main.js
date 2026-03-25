@@ -215,6 +215,8 @@ const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd
 const SESSION_STALE_MS = 300000; // 5 min cleanup
 const WORKING_STALE_MS = 30000;  // 30s: working/thinking with no new event → decay to idle
 let startupRecoveryActive = false; // suppress sleep sequence while waiting for hooks after restart
+let startupRecoveryTimer = null;   // hard timeout to clear startupRecoveryActive
+const STARTUP_RECOVERY_MAX_MS = 300000; // 5 min: give up waiting for hooks
 const STATE_PRIORITY = {
   error: 8, notification: 7, sweeping: 6, attention: 5,
   carrying: 4, juggling: 4, working: 3, thinking: 2, idle: 1, sleeping: 0,
@@ -692,8 +694,11 @@ function wakeFromDoze() {
 const ONESHOT_STATES = new Set(["attention", "error", "sweeping", "notification", "carrying"]);
 
 function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain, claudePid) {
-  // Hook arrived → cancel startup recovery (Claude Code is communicating)
-  startupRecoveryActive = false;
+  // Claude Code is communicating — no need for startup recovery
+  if (startupRecoveryActive) {
+    startupRecoveryActive = false;
+    if (startupRecoveryTimer) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; }
+  }
 
   // PermissionRequest command hook: show notification animation only, don't mutate session.
   // The HTTP hook runs in parallel and handles the actual decision. If we set session to idle
@@ -809,27 +814,33 @@ function cleanStaleSessions() {
   // Startup recovery: recheck if Claude Code is still running
   if (startupRecoveryActive && sessions.size === 0) {
     detectRunningClaudeProcesses((found) => {
-      if (!found) startupRecoveryActive = false;
+      if (!found) {
+        startupRecoveryActive = false;
+        if (startupRecoveryTimer) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; }
+      }
     });
   }
 }
 
-// Detect running Claude Code processes (async, for startup recovery)
-// Checks both native claude binary and node.exe running claude-code
+// Detect running Claude Code processes (async, for startup recovery).
+// Matches both native claude binary and node.exe running claude-code.
+let _detectInFlight = false;
 function detectRunningClaudeProcesses(callback) {
+  if (_detectInFlight) return;
+  _detectInFlight = true;
+  const done = (result) => { _detectInFlight = false; callback(result); };
   const { exec } = require("child_process");
   if (process.platform === "win32") {
-    // wmic CommandLine search catches both claude.exe and node.exe running claude-code
     // Restrict to node.exe/claude.exe to avoid matching wmic's own command line
     exec(
       'wmic process where "(Name=\'node.exe\' and CommandLine like \'%claude-code%\') or Name=\'claude.exe\'" get ProcessId /format:csv',
       { encoding: "utf8", timeout: 5000, windowsHide: true },
-      (err, stdout) => callback(!err && /\d+/.test(stdout))
+      (err, stdout) => done(!err && /\d+/.test(stdout))
     );
   } else {
     // pgrep -f matches full command line (catches node /path/to/claude-code)
     exec("pgrep -f claude-code", { timeout: 3000 },
-      (err) => callback(!err)
+      (err) => done(!err)
     );
   }
 }
@@ -2092,6 +2103,11 @@ function createWindow() {
           if (found && sessions.size === 0 && !doNotDisturb) {
             startupRecoveryActive = true;
             mouseStillSince = Date.now();
+            // Hard timeout: give up if no hooks arrive within 5 min
+            startupRecoveryTimer = setTimeout(() => {
+              startupRecoveryActive = false;
+              startupRecoveryTimer = null;
+            }, STARTUP_RECOVERY_MAX_MS);
           }
         });
       }, 5000);
