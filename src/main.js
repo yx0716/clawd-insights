@@ -272,6 +272,7 @@ let idlePaused = false;
 let idleWasActive = false;
 let lastEyeDx = 0, lastEyeDy = 0;
 let forceEyeResend = false;
+let forceMouseStateRefresh = false;
 
 // ── Mini Mode ──
 const MINI_OFFSET_RATIO = 0.486;
@@ -489,7 +490,8 @@ function startMainTick() {
       const hit = getHitRectScreen(bounds);
       const over = cursor.x >= hit.left && cursor.x <= hit.right
                 && cursor.y >= hit.top  && cursor.y <= hit.bottom;
-      if (over !== mouseOverPet) {
+      if (over !== mouseOverPet || forceMouseStateRefresh) {
+        forceMouseStateRefresh = false;
         mouseOverPet = over;
         win.setIgnoreMouseEvents(!over);
       }
@@ -1271,8 +1273,29 @@ function startHttpServer() {
 // So we keep the event listener for the cases it does catch (Alt/Win key), and add
 // a slow watchdog (20s) to recover from silent shell-initiated z-order drops.
 const WIN_TOPMOST_LEVEL = "pop-up-menu";  // above taskbar-level UI
-const TOPMOST_WATCHDOG_MS = 20_000;
+const TOPMOST_WATCHDOG_MS = 5_000;
 let topmostWatchdog = null;
+let hwndRecoveryTimer = null;
+
+// Reinitialize HWND input routing after DWM z-order disruptions.
+// showInactive() (ShowWindow SW_SHOWNOACTIVATE) is the same call that makes
+// the right-click context menu restore drag capability — it forces Windows to
+// fully recalculate the transparent window's input target region.
+function scheduleHwndRecovery() {
+  if (isMac) return;
+  if (hwndRecoveryTimer) clearTimeout(hwndRecoveryTimer);
+  // Debounce: wait for z-order transitions to settle before refreshing.
+  // Immediate nudge handles simple single-drop cases; this delayed recovery
+  // catches secondary disruptions (e.g. Start menu → click another item).
+  hwndRecoveryTimer = setTimeout(() => {
+    hwndRecoveryTimer = null;
+    if (!win || win.isDestroyed() || dragLocked) return;
+    win.showInactive();
+    win.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+    mouseOverPet = false;
+    forceMouseStateRefresh = true;
+  }, 1000);
+}
 
 function guardAlwaysOnTop(w) {
   if (isMac) return;
@@ -1280,11 +1303,15 @@ function guardAlwaysOnTop(w) {
   w.on("always-on-top-changed", (_, isOnTop) => {
     if (!isOnTop && w && !w.isDestroyed()) {
       w.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
-      // Pet window only: reset mouse state after z-order recovery
+      // Pet window only: immediate nudge + scheduled heavy recovery.
       if (w === win && !dragLocked) {
         mouseOverPet = false;
-        win.setIgnoreMouseEvents(true);
+        forceMouseStateRefresh = true;
         forceEyeResend = true;
+        const { x, y } = win.getBounds();
+        win.setPosition(x + 1, y);
+        win.setPosition(x, y);
+        scheduleHwndRecovery();
       }
     }
   });
@@ -1295,11 +1322,12 @@ function startTopmostWatchdog() {
   topmostWatchdog = setInterval(() => {
     if (win && !win.isDestroyed()) {
       win.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
-      // DWM z-order recovery may invalidate setIgnoreMouseEvents state.
-      // Reset so the next 50ms tick re-evaluates cursor position from scratch.
+      // Periodic HWND refresh — catches silent z-order disruptions that don't
+      // trigger always-on-top-changed (e.g. another topmost window appearing).
       if (!dragLocked) {
+        win.showInactive();
         mouseOverPet = false;
-        win.setIgnoreMouseEvents(true);
+        forceMouseStateRefresh = true;
         forceEyeResend = true;
       }
     }
@@ -1905,9 +1933,17 @@ function createWindow() {
 
   ipcMain.on("drag-lock", (event, locked) => {
     dragLocked = !!locked;
-    if (locked && !mouseOverPet) {
-      mouseOverPet = true;
-      win.setIgnoreMouseEvents(false);
+    if (locked) {
+      // Nudge window to reinitialize HWND input routing for pointer capture.
+      if (!isMac) {
+        const { x, y } = win.getBounds();
+        win.setPosition(x + 1, y);
+        win.setPosition(x, y);
+      }
+      if (!mouseOverPet) {
+        mouseOverPet = true;
+        win.setIgnoreMouseEvents(false);
+      }
     }
   });
 
