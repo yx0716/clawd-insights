@@ -130,8 +130,10 @@ function getObjectSvgName(objectEl) {
   return parts[parts.length - 1] || null;
 }
 
+const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
+
 function shouldTrackEyes(state, svg) {
-  return (state === "idle" && svg === "clawd-idle-follow.svg") || state === "mini-idle";
+  return (state === "idle" && svg === SVG_IDLE_FOLLOW) || state === "mini-idle";
 }
 
 function handleClick(clientX) {
@@ -305,15 +307,16 @@ window.electronAPI.onStateChange((state, svg) => {
     pendingNext.remove();
     pendingNext = null;
   }
-  detachEyeTracking();
-
   if (clawdEl && clawdEl.isConnected && currentDisplayedSvg === svg) {
-    if (shouldTrackEyes(state, svg)) {
+    if (shouldTrackEyes(state, svg) && !eyeTarget) {
       attachEyeTracking(clawdEl);
+    } else if (!shouldTrackEyes(state, svg)) {
+      detachEyeTracking();
     }
     currentIdleSvg = svg;
     return;
   }
+  detachEyeTracking();
 
   const next = document.createElement("object");
   next.type = "image/svg+xml";
