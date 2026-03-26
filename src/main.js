@@ -211,8 +211,8 @@ const IDLE_LOOK_DURATION = 10000;  // idle-look CSS loop is 10s
 const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "waking"]);
 
 // ── Session tracking ──
-const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd, editor, pidChain, agentPid, agentId }
-const SESSION_STALE_MS = 300000; // 5 min cleanup
+const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd, editor, pidChain, agentPid, agentId, pidReachable }
+const SESSION_STALE_MS = 600000; // 10 min: delete idle sessions entirely
 const WORKING_STALE_MS = 300000; // 5 min: working/thinking with no new event → decay to idle
 let startupRecoveryActive = false; // suppress sleep sequence while waiting for hooks after restart
 let startupRecoveryTimer = null;   // hard timeout to clear startupRecoveryActive
@@ -718,7 +718,12 @@ function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain
   const srcAgentPid = agentPid || (existing && existing.agentPid) || null;
   const srcAgentId = agentId || (existing && existing.agentId) || null;
 
-  const base = { sourcePid: srcPid, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain, agentPid: srcAgentPid, agentId: srcAgentId };
+  // WSL2/remote: PID from hook may be a Linux PID unreachable on Windows.
+  // Check once on session creation; if unreachable, skip PID liveness checks later.
+  const pidReachable = existing ? existing.pidReachable :
+    (srcAgentPid ? isProcessAlive(srcAgentPid) : (srcPid ? isProcessAlive(srcPid) : false));
+
+  const base = { sourcePid: srcPid, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain, agentPid: srcAgentPid, agentId: srcAgentId, pidReachable };
 
   if (event === "SessionEnd") {
     sessions.delete(sessionId);
@@ -777,26 +782,30 @@ function cleanStaleSessions() {
   for (const [id, s] of sessions) {
     const age = now - s.updatedAt;
 
-    // Agent process dead → orphan session, delete immediately regardless of age
-    if (s.agentPid && !isProcessAlive(s.agentPid)) {
+    // Agent process dead → orphan session, delete immediately
+    // Skip PID check for WSL2/remote sessions where PIDs are unreachable
+    if (s.pidReachable && s.agentPid && !isProcessAlive(s.agentPid)) {
       sessions.delete(id); changed = true;
       continue;
     }
 
     if (age > SESSION_STALE_MS) {
       // Very stale (5 min): PID check or delete
-      if (s.sourcePid) {
+      if (s.pidReachable && s.sourcePid) {
         if (!isProcessAlive(s.sourcePid)) {
           sessions.delete(id); changed = true;
         } else if (s.state !== "idle") {
           s.state = "idle"; changed = true;
         }
+      } else if (!s.pidReachable) {
+        // Remote session: rely purely on timeout
+        sessions.delete(id); changed = true;
       } else {
         sessions.delete(id); changed = true;
       }
     } else if (age > WORKING_STALE_MS) {
       // Moderately stale (5 min): check if terminal was closed
-      if (s.sourcePid && !isProcessAlive(s.sourcePid)) {
+      if (s.pidReachable && s.sourcePid && !isProcessAlive(s.sourcePid)) {
         sessions.delete(id); changed = true;
       } else if (s.state === "working" || s.state === "juggling" || s.state === "thinking") {
         // No hook event for 5 min while busy → likely interrupted or stalled
