@@ -1865,11 +1865,7 @@ function setupAutoUpdater() {
 
     // For manual checks, show user-friendly error
     manualUpdateCheck = false;
-    const is404Error = err.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' ||
-                       err.message?.includes('404') ||
-                       err.message?.includes('Cannot find latest.yml');
-
-    if (is404Error) {
+    if (isUpdate404Error(err)) {
       // 404 after GitHub API check = release exists but files missing
       updateLog("404 error: release files not ready, showing 'up to date'");
       dialog.showMessageBox({
@@ -1910,7 +1906,7 @@ function compareVersions(v1, v2) {
   return 0;
 }
 
-// Fetch latest release version from GitHub API
+// Fetch latest release version from GitHub API (10s timeout)
 function fetchLatestVersion() {
   return new Promise((resolve, reject) => {
     const options = {
@@ -1921,14 +1917,15 @@ function fetchLatestVersion() {
       }
     };
 
-    https.get(options, (res) => {
+    const req = https.get(options, (res) => {
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode === 200) {
           try {
             const release = JSON.parse(data);
-            resolve(release.tag_name || release.name);
+            if (!release.tag_name) return reject(new Error('No tag_name in release'));
+            resolve(release.tag_name);
           } catch (err) {
             reject(new Error(`Failed to parse GitHub response: ${err.message}`));
           }
@@ -1939,10 +1936,26 @@ function fetchLatestVersion() {
         }
       });
     }).on('error', reject);
+
+    req.setTimeout(10000, () => {
+      req.destroy();
+      reject(new Error('GitHub API request timed out (10s)'));
+    });
   });
 }
 
+function isUpdate404Error(err) {
+  return err.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' ||
+         err.message?.includes('404') ||
+         err.message?.includes('Cannot find latest.yml');
+}
+
 async function checkForUpdates(manual = false) {
+  try { return await _checkForUpdatesInner(manual); }
+  catch (e) { updateLog(`ERROR: unhandled in checkForUpdates: ${e.message}`); }
+}
+
+async function _checkForUpdatesInner(manual) {
   if (updateStatus === "checking" || updateStatus === "downloading") {
     updateLog(`Check skipped: already ${updateStatus}`);
     return;
@@ -2036,11 +2049,7 @@ async function checkForUpdates(manual = false) {
     updateLog(`Stack: ${err.stack}`);
 
     // Distinguish between real errors and "no newer version"
-    const is404Error = err.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' ||
-                       err.message?.includes('404') ||
-                       err.message?.includes('Cannot find latest.yml');
-
-    if (is404Error) {
+    if (isUpdate404Error(err)) {
       // This might mean the release files aren't ready yet
       updateLog("404 error: release files may not be uploaded yet");
       updateStatus = "idle";
