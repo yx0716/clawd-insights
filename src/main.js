@@ -316,6 +316,10 @@ let pendingState = null; // tracks what state is waiting in pendingTimer
 // ── Permission bubble (stacking) ──
 // Each entry: { res, abortHandler, suggestions, sessionId, bubble, hideTimer, toolName, toolInput, resolvedSuggestion, createdAt, measuredHeight }
 const pendingPermissions = [];
+// Pure-metadata tools auto-allowed without showing a bubble (zero side effects)
+const PASSTHROUGH_TOOLS = new Set([
+  "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskStop", "TaskOutput",
+]);
 let permDebugLog = null; // set after app.whenReady()
 
 function setState(newState, svgOverride) {
@@ -1300,12 +1304,6 @@ function startHttpServer() {
           const sessionId = data.session_id || "default";
           const suggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
 
-          // Auto-allow pure metadata tools that have zero side effects.
-          // These only read/write Claude Code's internal task list — they don't
-          // access files, run commands, or change operating mode.
-          const PASSTHROUGH_TOOLS = new Set([
-            "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskStop", "TaskOutput",
-          ]);
           if (PASSTHROUGH_TOOLS.has(toolName)) {
             permLog(`PASSTHROUGH: tool=${toolName} session=${sessionId}`);
             sendPermissionResponse(res, "allow");
