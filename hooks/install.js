@@ -15,6 +15,7 @@ const HOOK_EVENTS = [
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
+  "StopFailure",
   "SubagentStart",
   "SubagentStop",
   "PreCompact",

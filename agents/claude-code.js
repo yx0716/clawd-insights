@@ -17,6 +17,7 @@ module.exports = {
     PostToolUse: "working",
     PostToolUseFailure: "error",
     Stop: "attention",
+    StopFailure: "error",
     SubagentStart: "juggling",
     SubagentStop: "working",
     PreCompact: "sweeping",

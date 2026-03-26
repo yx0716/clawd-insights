@@ -12,6 +12,7 @@ const EVENT_TO_STATE = {
   PostToolUse: "working",
   PostToolUseFailure: "error",
   Stop: "attention",
+  StopFailure: "error",
   SubagentStart: "juggling",
   SubagentStop: "working",
   PreCompact: "sweeping",
