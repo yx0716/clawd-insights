@@ -1300,6 +1300,18 @@ function startHttpServer() {
           const sessionId = data.session_id || "default";
           const suggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
 
+          // Auto-allow pure metadata tools that have zero side effects.
+          // These only read/write Claude Code's internal task list — they don't
+          // access files, run commands, or change operating mode.
+          const PASSTHROUGH_TOOLS = new Set([
+            "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskStop", "TaskOutput",
+          ]);
+          if (PASSTHROUGH_TOOLS.has(toolName)) {
+            permLog(`PASSTHROUGH: tool=${toolName} session=${sessionId}`);
+            sendPermissionResponse(res, "allow");
+            return;
+          }
+
           // Detect client disconnect (e.g. Claude Code timeout or user answered in terminal).
           const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now() };
           const abortHandler = () => {
@@ -1463,7 +1475,7 @@ function showPermissionBubble(permEntry) {
     resizable: false,
     skipTaskbar: true,
     hasShadow: false,
-    focusable: true,
+    focusable: false,
     webPreferences: {
       preload: path.join(__dirname, "preload-bubble.js"),
       nodeIntegration: false,
