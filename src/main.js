@@ -443,7 +443,8 @@ function applyState(state, svgOverride) {
   }
 
   sendToRenderer("state-change", state, svg);
-  // Sync state to hitWin (for click behavior decisions) + cancel active reactions
+  // Sync hitWin position/size to match new hitbox + state
+  syncHitWin();
   sendToHitWin("hit-state-sync", { currentSvg: svg });
   sendToHitWin("hit-cancel-reaction");
 
