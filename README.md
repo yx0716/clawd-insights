@@ -68,7 +68,7 @@ Events from all agents (Claude Code hooks, Codex JSONL, Copilot hooks) map to th
 | PreToolUse (3+ sessions) | working (building) | Building | <img src="assets/gif/clawd-building.gif" width="200"> |
 | SubagentStart (1) | juggling | Juggling | <img src="assets/gif/clawd-juggling.gif" width="200"> |
 | SubagentStart (2+) | conducting | Conducting | <img src="assets/gif/clawd-conducting.gif" width="200"> |
-| PostToolUseFailure | error | ERROR + smoke | <img src="assets/gif/clawd-error.gif" width="200"> |
+| PostToolUseFailure / StopFailure | error | ERROR + smoke | <img src="assets/gif/clawd-error.gif" width="200"> |
 | Stop / PostCompact | attention | Happy bounce | <img src="assets/gif/clawd-happy.gif" width="200"> |
 | PermissionRequest / Notification | notification | Alert jump | <img src="assets/gif/clawd-notification.gif" width="200"> |
 | PreCompact | sweeping | Broom sweep | <img src="assets/gif/clawd-sweeping.gif" width="200"> |
@@ -103,7 +103,7 @@ npm start
 
 ### Agent Setup
 
-**Claude Code** — works out of the box. Hooks are auto-registered on launch.
+**Claude Code** — works out of the box. Hooks are auto-registered on launch. The installer detects your Claude Code version and only registers compatible hooks (e.g. `PreCompact`, `PostCompact`, `StopFailure` require CC ≥ 2.1.76+).
 
 **Codex CLI** — works out of the box. Clawd polls `~/.codex/sessions/` for JSONL logs automatically.
 

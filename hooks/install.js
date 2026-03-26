@@ -7,7 +7,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const HOOK_EVENTS = [
+// Hooks supported by all Claude Code versions
+const CORE_HOOKS = [
   "SessionStart",
   "SessionEnd",
   "UserPromptSubmit",
@@ -15,16 +16,52 @@ const HOOK_EVENTS = [
   "PostToolUse",
   "PostToolUseFailure",
   "Stop",
-  "StopFailure",
   "SubagentStart",
   "SubagentStop",
-  "PreCompact",
-  "PostCompact",
   "Notification",
   // PermissionRequest: handled by HTTP_HOOKS (blocking), not command hook
   "Elicitation",
   "WorktreeCreate",
 ];
+
+// Hooks that require a minimum Claude Code version
+const VERSIONED_HOOKS = [
+  { event: "PreCompact",  minVersion: "2.1.76" },
+  { event: "PostCompact", minVersion: "2.1.76" },
+  { event: "StopFailure", minVersion: "2.1.78" },
+];
+
+/**
+ * Compare two semver strings: return true if a < b.
+ */
+function versionLessThan(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) < (pb[i] || 0)) return true;
+    if ((pa[i] || 0) > (pb[i] || 0)) return false;
+  }
+  return false;
+}
+
+/**
+ * Detect installed Claude Code version by running `claude --version`.
+ * Returns version string (e.g. "2.1.78") or null if detection fails.
+ */
+function getClaudeVersion() {
+  try {
+    const { execSync } = require("child_process");
+    const out = execSync("claude --version", {
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true,
+    });
+    const match = out.match(/(\d+\.\d+\.\d+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
 
 const MARKER = "clawd-hook.js";
 const AUTO_START_MARKER = "auto-start.js";
@@ -74,9 +111,26 @@ function registerHooks(options = {}) {
 
   let added = 0;
   let skipped = 0;
+  let versionSkipped = 0;
   let changed = false;
 
-  for (const event of HOOK_EVENTS) {
+  // Detect CC version for versioned hooks filtering
+  const ccVersion = getClaudeVersion();
+
+  // Build the full hook list: core + version-compatible hooks
+  const hookEvents = [...CORE_HOOKS];
+  for (const { event, minVersion } of VERSIONED_HOOKS) {
+    if (ccVersion && versionLessThan(ccVersion, minVersion)) {
+      versionSkipped++;
+      if (!options.silent) {
+        console.log(`  Skipped ${event} (requires CC >= ${minVersion}, found ${ccVersion})`);
+      }
+      continue;
+    }
+    hookEvents.push(event);
+  }
+
+  for (const event of hookEvents) {
     if (!Array.isArray(settings.hooks[event])) {
       // Preserve existing non-array config by wrapping it
       const existing = settings.hooks[event];
@@ -196,9 +250,11 @@ function registerHooks(options = {}) {
 
   if (!options.silent) {
     console.log(`Clawd hooks installed to ${settingsPath}`);
+    console.log(`  Claude Code version: ${ccVersion || "unknown (registering all hooks)"}`);
     console.log(`  Added: ${added} hooks`);
     if (skipped > 0) console.log(`  Skipped: ${skipped} (already registered)`);
-    console.log(`\nHook events: ${HOOK_EVENTS.join(", ")}`);
+    if (versionSkipped > 0) console.log(`  Skipped: ${versionSkipped} (version too old)`);
+    console.log(`\nHook events: ${hookEvents.join(", ")}`);
     if (Object.keys(HTTP_HOOKS).length > 0) {
       console.log(`HTTP hooks: ${Object.keys(HTTP_HOOKS).join(", ")}`);
     }
