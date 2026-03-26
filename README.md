@@ -225,11 +225,16 @@ Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pul
 
 Thanks to everyone who has helped make Clawd better:
 
-- [@PixelCookie-zyf](https://github.com/PixelCookie-zyf) — macOS adaptation, terminal focus, permission bubble validation
-- [@yujiachen-y](https://github.com/yujiachen-y) — auto-start with Claude Code
-- [@AooooooZzzz](https://github.com/AooooooZzzz) — ELECTRON_RUN_AS_NODE launch fix, Windows 10 compatibility
-- [@purefkh](https://github.com/purefkh) — macOS dock visibility fix
-- [@Tobeabellwether](https://github.com/Tobeabellwether) — macOS top-of-screen drag constraint fix
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/PixelCookie-zyf"><img src="https://github.com/PixelCookie-zyf.png" width="50" /><br /><sub>PixelCookie-zyf</sub></a><br />macOS adaptation, terminal focus, permission bubble</td>
+    <td align="center"><a href="https://github.com/yujiachen-y"><img src="https://github.com/yujiachen-y.png" width="50" /><br /><sub>yujiachen-y</sub></a><br />auto-start with Claude Code</td>
+    <td align="center"><a href="https://github.com/AooooooZzzz"><img src="https://github.com/AooooooZzzz.png" width="50" /><br /><sub>AooooooZzzz</sub></a><br />ELECTRON_RUN_AS_NODE fix, Win10 compat</td>
+    <td align="center"><a href="https://github.com/purefkh"><img src="https://github.com/purefkh.png" width="50" /><br /><sub>purefkh</sub></a><br />macOS dock visibility fix</td>
+    <td align="center"><a href="https://github.com/Tobeabellwether"><img src="https://github.com/Tobeabellwether.png" width="50" /><br /><sub>Tobeabellwether</sub></a><br />macOS top drag constraint fix</td>
+    <td align="center"><a href="https://github.com/Jasonhonghh"><img src="https://github.com/Jasonhonghh.png" width="50" /><br /><sub>Jasonhonghh</sub></a><br />auto-updater error handling</td>
+  </tr>
+</table>
 
 ## Acknowledgments
 
