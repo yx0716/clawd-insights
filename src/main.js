@@ -1374,14 +1374,19 @@ function startHttpServer() {
     } else if (req.method === "POST" && req.url === "/state") {
       let body = "";
       let bodySize = 0;
-      let destroyed = false;
+      let tooLarge = false;
       req.on("data", (chunk) => {
+        if (tooLarge) return;
         bodySize += chunk.length;
-        if (bodySize > 1024) { destroyed = true; req.destroy(); return; }
+        if (bodySize > 1024) { tooLarge = true; return; }
         body += chunk;
       });
       req.on("end", () => {
-        if (destroyed) return;
+        if (tooLarge) {
+          res.writeHead(413);
+          res.end("state payload too large");
+          return;
+        }
         try {
           const data = JSON.parse(body);
           const { state, svg, session_id, event } = data;
