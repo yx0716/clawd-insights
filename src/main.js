@@ -511,7 +511,7 @@ function createWindow() {
   ipcMain.on("pause-cursor-polling", () => { idlePaused = true; });
   ipcMain.on("resume-from-reaction", () => {
     idlePaused = false;
-    if (miniTransitioning) return;
+    if (_mini.getMiniTransitioning()) return;
     sendToRenderer("state-change", _state.getCurrentState(), _state.getCurrentSvg());
   });
 
