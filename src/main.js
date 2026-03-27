@@ -53,7 +53,7 @@ function savePrefs() {
     x, y, size: currentSize,
     miniMode: _mini.getMiniMode(), preMiniX: _mini.getPreMiniX(), preMiniY: _mini.getPreMiniY(), lang,
     showTray, showDock,
-    autoStartWithClaude,
+    autoStartWithClaude, bubbleFollowPet,
   };
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
@@ -86,6 +86,7 @@ let isQuitting = false;
 let showTray = true;
 let showDock = true;
 let autoStartWithClaude = false;
+let bubbleFollowPet = false;
 
 function sendToRenderer(channel, ...args) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
@@ -129,8 +130,10 @@ let forceEyeResend = false;
 const _permCtx = {
   get win() { return win; },
   get lang() { return lang; },
+  get bubbleFollowPet() { return bubbleFollowPet; },
   get permDebugLog() { return permDebugLog; },
   getNearestWorkArea,
+  getHitRectScreen,
   guardAlwaysOnTop,
 };
 const _perm = require("./permission")(_permCtx);
@@ -325,6 +328,10 @@ const _menuCtx = {
   set showDock(v) { showDock = v; },
   get autoStartWithClaude() { return autoStartWithClaude; },
   set autoStartWithClaude(v) { autoStartWithClaude = v; },
+  get bubbleFollowPet() { return bubbleFollowPet; },
+  set bubbleFollowPet(v) { bubbleFollowPet = v; },
+  get pendingPermissions() { return pendingPermissions; },
+  repositionBubbles: () => repositionBubbles(),
   get isQuitting() { return isQuitting; },
   set isQuitting(v) { isQuitting = v; },
   get menuOpen() { return menuOpen; },
@@ -375,6 +382,7 @@ function createWindow() {
     if (typeof prefs.showDock === "boolean") showDock = prefs.showDock;
   }
   if (prefs && typeof prefs.autoStartWithClaude === "boolean") autoStartWithClaude = prefs.autoStartWithClaude;
+  if (prefs && typeof prefs.bubbleFollowPet === "boolean") bubbleFollowPet = prefs.bubbleFollowPet;
   // macOS: apply dock visibility (default hidden)
   if (isMac) {
     applyDockVisibility();
@@ -506,6 +514,7 @@ function createWindow() {
     const clamped = clampToScreen(x + dx, y + dy, size.width, size.height);
     win.setBounds({ ...clamped, width: size.width, height: size.height });
     syncHitWin();
+    if (bubbleFollowPet && pendingPermissions.length) repositionBubbles();
   });
 
   ipcMain.on("pause-cursor-polling", () => { idlePaused = true; });
@@ -679,6 +688,9 @@ const _miniCtx = {
   stopWakePoll,
   clampToScreen,
   getNearestWorkArea,
+  get bubbleFollowPet() { return bubbleFollowPet; },
+  get pendingPermissions() { return pendingPermissions; },
+  repositionBubbles: () => repositionBubbles(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
 };

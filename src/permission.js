@@ -28,6 +28,7 @@ function estimateBubbleHeight(sugCount) {
 
 function repositionBubbles() {
   // Stack bubbles from bottom-right upward. Newest (last in array) at bottom.
+  if (!ctx.win || ctx.win.isDestroyed()) return;
   const margin = 8;
   const gap = 6;
   const bw = 340;
@@ -35,9 +36,59 @@ function repositionBubbles() {
   const cx = petBounds.x + petBounds.width / 2;
   const cy = petBounds.y + petBounds.height / 2;
   const wa = ctx.getNearestWorkArea(cx, cy);
-  const x = wa.x + wa.width - bw - margin;
 
-  let yBottom = wa.y + wa.height - margin;
+  let x, yBottom;
+  if (ctx.bubbleFollowPet) {
+    // Use hitbox bottom for tight positioning against actual pet body
+    const hit = ctx.getHitRectScreen(petBounds);
+    const hitBottom = Math.round(hit.bottom);
+    const hitCx = Math.round((hit.left + hit.right) / 2);
+
+    // Calculate total bubble stack height
+    let totalH = 0;
+    for (const perm of pendingPermissions) {
+      totalH += (perm.measuredHeight || estimateBubbleHeight((perm.suggestions || []).length)) + gap;
+    }
+
+    // Degradation: if total bubble height exceeds half the workspace, fall back to
+    // default bottom-right stacking so bubbles don't crowd the pet or overflow
+    if (totalH > wa.height / 2) {
+      x = wa.x + wa.width - bw - margin;
+      yBottom = wa.y + wa.height - margin;
+      // Fall through to upward stacking loop below
+    } else if (wa.y + wa.height - hitBottom >= totalH) {
+      // Enough room below — place bubbles under the pet body
+      x = Math.max(wa.x, Math.min(hitCx - Math.round(bw / 2), wa.x + wa.width - bw));
+      let yTop = hitBottom;
+      for (let i = pendingPermissions.length - 1; i >= 0; i--) {
+        const perm = pendingPermissions[i];
+        const bh = perm.measuredHeight || estimateBubbleHeight((perm.suggestions || []).length);
+        if (perm.bubble && !perm.bubble.isDestroyed()) {
+          perm.bubble.setBounds({ x, y: yTop, width: bw, height: bh });
+        }
+        yTop += bh + gap;
+      }
+      return;
+    } else {
+      // Not enough room below — place to the side with more space
+      const hitRight = Math.round(hit.right);
+      const hitLeft = Math.round(hit.left);
+      const spaceRight = wa.x + wa.width - hitRight;
+      const spaceLeft = hitLeft - wa.x;
+      if (spaceRight >= bw || spaceRight >= spaceLeft) {
+        x = Math.min(hitRight, wa.x + wa.width - bw);
+      } else {
+        x = Math.max(wa.x, hitLeft - bw);
+      }
+      // Side fallback: stack from workspace bottom upward (not pet bottom, which would occlude pet)
+      yBottom = wa.y + wa.height - margin;
+    }
+  } else {
+    // Default: bottom-right corner of nearest work area
+    x = wa.x + wa.width - bw - margin;
+    yBottom = wa.y + wa.height - margin;
+  }
+
   // Iterate in reverse: newest bubble (end of array) gets the bottom slot
   for (let i = pendingPermissions.length - 1; i >= 0; i--) {
     const perm = pendingPermissions[i];

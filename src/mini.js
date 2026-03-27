@@ -33,6 +33,7 @@ function animateWindowX(targetX, durationMs) {
   const snapY = miniSnap ? miniSnap.y : bounds.y;
   const snapW = miniSnap ? miniSnap.width : bounds.width;
   const snapH = miniSnap ? miniSnap.height : bounds.height;
+  let frameCount = 0;
   const step = () => {
     if (!ctx.win || ctx.win.isDestroyed()) { peekAnimTimer = null; isAnimating = false; return; }
     const t = Math.min(1, (Date.now() - startTime) / durationMs);
@@ -40,6 +41,8 @@ function animateWindowX(targetX, durationMs) {
     const x = Math.round(startX + (targetX - startX) * eased);
     ctx.win.setBounds({ x, y: snapY, width: snapW, height: snapH });
     ctx.syncHitWin();
+    // Throttle bubble reposition to every 3rd frame (~20fps) — visually identical, less overhead
+    if (ctx.bubbleFollowPet && ctx.pendingPermissions.length && (++frameCount % 3 === 0 || t >= 1)) ctx.repositionBubbles();
     if (t < 1) {
       peekAnimTimer = setTimeout(step, 16);
     } else {
@@ -61,6 +64,7 @@ function animateWindowParabola(targetX, targetY, durationMs, onDone) {
   }
   isAnimating = true;
   const startTime = Date.now();
+  let frameCount = 0;
   const step = () => {
     if (!ctx.win || ctx.win.isDestroyed()) { peekAnimTimer = null; isAnimating = false; return; }
     const t = Math.min(1, (Date.now() - startTime) / durationMs);
@@ -70,6 +74,8 @@ function animateWindowParabola(targetX, targetY, durationMs, onDone) {
     const y = Math.round(startY + (targetY - startY) * eased - arc);
     ctx.win.setPosition(x, y);
     ctx.syncHitWin();
+    // Throttle bubble reposition to every 3rd frame (~20fps) — visually identical, less overhead
+    if (ctx.bubbleFollowPet && ctx.pendingPermissions.length && (++frameCount % 3 === 0 || t >= 1)) ctx.repositionBubbles();
     if (t < 1) {
       peekAnimTimer = setTimeout(step, 16);
     } else {

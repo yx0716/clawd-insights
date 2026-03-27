@@ -44,6 +44,7 @@ const i18n = {
     restartNow: "Restart Now",
     restartLater: "Later",
     download: "Download",
+    bubbleFollow: "Bubble Follow Pet",
     sessions: "Sessions",
     noSessions: "No active sessions",
     sessionWorking: "Working",
@@ -85,6 +86,7 @@ const i18n = {
     restartNow: "立即重启",
     restartLater: "稍后",
     download: "下载",
+    bubbleFollow: "气泡跟随宠物",
     sessions: "会话",
     noSessions: "无活跃会话",
     sessionWorking: "工作中",
@@ -167,6 +169,18 @@ module.exports = function initMenu(ctx) {
       {
         label: ctx.doNotDisturb ? t("wake") : t("sleep"),
         click: () => ctx.doNotDisturb ? ctx.disableDoNotDisturb() : ctx.enableDoNotDisturb(),
+      },
+      {
+        label: t("bubbleFollow"),
+        type: "checkbox",
+        checked: ctx.bubbleFollowPet,
+        click: (menuItem) => {
+          ctx.bubbleFollowPet = menuItem.checked;
+          if (ctx.pendingPermissions.length) ctx.repositionBubbles();
+          buildContextMenu();
+          buildTrayMenu();
+          ctx.savePrefs();
+        },
       },
       { type: "separator" },
       {
@@ -326,6 +340,18 @@ module.exports = function initMenu(ctx) {
         label: ctx.doNotDisturb ? t("wake") : t("sleep"),
         click: () => ctx.doNotDisturb ? ctx.disableDoNotDisturb() : ctx.enableDoNotDisturb(),
       },
+      {
+        label: t("bubbleFollow"),
+        type: "checkbox",
+        checked: ctx.bubbleFollowPet,
+        click: (menuItem) => {
+          ctx.bubbleFollowPet = menuItem.checked;
+          if (ctx.pendingPermissions.length) ctx.repositionBubbles();
+          buildContextMenu();
+          buildTrayMenu();
+          ctx.savePrefs();
+        },
+      },
       { type: "separator" },
       {
         label: `${t("sessions")} (${ctx.sessions.size})`,
@@ -391,6 +417,7 @@ module.exports = function initMenu(ctx) {
         ctx.win.setBounds({ ...clamped, width: size.width, height: size.height });
       }
     }
+    if (ctx.bubbleFollowPet && ctx.pendingPermissions.length) ctx.repositionBubbles();
     buildContextMenu();
     ctx.savePrefs();
   }
