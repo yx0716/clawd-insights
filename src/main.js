@@ -155,80 +155,7 @@ function savePrefs() {
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
 
-// ── SVG filename constants (used across main + renderer via IPC) ──
-const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
-const SVG_IDLE_LOOK = "clawd-idle-look.svg";
-const SVG_IDLE_LIVING = "clawd-idle-living.svg";
-
-// ── State → SVG mapping ──
-const STATE_SVGS = {
-  idle: [SVG_IDLE_FOLLOW, SVG_IDLE_LIVING],
-  yawning: ["clawd-idle-yawn.svg"],
-  dozing: ["clawd-idle-doze.svg"],
-  collapsing: ["clawd-collapse-sleep.svg"],
-  thinking: ["clawd-working-thinking.svg"],
-  working: ["clawd-working-typing.svg"],
-  juggling: ["clawd-working-juggling.svg"],
-  sweeping: ["clawd-working-sweeping.svg"],
-  error: ["clawd-error.svg"],
-  attention: ["clawd-happy.svg"],
-  notification: ["clawd-notification.svg"],
-  carrying: ["clawd-working-carrying.svg"],
-  sleeping: ["clawd-sleeping.svg"],
-  waking: ["clawd-wake.svg"],
-};
-
-// Mini mode SVG mappings
-STATE_SVGS["mini-idle"]  = ["clawd-mini-idle.svg"];
-STATE_SVGS["mini-alert"] = ["clawd-mini-alert.svg"];
-STATE_SVGS["mini-happy"] = ["clawd-mini-happy.svg"];
-STATE_SVGS["mini-enter"] = ["clawd-mini-enter.svg"];
-STATE_SVGS["mini-peek"]  = ["clawd-mini-peek.svg"];
-STATE_SVGS["mini-crabwalk"] = ["clawd-mini-crabwalk.svg"];
-STATE_SVGS["mini-enter-sleep"] = ["clawd-mini-enter-sleep.svg"];
-STATE_SVGS["mini-sleep"] = ["clawd-mini-sleep.svg"];
-
-const MIN_DISPLAY_MS = {
-  attention: 4000,
-  error: 5000,
-  sweeping: 2000,
-  notification: 4000,
-  carrying: 3000,
-  working: 1000,
-  thinking: 1000,
-  "mini-alert": 4000,
-  "mini-happy": 4000,
-};
-
-// Oneshot states that auto-return to idle (subset of MIN_DISPLAY_MS)
-const AUTO_RETURN_MS = {
-  attention: 4000,
-  error: 5000,
-  sweeping: 300000,  // 5min safety; PostCompact ends sweeping normally
-  notification: 4000,  // matches SVG animation loop (4s)
-  carrying: 3000,
-  "mini-alert": 4000,
-  "mini-happy": 4000,
-};
-
-const DEEP_SLEEP_TIMEOUT = 600000;  // 10min → collapsing → sleeping
-const YAWN_DURATION = 3000;
-const COLLAPSE_DURATION = 800;
-const WAKE_DURATION = 1500;
-const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "waking"]);
-
-// ── Session tracking ──
-const sessions = new Map(); // session_id → { state, updatedAt, sourcePid, cwd, editor, pidChain, agentPid, agentId, pidReachable }
-const SESSION_STALE_MS = 600000; // 10 min: delete idle sessions entirely
-const WORKING_STALE_MS = 300000; // 5 min: working/thinking with no new event → decay to idle
-let startupRecoveryActive = false; // suppress sleep sequence while waiting for hooks after restart
-let startupRecoveryTimer = null;   // hard timeout to clear startupRecoveryActive
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
-const STARTUP_RECOVERY_MAX_MS = 300000; // 5 min: give up waiting for hooks
-const STATE_PRIORITY = {
-  error: 8, notification: 7, sweeping: 6, attention: 5,
-  carrying: 4, juggling: 4, working: 3, thinking: 2, idle: 1, sleeping: 0,
-};
 
 // ── CSS <object> sizing (mirrors styles.css #clawd) ──
 const OBJ_SCALE_W = 1.9;   // width: 190%
@@ -244,15 +171,6 @@ function getObjRect(bounds) {
     h: bounds.height * OBJ_SCALE_H,
   };
 }
-
-// ── Hit-test bounding boxes (SVG coordinate system) ──
-const HIT_BOXES = {
-  default:  { x: -1, y: 5, w: 17, h: 12 },   // 站姿：身体+腿+手臂
-  sleeping: { x: -2, y: 9, w: 19, h: 7 },     // 趴姿：更宽更矮
-  wide:     { x: -3, y: 3, w: 21, h: 14 },    // 带特效（error/building/notification）
-};
-const WIDE_SVGS = new Set(["clawd-error.svg", "clawd-working-building.svg", "clawd-notification.svg", "clawd-working-conducting.svg"]);
-let currentHitBox = HIT_BOXES.default;
 
 let win;
 let hitWin;  // input window — small opaque rect over hitbox, receives all pointer events
@@ -293,18 +211,11 @@ function syncHitWin() {
   }
 }
 
-// ── State machine ──
-let currentState = "idle";
-let currentSvg = null;
-let stateChangedAt = Date.now();
-let pendingTimer = null;
-let autoReturnTimer = null;
 let mouseOverPet = false;
 let dragLocked = false;
 let menuOpen = false;
 let idlePaused = false;
 let forceEyeResend = false;
-let eyeResendTimer = null;
 
 // ── Mini Mode ──
 const MINI_OFFSET_RATIO = 0.486;
@@ -325,12 +236,6 @@ let peekAnimTimer = null;
 let isAnimating = false;
 
 
-// ── Wake poll (during dozing) ──
-let wakePollTimer = null;
-let lastWakeCursorX = null, lastWakeCursorY = null;
-
-let pendingState = null; // tracks what state is waiting in pendingTimer
-
 // ── Permission bubble — delegated to src/permission.js ──
 const _permCtx = {
   get win() { return win; },
@@ -345,164 +250,50 @@ const pendingPermissions = _perm.pendingPermissions;
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
 
-function setState(newState, svgOverride) {
-  if (doNotDisturb) return;
-
-  // Oneshot events from hooks should always wake from sleep —
-  // any hook event means Claude Code is active, Clawd shouldn't stay asleep.
-
-  // Don't re-enter sleep sequence when already in it
-  if (newState === "yawning" && SLEEP_SEQUENCE.has(currentState)) return;
-
-  // Don't displace a pending higher-priority state with a lower-priority one
-  if (pendingTimer) {
-    if (pendingState && (STATE_PRIORITY[newState] || 0) < (STATE_PRIORITY[pendingState] || 0)) {
-      return;
-    }
-    clearTimeout(pendingTimer);
-    pendingTimer = null;
-    pendingState = null;
-  }
-
-  const sameState = newState === currentState;
-  const sameSvg = !svgOverride || svgOverride === currentSvg;
-  if (sameState && sameSvg) {
-    return;
-  }
-
-  const minTime = MIN_DISPLAY_MS[currentState] || 0;
-  const elapsed = Date.now() - stateChangedAt;
-  const remaining = minTime - elapsed;
-
-  if (remaining > 0) {
-    // Cancel current state's auto-return to prevent timer race
-    if (autoReturnTimer) { clearTimeout(autoReturnTimer); autoReturnTimer = null; }
-    pendingState = newState;
-    const pendingSvgOverride = svgOverride;
-    pendingTimer = setTimeout(() => {
-      pendingTimer = null;
-      const queued = pendingState;
-      const queuedSvg = pendingSvgOverride;
-      pendingState = null;
-      // Oneshot states (error/notification/etc.) are not stored in sessions,
-      // so re-resolving would lose them. Apply the queued state directly.
-      if (ONESHOT_STATES.has(queued)) {
-        applyState(queued, queuedSvg);
-      } else {
-        // For persistent states, re-resolve from live sessions — the captured
-        // state may be stale (e.g. SessionEnd arrived while we waited)
-        const resolved = resolveDisplayState();
-        applyState(resolved, getSvgOverride(resolved));
-      }
-    }, remaining);
-  } else {
-    applyState(newState, svgOverride);
-  }
-}
-
-function applyState(state, svgOverride) {
-  // Mini transition protection: only allow mini-* states through
-  if (miniTransitioning && !state.startsWith("mini-")) {
-    return;
-  }
-
-  // Mini mode interception: redirect to mini variants
-  if (miniMode && !state.startsWith("mini-")) {
-    if (state === "notification") return applyState("mini-alert");
-    if (state === "attention") return applyState("mini-happy");
-    // Other states are silent in mini mode — but if we're stuck in a
-    // oneshot mini state whose auto-return timer was cancelled (e.g. by
-    // setState's pending logic), recover to mini-idle/mini-peek now.
-    if (AUTO_RETURN_MS[currentState] && !autoReturnTimer) {
-      return applyState(mouseOverPet ? "mini-peek" : "mini-idle");
-    }
-    return;
-  }
-
-  currentState = state;
-  stateChangedAt = Date.now();
-  idlePaused = false;
-
-  const svgs = STATE_SVGS[state] || STATE_SVGS.idle;
-  const svg = svgOverride || svgs[Math.floor(Math.random() * svgs.length)];
-  currentSvg = svg;
-
-  // Force eye resend after SVG load completes (~300ms)
-  if (eyeResendTimer) { clearTimeout(eyeResendTimer); eyeResendTimer = null; }
-  if (state === "idle" || state === "mini-idle") {
-    eyeResendTimer = setTimeout(() => { eyeResendTimer = null; forceEyeResend = true; }, 300);
-  }
-
-  // Update hit box based on SVG
-  if (svg === "clawd-sleeping.svg" || svg === "clawd-collapse-sleep.svg") {
-    currentHitBox = HIT_BOXES.sleeping;
-  } else if (WIDE_SVGS.has(svg)) {
-    currentHitBox = HIT_BOXES.wide;
-  } else {
-    currentHitBox = HIT_BOXES.default;
-  }
-
-  sendToRenderer("state-change", state, svg);
-  // Sync hitWin position/size to match new hitbox + state
-  syncHitWin();
-  sendToHitWin("hit-state-sync", { currentSvg: svg });
-  sendToHitWin("hit-cancel-reaction");
-
-  // Reset eyes when leaving idle/mini-idle
-  if (state !== "idle" && state !== "mini-idle") {
-    sendToRenderer("eye-move", 0, 0);
-  }
-
-  // Wake poll: dozing, collapsing, sleeping (not DND sleeping)
-  if ((state === "dozing" || state === "collapsing" || state === "sleeping") && !doNotDisturb) {
-    setTimeout(() => {
-      if (currentState === state) startWakePoll();
-    }, 500);
-  } else {
-    stopWakePoll();
-  }
-
-  // Sleep/doze sequence: yawning → dozing; waking → resolve session state
-  if (autoReturnTimer) clearTimeout(autoReturnTimer);
-  if (state === "yawning") {
-    autoReturnTimer = setTimeout(() => {
-      autoReturnTimer = null;
-      applyState(doNotDisturb ? "collapsing" : "dozing");
-    }, YAWN_DURATION);
-  } else if (state === "waking") {
-    autoReturnTimer = setTimeout(() => {
-      autoReturnTimer = null;
-      const resolved = resolveDisplayState();
-      applyState(resolved, getSvgOverride(resolved));
-    }, WAKE_DURATION);
-  } else if (AUTO_RETURN_MS[state]) {
-    autoReturnTimer = setTimeout(() => {
-      autoReturnTimer = null;
-      if (miniMode) {
-        if (mouseOverPet && !doNotDisturb) {
-          miniPeekIn();
-          applyState("mini-peek");
-        } else {
-          applyState(doNotDisturb ? "mini-sleep" : "mini-idle");
-        }
-      } else {
-        const resolved = resolveDisplayState();
-        applyState(resolved, getSvgOverride(resolved));
-      }
-    }, AUTO_RETURN_MS[state]);
-  }
-}
+// ── State machine — delegated to src/state.js ──
+const _stateCtx = {
+  get win() { return win; },
+  get hitWin() { return hitWin; },
+  get doNotDisturb() { return doNotDisturb; },
+  set doNotDisturb(v) { doNotDisturb = v; },
+  get miniMode() { return miniMode; },
+  get miniTransitioning() { return miniTransitioning; },
+  get mouseOverPet() { return mouseOverPet; },
+  get miniSleepPeeked() { return miniSleepPeeked; },
+  set miniSleepPeeked(v) { miniSleepPeeked = v; },
+  get idlePaused() { return idlePaused; },
+  set idlePaused(v) { idlePaused = v; },
+  get forceEyeResend() { return forceEyeResend; },
+  set forceEyeResend(v) { forceEyeResend = v; },
+  get mouseStillSince() { return _tick ? _tick._mouseStillSince : Date.now(); },
+  get pendingPermissions() { return pendingPermissions; },
+  sendToRenderer,
+  sendToHitWin,
+  syncHitWin,
+  t,
+  focusTerminalWindow: (...args) => focusTerminalWindow(...args),
+  resolvePermissionEntry: (...args) => resolvePermissionEntry(...args),
+  miniPeekIn: () => miniPeekIn(),
+  miniPeekOut: () => miniPeekOut(),
+  buildContextMenu: () => buildContextMenu(),
+  buildTrayMenu: () => buildTrayMenu(),
+};
+const _state = require("./state")(_stateCtx);
+const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride,
+        enableDoNotDisturb, disableDoNotDisturb, startStaleCleanup, stopStaleCleanup,
+        startWakePoll, stopWakePoll, detectRunningAgentProcesses, buildSessionSubmenu,
+        startStartupRecovery: _startStartupRecovery } = _state;
+const sessions = _state.sessions;
+const STATE_SVGS = _state.STATE_SVGS;
+const STATE_PRIORITY = _state.STATE_PRIORITY;
 
 // ── Hit-test: SVG bounding box → screen coordinates ──
 function getHitRectScreen(bounds) {
   const obj = getObjRect(bounds);
-
-  // viewBox="-15 -25 45 45", preserveAspectRatio default xMidYMid meet
   const scale = Math.min(obj.w, obj.h) / 45;
   const offsetX = obj.x + (obj.w - 45 * scale) / 2;
   const offsetY = obj.y + (obj.h - 45 * scale) / 2;
-
-  const hb = currentHitBox;
+  const hb = _state.getCurrentHitBox();
   return {
     left:   offsetX + (hb.x + 15) * scale,
     top:    offsetY + (hb.y + 25) * scale,
@@ -514,8 +305,8 @@ function getHitRectScreen(bounds) {
 // ── Main tick — delegated to src/tick.js ──
 const _tickCtx = {
   get win() { return win; },
-  get currentState() { return currentState; },
-  get currentSvg() { return currentSvg; },
+  get currentState() { return _state.getCurrentState(); },
+  get currentSvg() { return _state.getCurrentSvg(); },
   get miniMode() { return miniMode; },
   get miniTransitioning() { return miniTransitioning; },
   get dragLocked() { return dragLocked; },
@@ -528,356 +319,17 @@ const _tickCtx = {
   set mouseOverPet(v) { mouseOverPet = v; },
   get forceEyeResend() { return forceEyeResend; },
   set forceEyeResend(v) { forceEyeResend = v; },
-  get startupRecoveryActive() { return startupRecoveryActive; },
+  get startupRecoveryActive() { return _state.getStartupRecoveryActive(); },
   sendToRenderer,
   setState,
   applyState,
-  miniPeekIn,
-  miniPeekOut,
+  miniPeekIn: () => miniPeekIn(),
+  miniPeekOut: () => miniPeekOut(),
   getObjRect,
   getHitRectScreen,
 };
 const _tick = require("./tick")(_tickCtx);
 const { startMainTick, resetIdleTimer } = _tick;
-
-// ── Wake poll (detect mouse movement during dozing → wake up) ──
-function startWakePoll() {
-  if (wakePollTimer) return;
-  const cursor = screen.getCursorScreenPoint();
-  lastWakeCursorX = cursor.x;
-  lastWakeCursorY = cursor.y;
-
-  wakePollTimer = setInterval(() => {
-    const cursor = screen.getCursorScreenPoint();
-    const moved = cursor.x !== lastWakeCursorX || cursor.y !== lastWakeCursorY;
-
-    if (moved) {
-      stopWakePoll();
-      wakeFromDoze();
-      return;
-    }
-
-    // 10min total mouse idle → deep sleep (only from dozing, not sleeping)
-    if (currentState === "dozing" && Date.now() - mouseStillSince >= DEEP_SLEEP_TIMEOUT) {
-      stopWakePoll();
-      applyState("collapsing");
-    }
-  }, 200); // 5 checks/sec, lightweight
-}
-
-function stopWakePoll() {
-  if (wakePollTimer) { clearInterval(wakePollTimer); wakePollTimer = null; }
-}
-
-function wakeFromDoze() {
-  if (currentState === "sleeping" || currentState === "collapsing") {
-    applyState("waking");
-    return;
-  }
-  sendToRenderer("wake-from-doze");
-  // After eye-opening transition, switch to idle
-  setTimeout(() => {
-    if (currentState === "dozing") {
-      applyState("idle", SVG_IDLE_FOLLOW);
-    }
-  }, 350);
-}
-
-// ── Session management ──
-const ONESHOT_STATES = new Set(["attention", "error", "sweeping", "notification", "carrying"]);
-
-function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain, agentPid, agentId) {
-  // Agent is communicating — no need for startup recovery
-  if (startupRecoveryActive) {
-    startupRecoveryActive = false;
-    if (startupRecoveryTimer) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; }
-  }
-
-  // PermissionRequest command hook: show notification animation only, don't mutate session.
-  // The HTTP hook runs in parallel and handles the actual decision. If we set session to idle
-  // here, it can overwrite a newer "working" state after the user approves.
-  if (event === "PermissionRequest") {
-    setState("notification");
-    return;
-  }
-
-  // Preserve existing fields — only SessionStart sends them all, other events reuse cached
-  const existing = sessions.get(sessionId);
-  const srcPid = sourcePid || (existing && existing.sourcePid) || null;
-  const srcCwd = cwd || (existing && existing.cwd) || "";
-  const srcEditor = editor || (existing && existing.editor) || null;
-  const srcPidChain = (pidChain && pidChain.length) ? pidChain : (existing && existing.pidChain) || null;
-  const srcAgentPid = agentPid || (existing && existing.agentPid) || null;
-  const srcAgentId = agentId || (existing && existing.agentId) || null;
-
-  // WSL2/remote: PID from hook may be a Linux PID unreachable on Windows.
-  // Check once on session creation; if unreachable, skip PID liveness checks later.
-  const pidReachable = existing ? existing.pidReachable :
-    (srcAgentPid ? isProcessAlive(srcAgentPid) : (srcPid ? isProcessAlive(srcPid) : false));
-
-  const base = { sourcePid: srcPid, cwd: srcCwd, editor: srcEditor, pidChain: srcPidChain, agentPid: srcAgentPid, agentId: srcAgentId, pidReachable };
-
-  if (event === "SessionEnd") {
-    sessions.delete(sessionId);
-  } else if (state === "attention" || state === "notification" || SLEEP_SEQUENCE.has(state)) {
-    // Stop/notification/sleep: session goes idle — if work continues, new hooks will re-set
-    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), ...base });
-  } else if (ONESHOT_STATES.has(state)) {
-    // Other oneshots (error/sweeping/notification/carrying):
-    // preserve session's previous state so auto-return resolves correctly
-    if (existing) {
-      existing.updatedAt = Date.now();
-      if (sourcePid) existing.sourcePid = sourcePid;
-      if (cwd) existing.cwd = cwd;
-      if (editor) existing.editor = editor;
-      if (pidChain && pidChain.length) existing.pidChain = pidChain;
-      if (agentPid) existing.agentPid = agentPid;
-    } else {
-      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), ...base });
-    }
-  } else {
-    // Preserve juggling: subagent's own tool use (PreToolUse/PostToolUse)
-    // shouldn't override juggling — only SubagentStop should end it.
-    if (existing && existing.state === "juggling" && state === "working" && event !== "SubagentStop" && event !== "subagentStop") {
-      existing.updatedAt = Date.now();
-    } else {
-      sessions.set(sessionId, { state, updatedAt: Date.now(), ...base });
-    }
-  }
-  cleanStaleSessions();
-
-  // All sessions ended → sleep immediately
-  if (sessions.size === 0 && event === "SessionEnd") {
-    setState("sleeping");
-    return;
-  }
-
-  // Oneshot: show animation directly, auto-return will re-resolve from session map
-  if (ONESHOT_STATES.has(state)) {
-    setState(state);
-    return;
-  }
-
-  const displayState = resolveDisplayState();
-  setState(displayState, getSvgOverride(displayState));
-}
-
-let staleCleanupTimer = null;
-
-function isProcessAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
-}
-
-function cleanStaleSessions() {
-  const now = Date.now();
-  let changed = false;
-  for (const [id, s] of sessions) {
-    const age = now - s.updatedAt;
-
-    // Agent process dead → orphan session, delete immediately
-    // Skip PID check for WSL2/remote sessions where PIDs are unreachable
-    if (s.pidReachable && s.agentPid && !isProcessAlive(s.agentPid)) {
-      sessions.delete(id); changed = true;
-      continue;
-    }
-
-    if (age > SESSION_STALE_MS) {
-      // Very stale (5 min): PID check or delete
-      if (s.pidReachable && s.sourcePid) {
-        if (!isProcessAlive(s.sourcePid)) {
-          sessions.delete(id); changed = true;
-        } else if (s.state !== "idle") {
-          s.state = "idle"; changed = true;
-        }
-      } else if (!s.pidReachable) {
-        // Remote session: rely purely on timeout
-        sessions.delete(id); changed = true;
-      } else {
-        sessions.delete(id); changed = true;
-      }
-    } else if (age > WORKING_STALE_MS) {
-      // Moderately stale (5 min): check if terminal was closed
-      if (s.pidReachable && s.sourcePid && !isProcessAlive(s.sourcePid)) {
-        sessions.delete(id); changed = true;
-      } else if (s.state === "working" || s.state === "juggling" || s.state === "thinking") {
-        // No hook event for 5 min while busy → likely interrupted or stalled
-        s.state = "idle"; s.updatedAt = now; changed = true;
-      }
-    }
-    // Sessions updated recently: skip — recent hook events prove liveness
-  }
-  // If stale sessions were cleaned, re-resolve display state
-  if (changed && sessions.size === 0) {
-    setState("yawning");
-  } else if (changed) {
-    const resolved = resolveDisplayState();
-    setState(resolved, getSvgOverride(resolved));
-  }
-
-  // Startup recovery: recheck if Claude Code is still running
-  if (startupRecoveryActive && sessions.size === 0) {
-    detectRunningAgentProcesses((found) => {
-      if (!found) {
-        startupRecoveryActive = false;
-        if (startupRecoveryTimer) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; }
-      }
-    });
-  }
-}
-
-// Detect running agent processes (async, for startup recovery).
-// Matches Claude Code (native + node), Codex CLI, and Copilot CLI.
-let _detectInFlight = false;
-function detectRunningAgentProcesses(callback) {
-  if (_detectInFlight) return;
-  _detectInFlight = true;
-  const done = (result) => { _detectInFlight = false; callback(result); };
-  const { exec } = require("child_process");
-  if (process.platform === "win32") {
-    exec(
-      'wmic process where "(Name=\'node.exe\' and CommandLine like \'%claude-code%\') or Name=\'claude.exe\' or Name=\'codex.exe\' or Name=\'copilot.exe\'" get ProcessId /format:csv',
-      { encoding: "utf8", timeout: 5000, windowsHide: true },
-      (err, stdout) => done(!err && /\d+/.test(stdout))
-    );
-  } else {
-    exec("pgrep -f 'claude-code|codex|copilot'", { timeout: 3000 },
-      (err) => done(!err)
-    );
-  }
-}
-
-function startStaleCleanup() {
-  if (staleCleanupTimer) return;
-  staleCleanupTimer = setInterval(cleanStaleSessions, 10000); // every 10s
-}
-
-function stopStaleCleanup() {
-  if (staleCleanupTimer) { clearInterval(staleCleanupTimer); staleCleanupTimer = null; }
-}
-
-function resolveDisplayState() {
-  if (sessions.size === 0) return "idle";
-  let best = "sleeping";
-  for (const [, s] of sessions) {
-    if ((STATE_PRIORITY[s.state] || 0) > (STATE_PRIORITY[best] || 0)) best = s.state;
-  }
-  return best;
-}
-
-function getActiveWorkingCount() {
-  let n = 0;
-  for (const [, s] of sessions) {
-    if (s.state === "working" || s.state === "thinking" || s.state === "juggling") n++;
-  }
-  return n;
-}
-
-function getWorkingSvg() {
-  const n = getActiveWorkingCount();
-  if (n >= 3) return "clawd-working-building.svg";
-  if (n >= 2) return "clawd-working-juggling.svg";
-  return "clawd-working-typing.svg";
-}
-
-function getSvgOverride(state) {
-  if (state === "idle") return SVG_IDLE_FOLLOW;
-  if (state === "working") return getWorkingSvg();
-  if (state === "juggling") return getJugglingSvg();
-  return null;
-}
-
-function getJugglingSvg() {
-  let n = 0;
-  for (const [, s] of sessions) {
-    if (s.state === "juggling") n++;
-  }
-  return n >= 2 ? "clawd-working-conducting.svg" : "clawd-working-juggling.svg";
-}
-
-// ── Session Dashboard (submenu for context menu + hotkey) ──
-const STATE_EMOJI = {
-  working: "\u{1F528}", thinking: "\u{1F914}", juggling: "\u{1F939}",
-  idle: "\u{1F4A4}", sleeping: "\u{1F4A4}",
-};
-const STATE_LABEL_KEY = {
-  working: "sessionWorking", thinking: "sessionThinking", juggling: "sessionJuggling",
-  idle: "sessionIdle", sleeping: "sessionSleeping",
-};
-
-function formatElapsed(ms) {
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return t("sessionJustNow");
-  const min = Math.floor(sec / 60);
-  if (min < 60) return t("sessionMinAgo").replace("{n}", min);
-  const hr = Math.floor(min / 60);
-  return t("sessionHrAgo").replace("{n}", hr);
-}
-
-function buildSessionSubmenu() {
-  // Collect sessions, sorted by priority desc then updatedAt desc
-  const entries = [];
-  for (const [id, s] of sessions) {
-    entries.push({ id, state: s.state, updatedAt: s.updatedAt, sourcePid: s.sourcePid, cwd: s.cwd, editor: s.editor, pidChain: s.pidChain });
-  }
-  if (entries.length === 0) {
-    return [{ label: t("noSessions"), enabled: false }];
-  }
-  entries.sort((a, b) => {
-    const pa = STATE_PRIORITY[a.state] || 0;
-    const pb = STATE_PRIORITY[b.state] || 0;
-    if (pb !== pa) return pb - pa;
-    return b.updatedAt - a.updatedAt;
-  });
-
-  const now = Date.now();
-  return entries.map((e) => {
-    const emoji = STATE_EMOJI[e.state] || "";
-    const stateText = t(STATE_LABEL_KEY[e.state] || "sessionIdle");
-    const name = e.cwd ? path.basename(e.cwd) : (e.id.length > 6 ? e.id.slice(0, 6) + ".." : e.id);
-    const elapsed = formatElapsed(now - e.updatedAt);
-    const hasPid = !!e.sourcePid;
-    return {
-      label: `${emoji} ${name}  ${stateText}  ${elapsed}`,
-      enabled: hasPid,
-      click: hasPid ? () => focusTerminalWindow(e.sourcePid, e.cwd, e.editor, e.pidChain) : undefined,
-    };
-  });
-}
-
-// ── Do Not Disturb ──
-function enableDoNotDisturb() {
-  if (doNotDisturb) return;
-  doNotDisturb = true;
-  sendToRenderer("dnd-change", true);
-    sendToHitWin("hit-state-sync", { dndEnabled: true });
-  // Dismiss all pending permission bubbles — DND means no interaction
-  for (const perm of [...pendingPermissions]) resolvePermissionEntry(perm, "deny", "DND enabled");
-  if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; pendingState = null; }
-  if (autoReturnTimer) { clearTimeout(autoReturnTimer); autoReturnTimer = null; }
-  stopWakePoll();
-  if (miniMode) {
-    applyState("mini-sleep");
-  } else {
-    applyState("yawning");  // walk through yawning → collapsing → sleeping
-  }
-  buildContextMenu();
-  buildTrayMenu();
-}
-
-function disableDoNotDisturb() {
-  if (!doNotDisturb) return;
-  doNotDisturb = false;
-  sendToRenderer("dnd-change", false);
-    sendToHitWin("hit-state-sync", { dndEnabled: false });
-  if (miniMode) {
-    if (miniSleepPeeked) { miniPeekOut(); miniSleepPeeked = false; }
-    applyState("mini-idle");
-  } else {
-    applyState("waking");
-  }
-  buildContextMenu();
-  buildTrayMenu();
-}
 
 // ── Terminal focus — delegated to src/focus.js ──
 const _focus = require("./focus")({ _allowSetForeground });
@@ -1487,7 +939,7 @@ function createWindow() {
     // Send initial state to hitWin once it's ready
     hitWin.webContents.on("did-finish-load", () => {
       sendToHitWin("hit-state-sync", {
-        currentSvg, miniMode, dndEnabled: doNotDisturb,
+        currentSvg: _state.getCurrentSvg(), miniMode, dndEnabled: doNotDisturb,
       });
     });
 
@@ -1513,7 +965,7 @@ function createWindow() {
   ipcMain.on("resume-from-reaction", () => {
     idlePaused = false;
     if (miniTransitioning) return;
-    sendToRenderer("state-change", currentState, currentSvg);
+    sendToRenderer("state-change", _state.getCurrentState(), _state.getCurrentSvg());
   });
 
   ipcMain.on("drag-lock", (event, locked) => {
@@ -1585,20 +1037,15 @@ function createWindow() {
       const resolved = resolveDisplayState();
       applyState(resolved, getSvgOverride(resolved));
     } else {
-      applyState("idle", SVG_IDLE_FOLLOW);
+      applyState("idle", "clawd-idle-follow.svg");
       // Startup recovery: delay 5s to let HWND/z-order/drag systems stabilize,
       // then detect running Claude Code processes → suppress sleep sequence
       setTimeout(() => {
         if (sessions.size > 0 || doNotDisturb) return; // hook arrived during wait
         detectRunningAgentProcesses((found) => {
           if (found && sessions.size === 0 && !doNotDisturb) {
-            startupRecoveryActive = true;
-            mouseStillSince = Date.now();
-            // Hard timeout: give up if no hooks arrive within 5 min
-            startupRecoveryTimer = setTimeout(() => {
-              startupRecoveryActive = false;
-              startupRecoveryTimer = null;
-            }, STARTUP_RECOVERY_MAX_MS);
+            _startStartupRecovery();
+            resetIdleTimer();
           }
         });
       }, 5000);
@@ -2076,15 +1523,11 @@ if (!gotTheLock) {
   app.on("before-quit", () => {
     isQuitting = true;
     savePrefs();
-    if (pendingTimer) clearTimeout(pendingTimer);
-    if (autoReturnTimer) clearTimeout(autoReturnTimer);
+    _state.cleanup();
     _tick.cleanup();
-    if (wakePollTimer) clearInterval(wakePollTimer);
     if (miniTransitionTimer) clearTimeout(miniTransitionTimer);
     if (peekAnimTimer) clearTimeout(peekAnimTimer);
-    if (startupRecoveryTimer) clearTimeout(startupRecoveryTimer);
     if (_codexMonitor) _codexMonitor.stop();
-    stopStaleCleanup();
     stopTopmostWatchdog();
     _focus.cleanup();
     if (hitWin && !hitWin.isDestroyed()) hitWin.destroy();

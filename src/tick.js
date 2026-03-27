@@ -199,6 +199,11 @@ function cleanup() {
   if (yawnDelayTimer) { clearTimeout(yawnDelayTimer); yawnDelayTimer = null; }
 }
 
-return { startMainTick, resetIdleTimer, cleanup };
+// Expose mouseStillSince for wake poll (state.js deep sleep timeout)
+Object.defineProperty(startMainTick, '_mouseStillSince', {
+  get() { return mouseStillSince; },
+});
+
+return { startMainTick, resetIdleTimer, cleanup, get _mouseStillSince() { return mouseStillSince; } };
 
 };
