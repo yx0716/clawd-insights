@@ -159,7 +159,7 @@ const _stateCtx = {
   sendToRenderer,
   sendToHitWin,
   syncHitWin,
-  t,
+  t: (key) => t(key),
   focusTerminalWindow: (...args) => focusTerminalWindow(...args),
   resolvePermissionEntry: (...args) => resolvePermissionEntry(...args),
   miniPeekIn: () => miniPeekIn(),
