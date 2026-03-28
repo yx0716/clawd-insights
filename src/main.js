@@ -135,12 +135,40 @@ const _permCtx = {
   getNearestWorkArea,
   getHitRectScreen,
   guardAlwaysOnTop,
+  reapplyMacVisibility,
 };
 const _perm = require("./permission")(_permCtx);
 const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS } = _perm;
 const pendingPermissions = _perm.pendingPermissions;
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
+
+// ── macOS fullscreen visibility helper ──
+// Re-apply visibleOnAllWorkspaces + alwaysOnTop to all windows after events
+// that may reset NSWindowCollectionBehavior (showInactive, dock.hide, etc.)
+function reapplyMacVisibility() {
+  if (!isMac) return;
+  const opts = { visibleOnFullScreen: true };
+  if (!showDock) opts.skipTransformProcessType = true;
+  if (win && !win.isDestroyed()) {
+    win.setVisibleOnAllWorkspaces(true, opts);
+    win.setAlwaysOnTop(true, MAC_TOPMOST_LEVEL);
+  }
+  if (hitWin && !hitWin.isDestroyed()) {
+    hitWin.setVisibleOnAllWorkspaces(true, opts);
+    hitWin.setAlwaysOnTop(true, MAC_TOPMOST_LEVEL);
+  }
+  for (const perm of pendingPermissions) {
+    if (perm.bubble && !perm.bubble.isDestroyed()) {
+      perm.bubble.setVisibleOnAllWorkspaces(true, opts);
+      perm.bubble.setAlwaysOnTop(true, MAC_TOPMOST_LEVEL);
+    }
+  }
+  if (contextMenuOwner && !contextMenuOwner.isDestroyed()) {
+    contextMenuOwner.setVisibleOnAllWorkspaces(true, opts);
+    contextMenuOwner.setAlwaysOnTop(true, MAC_TOPMOST_LEVEL);
+  }
+}
 
 // ── State machine — delegated to src/state.js ──
 const _stateCtx = {
@@ -250,6 +278,7 @@ const { startHttpServer, getHookServerPort, syncClawdHooks } = _server;
 // So we keep the event listener for the cases it does catch (Alt/Win key), and add
 // a slow watchdog (20s) to recover from silent shell-initiated z-order drops.
 const WIN_TOPMOST_LEVEL = "pop-up-menu";  // above taskbar-level UI
+const MAC_TOPMOST_LEVEL = "screen-saver"; // above fullscreen apps on macOS
 const TOPMOST_WATCHDOG_MS = 5_000;
 let topmostWatchdog = null;
 let hwndRecoveryTimer = null;
@@ -357,6 +386,7 @@ const _menuCtx = {
   getHookServerPort: () => getHookServerPort(),
   clampToScreen,
   getNearestWorkArea,
+  reapplyMacVisibility,
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
@@ -425,16 +455,14 @@ function createWindow() {
   });
 
   win.setFocusable(false);
-  if (isMac) {
-    // macOS: show on all Spaces (virtual desktops) and use floating window level
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-    win.setAlwaysOnTop(true, "floating");
-  } else {
+  if (!isMac) {
     // Windows: use pop-up-menu level to stay above taskbar/shell UI
     win.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
   }
   win.loadFile(path.join(__dirname, "index.html"));
   win.showInactive();
+  // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
+  reapplyMacVisibility();
 
   // macOS: startup-time dock state can be overridden during app/window activation.
   // Re-apply once on next tick so persisted showDock reliably takes effect.
@@ -478,12 +506,11 @@ function createWindow() {
     hitWin.setShape([{ x: 0, y: 0, width: hw, height: hh }]);
     hitWin.setIgnoreMouseEvents(false);  // PERMANENT — never toggle
     hitWin.showInactive();
-    if (isMac) {
-      hitWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-      hitWin.setAlwaysOnTop(true, "floating");
-    } else {
+    if (!isMac) {
       hitWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
     }
+    // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
+    reapplyMacVisibility();
     hitWin.loadFile(path.join(__dirname, "hit.html"));
     if (!isMac) guardAlwaysOnTop(hitWin);
 
@@ -623,6 +650,7 @@ function createWindow() {
 
   // ── Display change: re-clamp window to prevent off-screen ──
   screen.on("display-metrics-changed", () => {
+    reapplyMacVisibility();
     if (!win || win.isDestroyed()) return;
     if (_mini.getMiniMode()) {
       _mini.handleDisplayChange();
@@ -635,6 +663,7 @@ function createWindow() {
     }
   });
   screen.on("display-removed", () => {
+    reapplyMacVisibility();
     if (!win || win.isDestroyed()) return;
     if (_mini.getMiniMode()) {
       exitMiniMode();
@@ -643,6 +672,9 @@ function createWindow() {
     const { x, y, width, height } = win.getBounds();
     const clamped = clampToScreen(x, y, width, height);
     win.setBounds({ ...clamped, width, height });
+  });
+  screen.on("display-added", () => {
+    reapplyMacVisibility();
   });
 }
 
@@ -758,6 +790,7 @@ if (!gotTheLock) {
   app.on("second-instance", () => {
     if (win) win.showInactive();
     if (hitWin && !hitWin.isDestroyed()) hitWin.showInactive();
+    reapplyMacVisibility();
   });
 
   // macOS: hide dock icon early if user previously disabled it

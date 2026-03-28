@@ -128,10 +128,7 @@ function showPermissionBubble(permEntry) {
 
   permEntry.bubble = bub;
 
-  if (isMac) {
-    bub.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-    bub.setAlwaysOnTop(true, "floating");
-  } else {
+  if (!isMac) {
     bub.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
   }
 
@@ -150,6 +147,8 @@ function showPermissionBubble(permEntry) {
 
   repositionBubbles();
   bub.showInactive();
+  // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
+  ctx.reapplyMacVisibility();
 
   bub.on("closed", () => {
     const idx = pendingPermissions.indexOf(permEntry);
