@@ -184,21 +184,9 @@ function resolvePermissionEntry(permEntry, behavior, message) {
   // Guard: client may have disconnected
   if (res.writableEnded || res.destroyed) return;
 
-  // Elicitation: always deny with correct hookEventName, then focus terminal
   if (permEntry.isElicitation) {
-    const responseBody = JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "Elicitation",
-        decision: { behavior: "deny" },
-      },
-    });
-    permLog(`response (elicitation): ${responseBody}`);
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID,
-    });
-    res.end(responseBody);
-    if (ctx.focusTerminalForSession) ctx.focusTerminalForSession(permEntry.sessionId);
+    sendPermissionResponse(res, "deny", null, "Elicitation");
+    ctx.focusTerminalForSession(permEntry.sessionId);
     return;
   }
 
@@ -216,7 +204,7 @@ function permLog(msg) {
   fs.appendFileSync(ctx.permDebugLog, `[${new Date().toISOString()}] ${msg}\n`);
 }
 
-function sendPermissionResponse(res, decisionOrBehavior, message) {
+function sendPermissionResponse(res, decisionOrBehavior, message, hookEventName = "PermissionRequest") {
   let decision;
   if (typeof decisionOrBehavior === "string") {
     decision = { behavior: decisionOrBehavior };
@@ -225,7 +213,7 @@ function sendPermissionResponse(res, decisionOrBehavior, message) {
     decision = decisionOrBehavior;
   }
   const responseBody = JSON.stringify({
-    hookSpecificOutput: { hookEventName: "PermissionRequest", decision },
+    hookSpecificOutput: { hookEventName, decision },
   });
   permLog(`response: ${responseBody}`);
   res.writeHead(200, {
@@ -273,6 +261,19 @@ function handleDecide(event, behavior) {
       };
     }
     resolvePermissionEntry(perm, "allow");
+  } else if (behavior === "deny-and-focus") {
+    // Dismiss bubble without responding — let user decide in terminal.
+    // Keep abortHandler registered so socket cleanup happens when Claude Code disconnects.
+    const idx = pendingPermissions.indexOf(perm);
+    if (idx !== -1) pendingPermissions.splice(idx, 1);
+    if (perm.bubble && !perm.bubble.isDestroyed()) {
+      perm.bubble.webContents.send("permission-hide");
+      if (perm.hideTimer) clearTimeout(perm.hideTimer);
+      const bub = perm.bubble;
+      perm.hideTimer = setTimeout(() => { if (!bub.isDestroyed()) bub.destroy(); }, 250);
+    }
+    repositionBubbles();
+    ctx.focusTerminalForSession(perm.sessionId);
   } else {
     resolvePermissionEntry(perm, behavior === "allow" ? "allow" : "deny");
   }

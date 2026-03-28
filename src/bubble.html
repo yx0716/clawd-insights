@@ -263,7 +263,6 @@ body { padding: 6px; }
 </div>
 
 <script>
-// ⚠️ 以下 JS 完全没有修改，这是原版完整的功能逻辑
 const card = document.getElementById("card");
 const toolPill = document.getElementById("toolPill");
 const commandBlock = document.getElementById("commandBlock");
@@ -320,6 +319,15 @@ function disableAll() {
   for (const btn of suggestionsContainer.children) btn.disabled = true;
 }
 
+function revealCard() {
+  card.classList.remove("hiding");
+  card.classList.add("visible");
+  // 12 = 6px padding top + 6px padding bottom
+  requestAnimationFrame(() => {
+    window.bubbleAPI.reportHeight(card.offsetHeight + 12);
+  });
+}
+
 function show(data) {
   elicitationMode = data.isElicitation || false;
 
@@ -339,19 +347,17 @@ function show(data) {
     btnAllow.disabled = false;
     btnDeny.style.display = "none";
     suggestionsContainer.innerHTML = "";
-
-    card.classList.remove("hiding");
-    card.classList.add("visible");
-    requestAnimationFrame(() => {
-      const h = card.offsetHeight + 12;
-      window.bubbleAPI.reportHeight(h);
-    });
+    revealCard();
     return;
   }
 
-  // Permission mode
-  headerTitle.textContent = "Permission Request";
-  toolPill.style.display = "";
+  const isPlanReview = data.toolName === "ExitPlanMode";
+
+  // Header
+  headerTitle.textContent = isPlanReview
+    ? (data.lang === "zh" ? "\u8BA1\u5212\u5BA1\u6279" : "Plan Review")
+    : "Permission Request";
+  toolPill.style.display = isPlanReview ? "none" : "";
   btnDeny.style.display = "";
 
   // Tool pill
@@ -362,12 +368,22 @@ function show(data) {
   commandBlock.textContent = formatDetail(data.toolName, data.toolInput);
 
   // Button labels
-  btnAllow.textContent = data.lang === "zh" ? "\u6279\u51C6" : "Allow";
-  btnDeny.textContent = data.lang === "zh" ? "\u62D2\u7EDD" : "Deny";
+  btnAllow.textContent = data.lang === "zh" ? "\u6279\u51C6" : (isPlanReview ? "Approve" : "Allow");
+  btnDeny.textContent = data.lang === "zh" ? "\u62D2\u7EDD" : (isPlanReview ? "Reject" : "Deny");
 
   // Dynamic suggestion buttons
   suggestionsContainer.innerHTML = "";
-  if (Array.isArray(data.suggestions)) {
+  if (isPlanReview) {
+    // "Go to Terminal" button — deny + focus terminal
+    const btn = document.createElement("button");
+    btn.className = "btn-suggestion";
+    btn.textContent = data.lang === "zh" ? "\u524D\u5F80\u7EC8\u7AEF" : "Go to Terminal";
+    btn.addEventListener("click", () => {
+      disableAll();
+      window.bubbleAPI.decide("deny-and-focus");
+    });
+    suggestionsContainer.appendChild(btn);
+  } else if (Array.isArray(data.suggestions)) {
     data.suggestions.forEach((s, i) => {
       const btn = document.createElement("button");
       btn.className = "btn-suggestion";
@@ -384,14 +400,7 @@ function show(data) {
   btnAllow.disabled = false;
   btnDeny.disabled = false;
 
-  card.classList.remove("hiding");
-  card.classList.add("visible");
-
-  // Measure actual rendered height and report to main process for precise stacking
-  requestAnimationFrame(() => {
-    const h = card.offsetHeight + 12; // 12 = 6px padding top + 6px padding bottom
-    window.bubbleAPI.reportHeight(h);
-  });
+  revealCard();
 }
 
 function hide() {
