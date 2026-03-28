@@ -261,6 +261,19 @@ function handleDecide(event, behavior) {
       };
     }
     resolvePermissionEntry(perm, "allow");
+  } else if (behavior === "deny-and-focus") {
+    // Dismiss bubble without responding — let user decide in terminal.
+    // Keep abortHandler registered so socket cleanup happens when Claude Code disconnects.
+    const idx = pendingPermissions.indexOf(perm);
+    if (idx !== -1) pendingPermissions.splice(idx, 1);
+    if (perm.bubble && !perm.bubble.isDestroyed()) {
+      perm.bubble.webContents.send("permission-hide");
+      if (perm.hideTimer) clearTimeout(perm.hideTimer);
+      const bub = perm.bubble;
+      perm.hideTimer = setTimeout(() => { if (!bub.isDestroyed()) bub.destroy(); }, 250);
+    }
+    repositionBubbles();
+    ctx.focusTerminalForSession(perm.sessionId);
   } else {
     resolvePermissionEntry(perm, behavior === "allow" ? "allow" : "deny");
   }
