@@ -349,18 +349,6 @@ module.exports = function initMenu(ctx) {
         label: ctx.doNotDisturb ? t("wake") : t("sleep"),
         click: () => ctx.doNotDisturb ? ctx.disableDoNotDisturb() : ctx.enableDoNotDisturb(),
       },
-      {
-        label: t("bubbleFollow"),
-        type: "checkbox",
-        checked: ctx.bubbleFollowPet,
-        click: (menuItem) => {
-          ctx.bubbleFollowPet = menuItem.checked;
-          if (ctx.pendingPermissions.length) ctx.repositionBubbles();
-          buildContextMenu();
-          buildTrayMenu();
-          ctx.savePrefs();
-        },
-      },
       { type: "separator" },
       {
         label: `${t("sessions")} (${ctx.sessions.size})`,
@@ -388,16 +376,6 @@ module.exports = function initMenu(ctx) {
       );
     }
     template.push(
-      { type: "separator" },
-      ctx.getUpdateMenuItem(),
-      { type: "separator" },
-      {
-        label: t("language"),
-        submenu: [
-          { label: "English", type: "radio", checked: ctx.lang === "en", click: () => setLanguage("en") },
-          { label: "中文", type: "radio", checked: ctx.lang === "zh", click: () => setLanguage("zh") },
-        ],
-      },
       { type: "separator" },
       { label: t("quit"), click: () => requestAppQuit() },
     );
