@@ -53,6 +53,7 @@
       ]
     },
     "linux": {
+      "maintainer": "rullerzhou-afk <rullerzhou-afk@users.noreply.github.com>",
       "icon": "assets/icons",
       "category": "Utility",
       "target": [
