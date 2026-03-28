@@ -454,19 +454,15 @@ function createWindow() {
 
   win.setFocusable(false);
 
-  // Watchdog (Linux only): prevent accidental window close and guard against
-  // renderer crashes. On macOS/Windows the WM handles window lifecycle differently.
+  // Watchdog (Linux only): prevent accidental window close.
+  // render-process-gone is handled by the global crash-recovery handler below.
+  // On macOS/Windows the WM handles window lifecycle differently.
   if (process.platform === "linux") {
     win.on("close", (event) => {
       if (!isQuitting) {
         event.preventDefault();
         if (!win.isVisible()) win.showInactive();
       }
-    });
-    win.webContents.on("render-process-gone", (_event, details) => {
-      if (isQuitting) return;
-      console.warn("Clawd: renderer crashed:", details.reason, "— reloading");
-      win.webContents.reload();
     });
     win.on("unresponsive", () => {
       if (isQuitting) return;

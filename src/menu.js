@@ -22,7 +22,7 @@ function linuxSetOpenAtLogin(enable) {
     const projectDir = path.resolve(__dirname, "..");
     const launchScript = path.join(projectDir, "launch.js");
     const execCmd = app.isPackaged
-      ? `"${app.getPath("exe")}"`
+      ? `"${process.env.APPIMAGE || app.getPath("exe")}"`
       : `node "${launchScript}"`;
     const desktop = [
       "[Desktop Entry]",
