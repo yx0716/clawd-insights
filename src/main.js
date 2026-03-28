@@ -454,24 +454,26 @@ function createWindow() {
 
   win.setFocusable(false);
 
-  // Watchdog: prevent accidental window close. Only allow close when isQuitting is set
-  // (i.e. user explicitly quit via menu). Also guard against renderer crashes.
-  win.on("close", (event) => {
-    if (!isQuitting) {
-      event.preventDefault();
-      if (!win.isVisible()) win.showInactive();
-    }
-  });
-  win.webContents.on("render-process-gone", (_event, details) => {
-    if (isQuitting) return;
-    console.warn("Clawd: renderer crashed:", details.reason, "— reloading");
-    win.webContents.reload();
-  });
-  win.on("unresponsive", () => {
-    if (isQuitting) return;
-    console.warn("Clawd: renderer unresponsive — reloading");
-    win.webContents.reload();
-  });
+  // Watchdog (Linux only): prevent accidental window close and guard against
+  // renderer crashes. On macOS/Windows the WM handles window lifecycle differently.
+  if (process.platform === "linux") {
+    win.on("close", (event) => {
+      if (!isQuitting) {
+        event.preventDefault();
+        if (!win.isVisible()) win.showInactive();
+      }
+    });
+    win.webContents.on("render-process-gone", (_event, details) => {
+      if (isQuitting) return;
+      console.warn("Clawd: renderer crashed:", details.reason, "— reloading");
+      win.webContents.reload();
+    });
+    win.on("unresponsive", () => {
+      if (isQuitting) return;
+      console.warn("Clawd: renderer unresponsive — reloading");
+      win.webContents.reload();
+    });
+  }
 
   if (isWin) {
     // Windows: use pop-up-menu level to stay above taskbar/shell UI
