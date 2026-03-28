@@ -162,6 +162,11 @@ function showPermissionBubble(permEntry) {
 }
 
 function resolvePermissionEntry(permEntry, behavior, message) {
+  // Codex notify bubbles have no HTTP connection — route to dedicated cleanup
+  if (permEntry.isCodexNotify) {
+    dismissCodexNotify(permEntry);
+    return;
+  }
   const idx = pendingPermissions.indexOf(permEntry);
   if (idx === -1) return;
 
@@ -250,6 +255,10 @@ function handleDecide(event, behavior) {
   const perm = pendingPermissions.find(p => p.bubble === senderWin);
   permLog(`IPC permission-decide: behavior=${behavior} matched=${!!perm}`);
   if (!perm) return;
+  if (perm.isCodexNotify) {
+    dismissCodexNotify(perm);
+    return;
+  }
   // "suggestion:N" — user picked a permission suggestion
   if (typeof behavior === "string" && behavior.startsWith("suggestion:")) {
     const idx = parseInt(behavior.split(":")[1], 10);
@@ -291,6 +300,49 @@ function handleDecide(event, behavior) {
   }
 }
 
+const CODEX_NOTIFY_EXPIRE_MS = 30000;
+
+function showCodexNotifyBubble({ sessionId, command }) {
+  if (ctx.doNotDisturb) return;
+  const permEntry = {
+    res: null,
+    abortHandler: null, suggestions: [],
+    sessionId, bubble: null, hideTimer: null,
+    toolName: "CodexExec",
+    toolInput: { command: command || "(unknown)" },
+    resolvedSuggestion: null, createdAt: Date.now(),
+    isElicitation: false, isCodexNotify: true,
+    autoExpireTimer: null,
+  };
+  pendingPermissions.push(permEntry);
+  showPermissionBubble(permEntry);
+  permEntry.autoExpireTimer = setTimeout(() => {
+    dismissCodexNotify(permEntry);
+  }, CODEX_NOTIFY_EXPIRE_MS);
+}
+
+function dismissCodexNotify(permEntry) {
+  const idx = pendingPermissions.indexOf(permEntry);
+  if (idx === -1) return;
+  pendingPermissions.splice(idx, 1);
+  if (permEntry.autoExpireTimer) clearTimeout(permEntry.autoExpireTimer);
+  if (permEntry.hideTimer) clearTimeout(permEntry.hideTimer);
+  if (permEntry.bubble && !permEntry.bubble.isDestroyed()) {
+    permEntry.bubble.webContents.send("permission-hide");
+    const bub = permEntry.bubble;
+    setTimeout(() => { if (!bub.isDestroyed()) bub.destroy(); }, 250);
+  }
+  repositionBubbles();
+}
+
+function clearCodexNotifyBubbles(sessionId) {
+  if (!pendingPermissions.some(p => p.isCodexNotify)) return;
+  const toRemove = pendingPermissions.filter(
+    p => p.isCodexNotify && p.sessionId === sessionId
+  );
+  for (const perm of toRemove) dismissCodexNotify(perm);
+}
+
 function cleanup() {
   // Clean up all pending permission requests — send explicit deny so Claude Code doesn't hang
   for (const perm of [...pendingPermissions]) {
@@ -304,6 +356,7 @@ return {
   sendPermissionResponse, repositionBubbles, permLog,
   pendingPermissions, PASSTHROUGH_TOOLS,
   handleBubbleHeight, handleDecide, cleanup,
+  showCodexNotifyBubble, clearCodexNotifyBubbles,
 };
 
 };

@@ -132,6 +132,7 @@ const _permCtx = {
   get lang() { return lang; },
   get bubbleFollowPet() { return bubbleFollowPet; },
   get permDebugLog() { return permDebugLog; },
+  get doNotDisturb() { return doNotDisturb; },
   getNearestWorkArea,
   getHitRectScreen,
   guardAlwaysOnTop,
@@ -142,7 +143,7 @@ const _permCtx = {
   },
 };
 const _perm = require("./permission")(_permCtx);
-const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS } = _perm;
+const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS, showCodexNotifyBubble, clearCodexNotifyBubbles } = _perm;
 const pendingPermissions = _perm.pendingPermissions;
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
@@ -810,7 +811,17 @@ if (!gotTheLock) {
       const CodexLogMonitor = require("../agents/codex-log-monitor");
       const codexAgent = require("../agents/codex");
       _codexMonitor = new CodexLogMonitor(codexAgent, (sid, state, event, extra) => {
-        updateSession(sid, state, event, extra.sourcePid, extra.cwd, null, null, extra.agentPid, "codex");
+        if (state === "codex-permission") {
+          updateSession(sid, "notification", event, null, extra.cwd, null, null, null, "codex");
+          showCodexNotifyBubble({
+            sessionId: sid,
+            command: extra.permissionDetail?.command || "",
+          });
+          return;
+        }
+        // Non-permission event — clear any lingering Codex notify bubbles
+        clearCodexNotifyBubbles(sid);
+        updateSession(sid, state, event, null, extra.cwd, null, null, null, "codex");
       });
       _codexMonitor.start();
     } catch (err) {

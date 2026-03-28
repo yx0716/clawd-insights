@@ -254,4 +254,96 @@ describe("CodexLogMonitor", () => {
     });
     monitor.start();
   });
+
+  // ── Approval heuristic tests ──
+
+  it("should emit codex-permission after 2s timeout when no exec_command_end arrives", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    // function_call with shell_command but no exec_command_end following
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/projects/foo"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"rm -rf node_modules\\"}"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      states.push(state);
+      if (state === "codex-permission") {
+        assert.strictEqual(extra.permissionDetail.command, "rm -rf node_modules");
+        assert.strictEqual(extra.cwd, "/projects/foo");
+        done();
+      }
+    });
+    monitor.start();
+  });
+
+  it("should NOT emit codex-permission if exec_command_end arrives within 2s", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    // function_call immediately followed by exec_command_end — auto-approved
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"ls\\"}"}}',
+      '{"type":"event_msg","payload":{"type":"exec_command_end"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new CodexLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    // Wait 3s — if codex-permission doesn't appear, the timer was correctly cancelled
+    setTimeout(() => {
+      assert.ok(!states.includes("codex-permission"), "should not have emitted codex-permission");
+      assert.ok(states.includes("idle"));
+      assert.ok(states.includes("working"));
+      done();
+    }, 3000);
+  });
+
+  it("should NOT emit codex-permission for non-shell function calls", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    // web_search_call — not a shell command, no approval needed
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"web_search","arguments":"{\\"query\\":\\"test\\"}"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new CodexLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    setTimeout(() => {
+      assert.ok(!states.includes("codex-permission"), "should not emit for non-shell calls");
+      done();
+    }, 3000);
+  });
+
+  it("should extract shell command from function_call arguments JSON", () => {
+    const config = makeConfig(tmpDir);
+    monitor = new CodexLogMonitor(config, () => {});
+    // JSON string arguments
+    assert.strictEqual(
+      monitor._extractShellCommand({ name: "shell_command", arguments: '{"command":"ls -la"}' }),
+      "ls -la"
+    );
+    // Object arguments
+    assert.strictEqual(
+      monitor._extractShellCommand({ name: "shell_command", arguments: { command: "git status" } }),
+      "git status"
+    );
+    // Non-shell function
+    assert.strictEqual(
+      monitor._extractShellCommand({ name: "web_search", arguments: '{"query":"test"}' }),
+      ""
+    );
+    // null/empty
+    assert.strictEqual(monitor._extractShellCommand(null), "");
+    assert.strictEqual(monitor._extractShellCommand({}), "");
+  });
 });

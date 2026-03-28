@@ -6,6 +6,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+const APPROVAL_HEURISTIC_MS = 2000;
+
 class CodexLogMonitor {
   /**
    * @param {object} agentConfig - codex.js config (logConfig + logEventMap)
@@ -42,6 +44,9 @@ class CodexLogMonitor {
     if (this._interval) {
       clearInterval(this._interval);
       this._interval = null;
+    }
+    for (const tracked of this._tracked.values()) {
+      if (tracked.approvalTimer) clearTimeout(tracked.approvalTimer);
     }
     this._tracked.clear();
   }
@@ -161,11 +166,39 @@ class CodexLogMonitor {
       tracked.cwd = payload.cwd || "";
     }
 
+    // Approval heuristic: exec_command_end or function_call_output means command finished —
+    // clear pending approval timer (these events are not in logEventMap)
+    if (key === "event_msg:exec_command_end" || key === "response_item:function_call_output") {
+      if (tracked.approvalTimer) {
+        clearTimeout(tracked.approvalTimer);
+        tracked.approvalTimer = null;
+      }
+    }
+
     // Look up state mapping
     const map = this._config.logEventMap;
     const state = map[key];
     if (state === undefined) return; // unmapped event, skip
     if (state === null) return; // explicitly ignored
+
+    // Approval heuristic: function_call starts a 2s timer — if no exec_command_end arrives,
+    // assume Codex is waiting for user approval and emit codex-permission
+    if (key === "response_item:function_call") {
+      if (tracked.approvalTimer) clearTimeout(tracked.approvalTimer);
+      const cmd = this._extractShellCommand(payload);
+      if (cmd) {
+        tracked.approvalTimer = setTimeout(() => {
+          tracked.approvalTimer = null;
+          tracked.lastEventTime = Date.now();
+          this._onStateChange(tracked.sessionId, "codex-permission", key, {
+            cwd: tracked.cwd,
+            sourcePid: null,
+            agentPid: null,
+            permissionDetail: { command: cmd, rawPayload: payload },
+          });
+        }, APPROVAL_HEURISTIC_MS);
+      }
+    }
 
     // Avoid spamming same state
     if (state === tracked.lastState && state === "working") return;
@@ -177,6 +210,19 @@ class CodexLogMonitor {
       sourcePid: null, // JSONL doesn't contain terminal PID
       agentPid: null, // can't reliably match from log file
     });
+  }
+
+  // Extract shell command from function_call payload
+  // payload.arguments is a JSON string: {"command":"...","workdir":"...","timeout_ms":...}
+  _extractShellCommand(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    if (payload.name !== "shell_command") return "";
+    try {
+      const args = typeof payload.arguments === "string"
+        ? JSON.parse(payload.arguments) : payload.arguments;
+      if (args && args.command) return String(args.command);
+    } catch {}
+    return "";
   }
 
   // Extract UUID from rollout filename
@@ -197,6 +243,7 @@ class CodexLogMonitor {
       const age = now - tracked.lastEventTime;
       if (age > 300000) {
         // 5 min stale — notify session end and stop tracking
+        if (tracked.approvalTimer) clearTimeout(tracked.approvalTimer);
         this._onStateChange(tracked.sessionId, "sleeping", "stale-cleanup", {
           cwd: tracked.cwd,
           sourcePid: null,
