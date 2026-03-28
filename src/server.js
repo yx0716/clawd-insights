@@ -116,7 +116,7 @@ function startHttpServer() {
       req.on("data", (chunk) => {
         if (tooLarge) return;
         bodySize += chunk.length;
-        if (bodySize > 8192) { tooLarge = true; return; }
+        if (bodySize > 65536) { tooLarge = true; return; }
         body += chunk;
       });
       req.on("end", () => {

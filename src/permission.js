@@ -164,6 +164,18 @@ function showPermissionBubble(permEntry) {
 function resolvePermissionEntry(permEntry, behavior, message) {
   const idx = pendingPermissions.indexOf(permEntry);
   if (idx === -1) return;
+
+  // Minimum display time: if bubble just appeared and dismiss is automatic
+  // (client disconnect / terminal answer), delay so user can see it briefly
+  const MIN_BUBBLE_DISPLAY_MS = 2000;
+  const age = Date.now() - (permEntry.createdAt || 0);
+  const isAutoResolve = message === "Client disconnected";
+  if (isAutoResolve && age < MIN_BUBBLE_DISPLAY_MS && !permEntry._delayedResolve) {
+    permEntry._delayedResolve = true;
+    permEntry._delayTimer = setTimeout(() => resolvePermissionEntry(permEntry, behavior, message), MIN_BUBBLE_DISPLAY_MS - age);
+    return;
+  }
+
   pendingPermissions.splice(idx, 1);
 
   const { res, abortHandler, bubble: bub } = permEntry;
@@ -282,6 +294,7 @@ function handleDecide(event, behavior) {
 function cleanup() {
   // Clean up all pending permission requests — send explicit deny so Claude Code doesn't hang
   for (const perm of [...pendingPermissions]) {
+    if (perm._delayTimer) clearTimeout(perm._delayTimer);
     resolvePermissionEntry(perm, "deny", "Clawd is quitting");
   }
 }
