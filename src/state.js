@@ -13,7 +13,7 @@ const SVG_IDLE_LIVING = "clawd-idle-living.svg";
 
 // ── State → SVG mapping ──
 const STATE_SVGS = {
-  idle: [SVG_IDLE_FOLLOW, SVG_IDLE_LIVING],
+  idle: [SVG_IDLE_FOLLOW, "clawd-working-debugger.svg", "clawd-idle-reading.svg"],
   yawning: ["clawd-idle-yawn.svg"],
   dozing: ["clawd-idle-doze.svg"],
   collapsing: ["clawd-collapse-sleep.svg"],
@@ -87,7 +87,7 @@ const HIT_BOXES = {
   sleeping: { x: -2, y: 9, w: 19, h: 7 },
   wide:     { x: -3, y: 3, w: 21, h: 14 },
 };
-const WIDE_SVGS = new Set(["clawd-error.svg", "clawd-working-building.svg", "clawd-notification.svg", "clawd-working-conducting.svg"]);
+const WIDE_SVGS = new Set(["clawd-error.svg", "clawd-notification.svg", "clawd-working-conducting.svg"]);
 let currentHitBox = HIT_BOXES.default;
 
 // ── State machine internal ──
