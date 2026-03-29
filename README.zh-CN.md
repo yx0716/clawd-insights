@@ -55,6 +55,8 @@
 | Claude Code 事件 | 桌宠状态 | 动画 | |
 |---|---|---|---|
 | 无活动 | 待机 | 眼球跟踪 | <img src="assets/gif/clawd-idle.gif" width="200"> |
+| 无活动（随机） | 待机 | 看书 | <img src="assets/gif/clawd-idle-reading.gif" width="200"> |
+| 无活动（随机） | 待机 | 侦探巡逻 | <img src="assets/gif/clawd-debugger.gif" width="200"> |
 | UserPromptSubmit | 思考 | 思考泡泡 | <img src="assets/gif/clawd-thinking.gif" width="200"> |
 | PreToolUse / PostToolUse | 工作（打字） | 打字 | <img src="assets/gif/clawd-typing.gif" width="200"> |
 | PreToolUse（3+ 会话） | 工作（建造） | 建造 | <img src="assets/gif/clawd-building.gif" width="200"> |
@@ -78,6 +80,10 @@
 | 通知 / 权限请求 | 感叹号弹出 + >< 挤眼 | <img src="assets/gif/clawd-mini-alert.gif" width="120"> |
 | 任务完成 | 花花 + ^^ 眯眼 + 星星闪烁 | <img src="assets/gif/clawd-mini-happy.gif" width="120"> |
 | Peek 时点击 | 退出极简模式（抛物线跳回） | |
+
+### 点击反应
+
+彩蛋——试试双击、连点 4 下、或反复戳 Clawd，会有隐藏反应。
 
 ## 快速开始
 
