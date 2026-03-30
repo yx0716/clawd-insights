@@ -194,7 +194,22 @@ function startHttpServer() {
           const rawInput = data.tool_input && typeof data.tool_input === "object" ? data.tool_input : {};
           const toolInput = truncateDeep(rawInput);
           const sessionId = data.session_id || "default";
-          const suggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
+          const rawSuggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
+          // Merge multiple addRules suggestions (e.g. piped commands) into one button
+          const addRulesItems = rawSuggestions.filter(s => s && s.type === "addRules");
+          const suggestions = addRulesItems.length > 1
+            ? [
+                ...rawSuggestions.filter(s => !s || s.type !== "addRules"),
+                {
+                  type: "addRules",
+                  destination: addRulesItems[0].destination || "localSettings",
+                  behavior: addRulesItems[0].behavior || "allow",
+                  rules: addRulesItems.flatMap(s =>
+                    Array.isArray(s.rules) ? s.rules : [{ toolName: s.toolName, ruleContent: s.ruleContent }]
+                  ),
+                },
+              ]
+            : rawSuggestions;
 
           const existingSession = ctx.sessions.get(sessionId);
           if (existingSession && existingSession.headless) {
