@@ -4,8 +4,9 @@
 const claudeCode = require("./claude-code");
 const codex = require("./codex");
 const copilotCli = require("./copilot-cli");
+const geminiCli = require("./gemini-cli");
 
-const AGENTS = [claudeCode, codex, copilotCli];
+const AGENTS = [claudeCode, codex, copilotCli, geminiCli];
 const AGENT_MAP = new Map(AGENTS.map((a) => [a.id, a]));
 
 module.exports = {

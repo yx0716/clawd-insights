@@ -9,7 +9,8 @@
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
     "build:all": "electron-builder --win --mac --linux",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "install:gemini-hooks": "node hooks/gemini-install.js"
   },
   "keywords": [
     "clawd",

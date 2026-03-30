@@ -40,6 +40,18 @@ function syncClawdHooks() {
   }
 }
 
+function syncGeminiHooks() {
+  try {
+    const { registerGeminiHooks } = require("../hooks/gemini-install.js");
+    const { added, updated } = registerGeminiHooks({ silent: true });
+    if (added > 0 || updated > 0) {
+      console.log(`Clawd: synced Gemini hooks (added ${added}, updated ${updated})`);
+    }
+  } catch (err) {
+    console.warn("Clawd: failed to sync Gemini hooks:", err.message);
+  }
+}
+
 function sendStateHealthResponse(res) {
   const body = JSON.stringify({ ok: true, app: CLAWD_SERVER_ID, port: getHookServerPort() });
   res.writeHead(200, {
@@ -289,6 +301,7 @@ function startHttpServer() {
     writeRuntimeConfig(activeServerPort);
     console.log(`Clawd state server listening on 127.0.0.1:${activeServerPort}`);
     syncClawdHooks();
+    syncGeminiHooks();
     watchSettingsForHookLoss();
   });
 
