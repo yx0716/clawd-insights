@@ -9,6 +9,7 @@ const {
 } = require("../hooks/server-config");
 
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
 const isWin = process.platform === "win32";
 const WIN_TOPMOST_LEVEL = "pop-up-menu";
 
@@ -148,6 +149,8 @@ function showPermissionBubble(permEntry) {
 
   repositionBubbles();
   bub.showInactive();
+  // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
+  if (isLinux) bub.setSkipTaskbar(true);
   // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
   ctx.reapplyMacVisibility();
 
