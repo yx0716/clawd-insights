@@ -312,6 +312,7 @@ const _serverCtx = {
   get pendingPermissions() { return pendingPermissions; },
   get PASSTHROUGH_TOOLS() { return PASSTHROUGH_TOOLS; },
   get STATE_SVGS() { return STATE_SVGS; },
+  get sessions() { return sessions; },
   setState,
   updateSession,
   resolvePermissionEntry,
