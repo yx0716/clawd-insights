@@ -3,7 +3,9 @@ const path = require("path");
 const fs = require("fs");
 
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
 const isWin = process.platform === "win32";
+const LINUX_WINDOW_TYPE = "toolbar";
 
 
 // ── Windows: AllowSetForegroundWindow via FFI ──
@@ -495,6 +497,7 @@ function createWindow() {
     skipTaskbar: true,
     hasShadow: false,
     enableLargerThanScreen: true,
+    ...(isLinux ? { type: LINUX_WINDOW_TYPE } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       backgroundThrottling: false,
@@ -506,7 +509,7 @@ function createWindow() {
   // Watchdog (Linux only): prevent accidental window close.
   // render-process-gone is handled by the global crash-recovery handler below.
   // On macOS/Windows the WM handles window lifecycle differently.
-  if (process.platform === "linux") {
+  if (isLinux) {
     win.on("close", (event) => {
       if (!isQuitting) {
         event.preventDefault();
@@ -526,6 +529,8 @@ function createWindow() {
   }
   win.loadFile(path.join(__dirname, "index.html"));
   win.showInactive();
+  // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
+  if (isLinux) win.setSkipTaskbar(true);
   // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
   reapplyMacVisibility();
 
@@ -561,7 +566,8 @@ function createWindow() {
       skipTaskbar: true,
       hasShadow: false,
       enableLargerThanScreen: true,
-      focusable: process.platform !== "linux",  // KEY EXPERIMENT: allow activation to avoid WS_EX_NOACTIVATE input routing bugs (Windows-only issue)
+      ...(isLinux ? { type: LINUX_WINDOW_TYPE } : {}),
+      focusable: !isLinux,  // KEY EXPERIMENT: allow activation to avoid WS_EX_NOACTIVATE input routing bugs (Windows-only issue)
       webPreferences: {
         preload: path.join(__dirname, "preload-hit.js"),
         backgroundThrottling: false,
@@ -574,7 +580,7 @@ function createWindow() {
     if (isMac) hitWin.setFocusable(false);
     hitWin.showInactive();
     // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
-    if (process.platform === "linux") hitWin.setSkipTaskbar(true);
+    if (isLinux) hitWin.setSkipTaskbar(true);
     if (isWin) {
       hitWin.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
     }

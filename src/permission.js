@@ -9,8 +9,10 @@ const {
 } = require("../hooks/server-config");
 
 const isMac = process.platform === "darwin";
+const isLinux = process.platform === "linux";
 const isWin = process.platform === "win32";
 const WIN_TOPMOST_LEVEL = "pop-up-menu";
+const LINUX_WINDOW_TYPE = "toolbar";
 
 module.exports = function initPermission(ctx) {
 
@@ -118,6 +120,7 @@ function showPermissionBubble(permEntry) {
     resizable: false,
     skipTaskbar: true,
     hasShadow: false,
+    ...(isLinux ? { type: LINUX_WINDOW_TYPE } : {}),
     focusable: false,
     webPreferences: {
       preload: path.join(__dirname, "preload-bubble.js"),
@@ -148,6 +151,8 @@ function showPermissionBubble(permEntry) {
 
   repositionBubbles();
   bub.showInactive();
+  // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
+  if (isLinux) bub.setSkipTaskbar(true);
   // macOS: apply after showInactive() — it resets NSWindowCollectionBehavior
   ctx.reapplyMacVisibility();
 
