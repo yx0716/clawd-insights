@@ -99,10 +99,17 @@ function togglePetVisibility() {
   if (_mini.getMiniTransitioning()) return;
   if (petHidden) {
     win.showInactive();
-    if (hitWin && !hitWin.isDestroyed()) hitWin.showInactive();
+    if (isLinux) win.setSkipTaskbar(true);
+    if (hitWin && !hitWin.isDestroyed()) {
+      hitWin.showInactive();
+      if (isLinux) hitWin.setSkipTaskbar(true);
+    }
     // Restore any permission bubbles that were hidden
     for (const perm of pendingPermissions) {
-      if (perm.bubble && !perm.bubble.isDestroyed()) perm.bubble.showInactive();
+      if (perm.bubble && !perm.bubble.isDestroyed()) {
+        perm.bubble.showInactive();
+        if (isLinux) perm.bubble.setSkipTaskbar(true);
+      }
     }
     reapplyMacVisibility();
     petHidden = false;
@@ -863,8 +870,14 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (win) win.showInactive();
-    if (hitWin && !hitWin.isDestroyed()) hitWin.showInactive();
+    if (win) {
+      win.showInactive();
+      if (isLinux) win.setSkipTaskbar(true);
+    }
+    if (hitWin && !hitWin.isDestroyed()) {
+      hitWin.showInactive();
+      if (isLinux) hitWin.setSkipTaskbar(true);
+    }
     reapplyMacVisibility();
   });
 
