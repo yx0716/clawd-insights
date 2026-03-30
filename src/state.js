@@ -436,7 +436,7 @@ function detectRunningAgentProcesses(callback) {
       (err, stdout) => done(!err && /\d+/.test(stdout))
     );
   } else {
-    exec("pgrep -f 'claude-code|codex|copilot|gemini'", { timeout: 3000 },
+    exec("pgrep -f 'claude-code|codex|copilot' || pgrep -x 'gemini'", { timeout: 3000 },
       (err) => done(!err)
     );
   }

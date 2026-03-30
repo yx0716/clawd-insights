@@ -4,27 +4,16 @@
 
 const { postStateToRunningServer, readHostPrefix } = require("./server-config");
 
-const EVENT_TO_STATE = {
-  SessionStart: "idle",
-  SessionEnd: "sleeping",
-  BeforeAgent: "thinking",
-  BeforeTool: "working",
-  AfterTool: "working",
-  AfterAgent: "attention",
-  Notification: "notification",
-  PreCompress: "sweeping",
-};
-
-// Map Gemini events to Clawd event names for the state machine
-const EVENT_RENAME = {
-  SessionStart: "SessionStart",
-  SessionEnd: "SessionEnd",
-  BeforeAgent: "UserPromptSubmit",
-  BeforeTool: "PreToolUse",
-  AfterTool: "PostToolUse",
-  AfterAgent: "Stop",
-  Notification: "Notification",
-  PreCompress: "PreCompact",
+// Gemini hook event → { state, event } for the Clawd state machine
+const HOOK_MAP = {
+  SessionStart:  { state: "idle",         event: "SessionStart" },
+  SessionEnd:    { state: "sleeping",     event: "SessionEnd" },
+  BeforeAgent:   { state: "thinking",     event: "UserPromptSubmit" },
+  BeforeTool:    { state: "working",      event: "PreToolUse" },
+  AfterTool:     { state: "working",      event: "PostToolUse" },
+  AfterAgent:    { state: "attention",    event: "Stop" },
+  Notification:  { state: "notification", event: "Notification" },
+  PreCompress:   { state: "sweeping",     event: "PreCompact" },
 };
 
 // Walk the process tree to find the terminal app PID.
@@ -117,7 +106,7 @@ function getStablePid() {
 
 // Gemini CLI gating hooks need stdout JSON response
 function stdoutForEvent(hookName) {
-  if (hookName === "BeforeTool" || hookName === "BeforeToolSelection") {
+  if (hookName === "BeforeTool") {
     return JSON.stringify({ decision: "allow" });
   }
   if (hookName === "BeforeAgent") {
@@ -137,15 +126,15 @@ function finishOnce(payload) {
   if (_stdinTimer) clearTimeout(_stdinTimer);
 
   const hookName = (payload && payload.hook_event_name) || "";
-  const state = EVENT_TO_STATE[hookName];
+  const mapped = HOOK_MAP[hookName];
 
-  if (!state) {
+  if (!mapped) {
     process.stdout.write(stdoutForEvent(hookName) + "\n");
     process.exit(0);
     return;
   }
 
-  const event = EVENT_RENAME[hookName] || hookName;
+  const { state, event } = mapped;
 
   if (hookName === "SessionStart" && !process.env.CLAWD_REMOTE) getStablePid();
 
