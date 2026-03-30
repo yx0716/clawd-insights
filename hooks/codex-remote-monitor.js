@@ -17,7 +17,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { postStateToRunningServer } = require("./server-config");
+const { postStateToRunningServer, readHostPrefix } = require("./server-config");
 
 // ── Inline config from agents/codex.js (zero-dependency requirement) ──
 
@@ -45,6 +45,8 @@ const args = process.argv.slice(2);
 const onceMode = args.includes("--once");
 const portIndex = args.indexOf("--port");
 const preferredPort = portIndex >= 0 ? parseInt(args[portIndex + 1], 10) : undefined;
+
+const hostPrefix = readHostPrefix();
 
 // ── State tracking ──
 
@@ -82,6 +84,7 @@ function postState(sessionId, state, event, cwd) {
     event,
     agent_id: "codex",
     cwd: cwd || "",
+    host: hostPrefix,
   });
   postStateToRunningServer(
     body,

@@ -57,6 +57,8 @@ Events from all agents (Claude Code hooks, Codex JSONL, Copilot hooks) map to th
 | Agent Event | Clawd State | Animation | |
 |---|---|---|---|
 | Idle (no activity) | idle | Eye-tracking follow | <img src="assets/gif/clawd-idle.gif" width="200"> |
+| Idle (random) | idle | Reading a book | <img src="assets/gif/clawd-idle-reading.gif" width="200"> |
+| Idle (random) | idle | Debugger patrol | <img src="assets/gif/clawd-debugger.gif" width="200"> |
 | UserPromptSubmit | thinking | Thought bubble | <img src="assets/gif/clawd-thinking.gif" width="200"> |
 | PreToolUse / PostToolUse | working (typing) | Typing | <img src="assets/gif/clawd-typing.gif" width="200"> |
 | PreToolUse (3+ sessions) | working (building) | Building | <img src="assets/gif/clawd-building.gif" width="200"> |
@@ -80,6 +82,10 @@ Drag Clawd to the right screen edge (or right-click → "Mini Mode") to enter mi
 | Notification / PermissionRequest | Exclamation mark pop + >< squint eyes | <img src="assets/gif/clawd-mini-alert.gif" width="120"> |
 | Stop / PostCompact | Flower + ^^ happy eyes + sparkles | <img src="assets/gif/clawd-mini-happy.gif" width="120"> |
 | Click during peek | Exit mini mode (parabolic jump back) | |
+
+### Click Reactions
+
+Easter eggs — try double-clicking, rapid 4-clicks, or poking Clawd repeatedly to discover hidden reactions.
 
 ## Quick Start
 
@@ -189,6 +195,7 @@ Thanks to everyone who has helped make Clawd better:
 <a href="https://github.com/hongbigtou"><img src="https://github.com/hongbigtou.png" width="50" style="border-radius:50%" /></a>
 <a href="https://github.com/InTimmyDate"><img src="https://github.com/InTimmyDate.png" width="50" style="border-radius:50%" /></a>
 <a href="https://github.com/NeizhiTouhu"><img src="https://github.com/NeizhiTouhu.png" width="50" style="border-radius:50%" /></a>
+<a href="https://github.com/xu3stones-cmd"><img src="https://github.com/xu3stones-cmd.png" width="50" style="border-radius:50%" /></a>
 
 ## Acknowledgments
 

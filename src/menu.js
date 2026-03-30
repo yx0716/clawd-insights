@@ -84,8 +84,10 @@ const i18n = {
     restartLater: "Later",
     download: "Download",
     bubbleFollow: "Bubble Follow Pet",
+    showSessionId: "Show Session ID",
     sessions: "Sessions",
     noSessions: "No active sessions",
+    sessionLocal: "Local",
     sessionWorking: "Working",
     sessionThinking: "Thinking",
     sessionJuggling: "Juggling",
@@ -129,8 +131,10 @@ const i18n = {
     restartLater: "稍后",
     download: "下载",
     bubbleFollow: "气泡跟随宠物",
+    showSessionId: "显示会话编号",
     sessions: "会话",
     noSessions: "无活跃会话",
+    sessionLocal: "本机",
     sessionWorking: "工作中",
     sessionThinking: "思考中",
     sessionJuggling: "多任务",
@@ -224,6 +228,17 @@ module.exports = function initMenu(ctx) {
         click: (menuItem) => {
           ctx.bubbleFollowPet = menuItem.checked;
           if (ctx.pendingPermissions.length) ctx.repositionBubbles();
+          buildContextMenu();
+          buildTrayMenu();
+          ctx.savePrefs();
+        },
+      },
+      {
+        label: t("showSessionId"),
+        type: "checkbox",
+        checked: ctx.showSessionId,
+        click: (menuItem) => {
+          ctx.showSessionId = menuItem.checked;
           buildContextMenu();
           buildTrayMenu();
           ctx.savePrefs();

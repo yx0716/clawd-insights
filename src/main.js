@@ -54,7 +54,7 @@ function savePrefs() {
     x, y, size: currentSize,
     miniMode: _mini.getMiniMode(), preMiniX: _mini.getPreMiniX(), preMiniY: _mini.getPreMiniY(), lang,
     showTray, showDock,
-    autoStartWithClaude, bubbleFollowPet,
+    autoStartWithClaude, bubbleFollowPet, showSessionId,
   };
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
@@ -88,6 +88,7 @@ let showTray = true;
 let showDock = true;
 let autoStartWithClaude = false;
 let bubbleFollowPet = false;
+let showSessionId = false;
 let petHidden = false;
 const DEFAULT_TOGGLE_SHORTCUT = "CommandOrControl+Shift+Alt+C";
 
@@ -225,6 +226,7 @@ const _stateCtx = {
   set forceEyeResend(v) { forceEyeResend = v; },
   get mouseStillSince() { return _tick ? _tick._mouseStillSince : Date.now(); },
   get pendingPermissions() { return pendingPermissions; },
+  get showSessionId() { return showSessionId; },
   sendToRenderer,
   sendToHitWin,
   syncHitWin,
@@ -377,7 +379,8 @@ function stopTopmostWatchdog() {
 
 function updateLog(msg) {
   if (!updateDebugLog) return;
-  fs.appendFileSync(updateDebugLog, `[${new Date().toISOString()}] ${msg}\n`);
+  const { rotatedAppend } = require("./log-rotate");
+  rotatedAppend(updateDebugLog, `[${new Date().toISOString()}] ${msg}\n`);
 }
 
 // ── Menu — delegated to src/menu.js ──
@@ -397,6 +400,8 @@ const _menuCtx = {
   set autoStartWithClaude(v) { autoStartWithClaude = v; },
   get bubbleFollowPet() { return bubbleFollowPet; },
   set bubbleFollowPet(v) { bubbleFollowPet = v; },
+  get showSessionId() { return showSessionId; },
+  set showSessionId(v) { showSessionId = v; },
   get pendingPermissions() { return pendingPermissions; },
   repositionBubbles: () => repositionBubbles(),
   get petHidden() { return petHidden; },
@@ -453,6 +458,7 @@ function createWindow() {
   }
   if (prefs && typeof prefs.autoStartWithClaude === "boolean") autoStartWithClaude = prefs.autoStartWithClaude;
   if (prefs && typeof prefs.bubbleFollowPet === "boolean") bubbleFollowPet = prefs.bubbleFollowPet;
+  if (prefs && typeof prefs.showSessionId === "boolean") showSessionId = prefs.showSessionId;
   // macOS: apply dock visibility (default hidden)
   if (isMac) {
     applyDockVisibility();
@@ -553,6 +559,7 @@ function createWindow() {
       resizable: false,
       skipTaskbar: true,
       hasShadow: false,
+      enableLargerThanScreen: true,
       focusable: process.platform !== "linux",  // KEY EXPERIMENT: allow activation to avoid WS_EX_NOACTIVATE input routing bugs (Windows-only issue)
       webPreferences: {
         preload: path.join(__dirname, "preload-hit.js"),
@@ -563,6 +570,7 @@ function createWindow() {
     // hitWin has no visual content — clipping is irrelevant.
     hitWin.setShape([{ x: 0, y: 0, width: hw, height: hh }]);
     hitWin.setIgnoreMouseEvents(false);  // PERMANENT — never toggle
+    if (isMac) hitWin.setFocusable(false);
     hitWin.showInactive();
     // Linux WMs may reset skipTaskbar after showInactive — re-apply explicitly
     if (process.platform === "linux") hitWin.setSkipTaskbar(true);
