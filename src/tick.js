@@ -19,9 +19,15 @@ let mainTickTimer = null;
 
 const MOUSE_IDLE_TIMEOUT = 20000;   // 20s → idle-look
 const MOUSE_SLEEP_TIMEOUT = 60000;  // 60s → yawning → dozing
-const IDLE_LOOK_DURATION = 10000;  // idle-look CSS loop is 10s
 const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
 const SVG_IDLE_LOOK = "clawd-idle-look.svg";
+
+// Random idle animations: picked when mouse is still for 20s
+const IDLE_ANIMS = [
+  { svg: SVG_IDLE_LOOK, duration: 6500 },
+  { svg: "clawd-working-debugger.svg", duration: 14000 },
+  { svg: "clawd-idle-reading.svg", duration: 14000 },
+];
 
 // ── Unified main tick (cursor polling for eye tracking + sleep + mini peek) ──
 // Input routing is handled by hitWin — no setIgnoreMouseEvents toggling here.
@@ -131,14 +137,15 @@ function startMainTick() {
         return;
       }
 
-      // 20s no mouse movement → idle-look (play once, then return)
+      // 20s no mouse movement → random idle animation (play once, then return to idle-follow)
       if (!isMouseIdle && !hasTriggeredYawn && !idleLookPlayed && elapsed >= MOUSE_IDLE_TIMEOUT) {
         isMouseIdle = true;
         idleLookPlayed = true;
+        const pick = IDLE_ANIMS[Math.floor(Math.random() * IDLE_ANIMS.length)];
         ctx.sendToRenderer("eye-move", 0, 0);
         setTimeout(() => {
           if (isMouseIdle && ctx.currentState === "idle") {
-            ctx.sendToRenderer("state-change", "idle", SVG_IDLE_LOOK);
+            ctx.sendToRenderer("state-change", "idle", pick.svg);
           }
         }, 250);
         idleLookReturnTimer = setTimeout(() => {
@@ -148,7 +155,7 @@ function startMainTick() {
             ctx.sendToRenderer("state-change", "idle", SVG_IDLE_FOLLOW);
             setTimeout(() => { ctx.forceEyeResend = true; }, 200);
           }
-        }, 250 + IDLE_LOOK_DURATION);
+        }, 250 + pick.duration);
         return;
       }
     }
