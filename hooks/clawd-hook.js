@@ -71,6 +71,7 @@ let _detectedEditor = null; // "code" or "cursor" — for URI scheme terminal ta
 let _claudePid = null;       // Claude Code process PID — for crash/orphan detection
 let _pidChain = [];          // all PIDs visited during tree walk
 let _isHeadless = false;     // true if claude process has -p/--print flag
+let _terminalApp = null;     // detected terminal app name (e.g. "ghostty", "iterm2")
 
 function getStablePid() {
   if (_stablePid) return _stablePid;
@@ -130,7 +131,7 @@ function getStablePid() {
       }
     }
     if (systemBoundary.has(name)) break;
-    if (terminalNames.has(name)) terminalPid = pid;
+    if (terminalNames.has(name)) { terminalPid = pid; _terminalApp = name; }
     lastGoodPid = pid;
     if (!parentPid || parentPid === pid || parentPid <= 1) break;
     pid = parentPid;
@@ -203,6 +204,7 @@ function send(sessionId, cwd, source) {
     }
     if (_pidChain.length) body.pid_chain = _pidChain;
     if (_isHeadless) body.headless = true;
+    if (_terminalApp) body.terminal_app = _terminalApp;
   }
 
   const data = JSON.stringify(body);

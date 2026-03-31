@@ -193,7 +193,7 @@ const _permCtx = {
   reapplyMacVisibility,
   focusTerminalForSession: (sessionId) => {
     const s = sessions.get(sessionId);
-    if (s && s.sourcePid) focusTerminalWindow(s.sourcePid, s.cwd, s.editor, s.pidChain);
+    if (s && s.sourcePid) focusTerminalWindow(s.sourcePid, s.cwd, s.editor, s.pidChain, s.terminalApp);
   },
 };
 const _perm = require("./permission")(_permCtx);
@@ -675,7 +675,7 @@ function createWindow() {
         bestPriority = pri;
       }
     }
-    if (best) focusTerminalWindow(best.sourcePid, best.cwd, best.editor, best.pidChain);
+    if (best) focusTerminalWindow(best.sourcePid, best.cwd, best.editor, best.pidChain, best.terminalApp);
   });
 
   ipcMain.on("show-session-menu", () => {

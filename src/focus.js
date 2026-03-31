@@ -204,16 +204,27 @@ function executeMacFocusRequest(request) {
     if (macQueuedFocusRequest) flushQueuedMacFocus();
   };
 
-  focusTerminalWindowLegacy(request.sourcePid, request.cwd, finalize, request.pidChain);
+  // Ghostty: try AppleScript terminal-level focus first, fallback to process-level
+  if (request.terminalApp === "ghostty" && request.cwd) {
+    focusMacGhostty(request.cwd, request.pidChain, (ok) => {
+      if (!ok) {
+        focusMacProcessFrontmost(request.sourcePid, request.pidChain, finalize);
+      } else {
+        finalize();
+      }
+    });
+  } else {
+    focusMacProcessFrontmost(request.sourcePid, request.pidChain, finalize);
+  }
   scheduleTerminalTabFocus(request.editor, request.pidChain);
 }
 
-function requestMacFocus(sourcePid, cwd, editor, pidChain) {
+function requestMacFocus(sourcePid, cwd, editor, pidChain, terminalApp) {
   const elapsed = Date.now() - macFocusLastRunAt;
   const inCooldown = elapsed < MAC_FOCUS_THROTTLE_MS;
   if (inCooldown && macFocusLastPid === sourcePid) return;
 
-  const request = { sourcePid, cwd, editor, pidChain };
+  const request = { sourcePid, cwd, editor, pidChain, terminalApp };
   if (macFocusInFlight) {
     macQueuedFocusRequest = request;
     return;
@@ -230,11 +241,11 @@ function requestMacFocus(sourcePid, cwd, editor, pidChain) {
   executeMacFocusRequest(request);
 }
 
-function focusTerminalWindow(sourcePid, cwd, editor, pidChain) {
+function focusTerminalWindow(sourcePid, cwd, editor, pidChain, terminalApp) {
   if (!sourcePid) return;
 
   if (isMac) {
-    requestMacFocus(sourcePid, cwd, editor, pidChain);
+    requestMacFocus(sourcePid, cwd, editor, pidChain, terminalApp);
     return;
   }
 
@@ -259,32 +270,85 @@ function focusTerminalWindow(sourcePid, cwd, editor, pidChain) {
   scheduleTerminalTabFocus(editor, pidChain);
 }
 
+// Ghostty AppleScript: focus the terminal whose working directory matches cwd.
+// Uses Ghostty's official AppleScript dictionary (requires macos-applescript=true in Ghostty config).
+// cwd passed as argv to avoid escaping issues with spaces/quotes/Unicode.
+function focusMacGhostty(cwd, pidChain, cb) {
+  const cwdBasename = path.basename(cwd);
+  // AppleScript: try exact cwd match on terminal working directory,
+  // then fallback to basename match on window/tab names.
+  const script = `on run argv
+  set targetCwd to item 1 of argv
+  set targetBase to item 2 of argv
+  try
+    tell application "Ghostty"
+      -- Pass 1: exact working directory match
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with tm in terminals of t
+            if (working directory of tm) is targetCwd then
+              focus tm
+              return "ok"
+            end if
+          end repeat
+        end repeat
+      end repeat
+      -- Pass 2: basename match on window name
+      repeat with w in windows
+        if name of w contains targetBase then
+          repeat with t in tabs of w
+            repeat with tm in terminals of t
+              focus tm
+              return "ok"
+            end repeat
+          end repeat
+        end if
+      end repeat
+    end tell
+  end try
+  return "miss"
+end run`;
+  execFile("osascript", ["-e", script, cwd, cwdBasename], { timeout: MAC_FOCUS_TIMEOUT_MS }, (err, stdout) => {
+    if (err) {
+      console.warn("focusMacGhostty failed:", err.message);
+      cb(false);
+      return;
+    }
+    cb(String(stdout).trim() === "ok");
+  });
+}
+
+// Generic macOS process-level focus via System Events (set frontmost).
+function focusMacProcessFrontmost(sourcePid, pidChain, onDone) {
+  const pidCandidates = [sourcePid];
+  if (Array.isArray(pidChain)) {
+    for (const pid of pidChain) {
+      if (!Number.isFinite(pid) || pid <= 0 || pidCandidates.includes(pid)) continue;
+      pidCandidates.push(pid);
+      if (pidCandidates.length >= 3) break;
+    }
+  }
+  const applePidList = pidCandidates.join(", ");
+  const script = `
+    tell application "System Events"
+      repeat with targetPid in {${applePidList}}
+        set pidValue to contents of targetPid
+        set pList to every process whose unix id is pidValue
+        if (count of pList) > 0 then
+          set frontmost of item 1 of pList to true
+          exit repeat
+        end if
+      end repeat
+    end tell`;
+  execFile("osascript", ["-e", script], { timeout: MAC_FOCUS_TIMEOUT_MS }, (err) => {
+    if (err) console.warn("focusTerminal macOS failed:", err.message);
+    if (onDone) onDone();
+  });
+}
+
 function focusTerminalWindowLegacy(sourcePid, cwd, onDone, pidChain) {
   if (isMac) {
-    const pidCandidates = [sourcePid];
-    if (Array.isArray(pidChain)) {
-      for (const pid of pidChain) {
-        if (!Number.isFinite(pid) || pid <= 0 || pidCandidates.includes(pid)) continue;
-        pidCandidates.push(pid);
-        if (pidCandidates.length >= 3) break;
-      }
-    }
-    const applePidList = pidCandidates.join(", ");
-    const script = `
-      tell application "System Events"
-        repeat with targetPid in {${applePidList}}
-          set pidValue to contents of targetPid
-          set pList to every process whose unix id is pidValue
-          if (count of pList) > 0 then
-            set frontmost of item 1 of pList to true
-            exit repeat
-          end if
-        end repeat
-      end tell`;
-    execFile("osascript", ["-e", script], { timeout: MAC_FOCUS_TIMEOUT_MS }, (err) => {
-      if (err) console.warn("focusTerminal macOS failed:", err.message);
-      if (onDone) onDone();
-    });
+    focusMacProcessFrontmost(sourcePid, pidChain, onDone);
     return;
   }
 
