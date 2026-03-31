@@ -308,7 +308,8 @@ function focusMacGhostty(cwd, pidChain, cb) {
   end try
   return "miss"
 end run`;
-  execFile("osascript", ["-e", script, cwd, cwdBasename], { timeout: MAC_FOCUS_TIMEOUT_MS }, (err, stdout) => {
+  // Shorter timeout so fallback to process-level focus still fits within throttle window
+  execFile("osascript", ["-e", script, cwd, cwdBasename], { timeout: 800 }, (err, stdout) => {
     if (err) {
       console.warn("focusMacGhostty failed:", err.message);
       cb(false);
