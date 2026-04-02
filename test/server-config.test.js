@@ -72,6 +72,71 @@ describe("server-config helpers", () => {
     });
   });
 
+  it("resolveNodeBin returns bare node on Windows", () => {
+    const result = serverConfig.resolveNodeBin({ platform: "win32" });
+    assert.strictEqual(result, "node");
+  });
+
+  it("resolveNodeBin returns process.execPath when not in Electron", () => {
+    const result = serverConfig.resolveNodeBin({
+      platform: "darwin",
+      isElectron: false,
+      execPath: "/opt/homebrew/bin/node",
+    });
+    assert.strictEqual(result, "/opt/homebrew/bin/node");
+  });
+
+  it("resolveNodeBin finds node from well-known paths in Electron", () => {
+    const result = serverConfig.resolveNodeBin({
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      accessSync(candidate) {
+        if (candidate === "/opt/homebrew/bin/node") return;
+        throw new Error("ENOENT");
+      },
+    });
+    assert.strictEqual(result, "/opt/homebrew/bin/node");
+  });
+
+  it("resolveNodeBin falls back to login shell when no well-known paths exist", () => {
+    const result = serverConfig.resolveNodeBin({
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      accessSync() { throw new Error("ENOENT"); },
+      execFileSync(shell, args) {
+        if (shell === "/bin/zsh") return "/Users/tester/.nvm/versions/node/v20.11.0/bin/node\n";
+        throw new Error("not found");
+      },
+    });
+    assert.strictEqual(result, "/Users/tester/.nvm/versions/node/v20.11.0/bin/node");
+  });
+
+  it("resolveNodeBin finds node on Linux via well-known paths in Electron", () => {
+    const result = serverConfig.resolveNodeBin({
+      platform: "linux",
+      isElectron: true,
+      homeDir: "/home/tester",
+      accessSync(candidate) {
+        if (candidate === "/usr/bin/node") return;
+        throw new Error("ENOENT");
+      },
+    });
+    assert.strictEqual(result, "/usr/bin/node");
+  });
+
+  it("resolveNodeBin returns bare node when nothing is found", () => {
+    const result = serverConfig.resolveNodeBin({
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      accessSync() { throw new Error("ENOENT"); },
+      execFileSync() { throw new Error("not found"); },
+    });
+    assert.strictEqual(result, "node");
+  });
+
   it("postStateToRunningServer probes fallback ports before posting", async () => {
     const probes = [];
     const posts = [];

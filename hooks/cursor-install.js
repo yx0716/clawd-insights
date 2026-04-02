@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { resolveNodeBin } = require("./server-config");
 const MARKER = "cursor-hook.js";
 
 const CURSOR_HOOK_EVENTS = [
@@ -56,7 +57,8 @@ function registerCursorHooks(options = {}) {
   }
   let hookScript = path.resolve(__dirname, "cursor-hook.js").replace(/\\/g, "/");
   hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
-  const desiredCommand = `node "${hookScript}"`;
+  const nodeBin = options.nodeBin || resolveNodeBin();
+  const desiredCommand = `"${nodeBin}" "${hookScript}"`;
 
   let settings = {};
   try {

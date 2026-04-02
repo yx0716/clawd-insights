@@ -274,6 +274,74 @@ function postStateToRunningServer(body, options, callback) {
   tryDirect();
 }
 
+/**
+ * Resolve the absolute path to the Node.js binary for hook commands.
+ * On macOS/Linux, Claude Code runs hooks with a minimal PATH (/usr/bin:/bin)
+ * that excludes Homebrew, nvm, volta, fnm, etc.  We embed the full path in
+ * hook commands so they work regardless of the hook runner's PATH.
+ *
+ * @param {object} [options] — for testing
+ * @param {string} [options.platform]
+ * @param {string} [options.homeDir]
+ * @param {Function} [options.execFileSync]
+ * @param {Function} [options.accessSync]
+ * @param {string} [options.execPath]
+ * @param {boolean} [options.isElectron]
+ * @returns {string} absolute path or bare "node"
+ */
+function resolveNodeBin(options = {}) {
+  const platform = options.platform || process.platform;
+
+  // Windows: bare `node` works fine (PATH is inherited properly)
+  if (platform === "win32") return "node";
+
+  const isElectron = options.isElectron !== undefined
+    ? options.isElectron
+    : !!process.versions.electron;
+
+  // Non-Electron Node.js: process.execPath IS the node binary
+  if (!isElectron) {
+    return options.execPath || process.execPath;
+  }
+
+  // Electron on macOS/Linux: need to find system node
+  const homeDir = options.homeDir || os.homedir();
+  const access = options.accessSync || fs.accessSync;
+
+  // Strategy 1: Check well-known paths (fast, no shell spawn)
+  const candidates = [
+    "/opt/homebrew/bin/node",                          // Homebrew ARM Mac
+    "/usr/local/bin/node",                             // Homebrew Intel Mac / official .pkg
+    path.join(homeDir, ".volta", "bin", "node"),       // Volta
+    path.join(homeDir, ".local", "bin", "node"),       // pipx-style / manual
+    "/usr/bin/node",                                   // system package manager
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      access(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+
+  // Strategy 2: Login shell (sources .zprofile/.bash_profile → picks up nvm/fnm/etc.)
+  const execFileSync = options.execFileSync || require("child_process").execFileSync;
+  const shells = ["/bin/zsh", "/bin/bash"];
+  for (const shell of shells) {
+    try {
+      const result = execFileSync(shell, ["-l", "-c", "which node"], {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      if (result && result.startsWith("/")) return result;
+    } catch {}
+  }
+
+  // Fallback: bare `node`
+  return "node";
+}
+
 module.exports = {
   CLAWD_SERVER_HEADER,
   CLAWD_SERVER_ID,
@@ -290,6 +358,7 @@ module.exports = {
   probePort,
   readHostPrefix,
   readRuntimePort,
+  resolveNodeBin,
   splitPortCandidates,
   postStateToPort,
   writeRuntimeConfig,

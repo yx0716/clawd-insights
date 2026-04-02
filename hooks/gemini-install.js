@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { resolveNodeBin } = require("./server-config");
 const MARKER = "gemini-hook.js";
 
 const GEMINI_HOOK_EVENTS = [
@@ -50,7 +51,8 @@ function registerGeminiHooks(options = {}) {
 
   let hookScript = path.resolve(__dirname, "gemini-hook.js").replace(/\\/g, "/");
   hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
-  const desiredCommand = `node "${hookScript}"`;
+  const nodeBin = options.nodeBin || resolveNodeBin();
+  const desiredCommand = `"${nodeBin}" "${hookScript}"`;
 
   let settings = {};
   try {

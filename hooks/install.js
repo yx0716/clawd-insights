@@ -6,7 +6,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort } = require("./server-config");
+const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin } = require("./server-config");
 
 // Hooks supported by all Claude Code versions
 const CORE_HOOKS = [
@@ -306,6 +306,10 @@ function registerHooks(options = {}) {
   // unpacked file lives under app.asar.unpacked (see package.json asarUnpack).
   hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
 
+  // Resolve absolute node path — on macOS/Linux, Claude Code runs hooks with
+  // a minimal PATH that excludes Homebrew, nvm, volta, etc.
+  const nodeBin = options.nodeBin || resolveNodeBin();
+
   // Read existing settings
   let settings = {};
   try {
@@ -353,8 +357,8 @@ function registerHooks(options = {}) {
     // Check if our hook is already registered (search nested hooks arrays too)
     // Remote mode: prepend CLAWD_REMOTE=1 so the hook skips PID collection
     const desiredCommand = options.remote
-      ? `CLAWD_REMOTE=1 node "${hookScript}" ${event}`
-      : `node "${hookScript}" ${event}`;
+      ? `CLAWD_REMOTE=1 "${nodeBin}" "${hookScript}" ${event}`
+      : `"${nodeBin}" "${hookScript}" ${event}`;
     const commandSync = syncCommandHook(settings.hooks[event], MARKER, desiredCommand);
     if (commandSync.found) {
       if (commandSync.changed) {
@@ -389,7 +393,7 @@ function registerHooks(options = {}) {
       changed = true;
     }
 
-    const autoStartCommand = `node "${autoStartScript}"`;
+    const autoStartCommand = `"${nodeBin}" "${autoStartScript}"`;
     const autoStartSync = syncCommandHook(settings.hooks.SessionStart, AUTO_START_MARKER, autoStartCommand);
     if (!autoStartSync.found) {
       // Insert at index 0 — must run BEFORE clawd-hook.js so the app is starting
