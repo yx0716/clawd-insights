@@ -6,6 +6,13 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+// Gemini writes gemini messages in two passes: text first (no toolCalls),
+// then the same message updated with toolCalls after execution/approval.
+// Auto-approved tools: ~1.5s gap.  User-approved tools: 10-60s gap.
+// Defer long enough so most tool approvals complete before the timer fires.
+// Pure text completions (no tools all turn) get feedback after this delay.
+const DEFER_COMPLETION_MS = 4000;
+
 class GeminiLogMonitor {
   /**
    * @param {object} agentConfig - gemini-cli.js config (logConfig)
@@ -15,8 +22,10 @@ class GeminiLogMonitor {
     this._config = agentConfig;
     this._onStateChange = onStateChange;
     this._interval = null;
-    // Map<filePath, { mtime, sessionId, lastState, lastEventTime, msgCount, cwd }>
+    // Map<filePath, { mtime, sessionId, lastState, lastEventTime, msgCount, hasTools, cwd }>
     this._tracked = new Map();
+    // Map<filePath, timerId> — deferred idle timers for gemini-no-tools
+    this._pendingIdle = new Map();
     this._baseDir = this._resolveBaseDir();
     this._cwdMap = null; // projectDir → cwd reverse mapping
     this._projectsMtime = 0; // mtime of projects.json for cache invalidation
@@ -44,6 +53,8 @@ class GeminiLogMonitor {
       clearInterval(this._interval);
       this._interval = null;
     }
+    for (const timer of this._pendingIdle.values()) clearTimeout(timer);
+    this._pendingIdle.clear();
     this._tracked.clear();
   }
 
@@ -145,33 +156,51 @@ class GeminiLogMonitor {
     if (!msgs || !msgs.length) return;
     const last = msgs[msgs.length - 1];
 
-    let state, event;
-    if (last.type === "user") {
-      state = "thinking";
-      event = "UserPromptSubmit";
-    } else if (last.type === "gemini") {
-      const tools = last.toolCalls;
-      if (tools && tools.length) {
-        const lastTool = tools[tools.length - 1];
-        if (lastTool.status === "error") {
-          state = "error";
-          event = "PostToolUseFailure";
-        } else {
-          state = "attention";
-          event = "Stop";
-        }
-      } else {
-        state = "attention";
-        event = "Stop";
-      }
-    } else {
-      return; // unknown type
-    }
+    // Debug log
+    this._debugLog(msgs.length, last);
 
-    // Dedup: same state + same message count → skip
+    const tools = last.type === "gemini" ? last.toolCalls : undefined;
+    const hasTools = !!(tools && tools.length);
     const tracked = this._tracked.get(filePath);
-    if (tracked && tracked.lastState === state && tracked.msgCount === msgs.length) {
-      // Still update mtime so stale cleanup doesn't fire prematurely
+
+    if (last.type === "user") {
+      // User sent a new message — cancel pending, reset turn, emit thinking
+      this._cancelPending(filePath);
+      if (tracked) tracked.turnHasTools = false;
+      this._emitState(filePath, data, projectDir, mtime, msgs.length, false,
+        "thinking", "UserPromptSubmit");
+    } else if (last.type === "gemini") {
+      if (hasTools) {
+        // ToolCalls present — definitive signal, emit attention/error
+        this._cancelPending(filePath);
+        const lastTool = tools[tools.length - 1];
+        const state = lastTool.status === "error" ? "error" : "attention";
+        const event = lastTool.status === "error" ? "PostToolUseFailure" : "Stop";
+        this._emitState(filePath, data, projectDir, mtime, msgs.length, true,
+          state, event);
+        // Mark this turn as having tools — follow-up text will be skipped
+        const t = this._tracked.get(filePath);
+        if (t) t.turnHasTools = true;
+      } else if (tracked && tracked.turnHasTools) {
+        // Tools already triggered attention this turn — skip follow-up text
+        tracked.mtime = mtime;
+        tracked.msgCount = msgs.length;
+        tracked.hasTools = false;
+        tracked.lastEventTime = Date.now();
+      } else {
+        // No toolCalls, no tools yet this turn — defer completion
+        // (tools may arrive for auto-approved, or this IS the pure text completion)
+        this._deferCompletion(filePath, data, projectDir, mtime, msgs.length);
+      }
+    }
+    // unknown type → ignore
+  }
+
+  _emitState(filePath, data, projectDir, mtime, msgCount, hasTools, state, event) {
+    // Dedup: same state + same msgCount + same hasTools → skip
+    const tracked = this._tracked.get(filePath);
+    if (tracked && tracked.lastState === state
+        && tracked.msgCount === msgCount && tracked.hasTools === hasTools) {
       tracked.mtime = mtime;
       tracked.lastEventTime = Date.now();
       return;
@@ -180,32 +209,91 @@ class GeminiLogMonitor {
     const sessionId = "gemini:" + (data.sessionId || path.basename(filePath, ".json"));
     const cwd = (this._cwdMap && this._cwdMap[projectDir]) || "";
 
-    // Update tracking
+    const prev = this._tracked.get(filePath);
     this._tracked.set(filePath, {
-      mtime,
-      sessionId,
-      lastState: state,
-      lastEventTime: Date.now(),
-      msgCount: msgs.length,
-      cwd,
+      mtime, sessionId, lastState: state, lastEventTime: Date.now(),
+      msgCount, hasTools, cwd, turnHasTools: (prev && prev.turnHasTools) || false,
     });
 
     this._onStateChange(sessionId, state, event, {
-      cwd,
-      sourcePid: null,
-      agentPid: null,
+      cwd, sourcePid: null, agentPid: null,
     });
+  }
+
+  _deferCompletion(filePath, data, projectDir, mtime, msgCount) {
+    this._cancelPending(filePath);
+
+    const sessionId = "gemini:" + (data.sessionId || path.basename(filePath, ".json"));
+    const cwd = (this._cwdMap && this._cwdMap[projectDir]) || "";
+
+    // Dedup: already emitted deferred attention for this exact snapshot
+    const existing = this._tracked.get(filePath);
+    if (existing && existing.lastState === "attention"
+        && existing.msgCount === msgCount && !existing.hasTools) {
+      existing.mtime = mtime;
+      existing.lastEventTime = Date.now();
+      return;
+    }
+
+    // Ensure tracking entry exists so mtime comparison works on next poll
+    if (existing) {
+      existing.mtime = mtime;
+      existing.lastEventTime = Date.now();
+    } else {
+      this._tracked.set(filePath, {
+        mtime, sessionId, lastState: null, lastEventTime: Date.now(),
+        msgCount, hasTools: false, cwd, turnHasTools: false,
+      });
+    }
+
+    const timer = setTimeout(() => {
+      this._pendingIdle.delete(filePath);
+      this._tracked.set(filePath, {
+        mtime, sessionId, lastState: "attention", lastEventTime: Date.now(),
+        msgCount, hasTools: false, cwd, turnHasTools: false,
+      });
+      this._onStateChange(sessionId, "attention", "Stop", {
+        cwd, sourcePid: null, agentPid: null,
+      });
+    }, DEFER_COMPLETION_MS);
+
+    this._pendingIdle.set(filePath, timer);
+  }
+
+  _cancelPending(filePath) {
+    const timer = this._pendingIdle.get(filePath);
+    if (timer) {
+      clearTimeout(timer);
+      this._pendingIdle.delete(filePath);
+    }
+  }
+
+  _debugLog(msgCount, lastMsg) {
+    if (!this._debugLogPath) {
+      const dir = path.join(os.homedir(), ".clawd");
+      try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+      this._debugLogPath = path.join(dir, "gemini-debug.log");
+    }
+    const ts = new Date().toISOString();
+    const tools = lastMsg.toolCalls;
+    const toolInfo = tools
+      ? tools.map(t => `${t.name}(status=${JSON.stringify(t.status)})`).join(", ")
+      : "none";
+    const hasTokens = lastMsg.tokens ? "YES" : "NO";
+    const contentPreview = typeof lastMsg.content === "string"
+      ? lastMsg.content.slice(0, 80).replace(/\n/g, "\\n")
+      : JSON.stringify(lastMsg.content || "").slice(0, 80);
+    const line = `[${ts}] msgs=${msgCount} type=${lastMsg.type} tokens=${hasTokens} tools=[${toolInfo}] | ${contentPreview}\n`;
+    try { fs.appendFileSync(this._debugLogPath, line); } catch {}
   }
 
   _cleanStale() {
     const now = Date.now();
     for (const [filePath, tracked] of this._tracked) {
       if (now - tracked.lastEventTime > 300000) {
-        // 5 min no update → SessionEnd
+        this._cancelPending(filePath);
         this._onStateChange(tracked.sessionId, "sleeping", "SessionEnd", {
-          cwd: tracked.cwd,
-          sourcePid: null,
-          agentPid: null,
+          cwd: tracked.cwd, sourcePid: null, agentPid: null,
         });
         this._tracked.delete(filePath);
       }

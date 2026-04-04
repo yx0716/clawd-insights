@@ -51,7 +51,7 @@ describe("GeminiLogMonitor", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should detect user message as thinking", (_, done) => {
+  it("should detect user message as thinking (immediate)", (_, done) => {
     const filePath = path.join(chatsDir, SESSION_FILE);
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
@@ -67,7 +67,31 @@ describe("GeminiLogMonitor", () => {
     monitor.start();
   });
 
-  it("should detect gemini reply as attention", (_, done) => {
+  it("should emit attention immediately for gemini with toolCalls", (_, done) => {
+    const filePath = path.join(chatsDir, SESSION_FILE);
+    fs.writeFileSync(filePath, makeSessionJson([
+      { type: "user", content: [{ text: "list files" }] },
+      {
+        type: "gemini",
+        content: "Here are the files",
+        tokens: { input: 10, output: 20 },
+        toolCalls: [
+          { name: "list_files", status: "success", args: {}, displayName: "ListFiles" },
+        ],
+      },
+    ]));
+
+    const config = makeConfig(tmpDir);
+    monitor = new GeminiLogMonitor(config, (sid, state, event) => {
+      if (state === "attention") {
+        assert.strictEqual(event, "Stop");
+        done();
+      }
+    });
+    monitor.start();
+  });
+
+  it("should defer attention for gemini text without toolCalls (4s)", (_, done) => {
     const filePath = path.join(chatsDir, SESSION_FILE);
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
@@ -76,14 +100,95 @@ describe("GeminiLogMonitor", () => {
 
     const config = makeConfig(tmpDir);
     const states = [];
-    monitor = new GeminiLogMonitor(config, (sid, state, event) => {
-      states.push({ state, event });
+    monitor = new GeminiLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    // Should NOT have emitted attention within 2s (defer is 4s)
+    setTimeout(() => {
+      const attentionCalls = states.filter(s => s === "attention");
+      assert.strictEqual(attentionCalls.length, 0, "should not emit attention before defer period");
+    }, 2000);
+
+    // Should have emitted attention after ~4s defer
+    setTimeout(() => {
+      assert.ok(states.includes("attention"), `should emit attention after defer, got: ${states}`);
+      done();
+    }, 6000);
+  });
+
+  it("should cancel deferred attention when toolCalls arrive (auto-approved)", (_, done) => {
+    const filePath = path.join(chatsDir, SESSION_FILE);
+    // Step 1: user message → thinking
+    fs.writeFileSync(filePath, makeSessionJson([
+      { type: "user", content: [{ text: "delete file" }] },
+    ]));
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new GeminiLogMonitor(config, (sid, state) => {
+      states.push(state);
       if (state === "attention") {
-        assert.strictEqual(event, "Stop");
+        // Should go thinking → attention directly, no idle flash
+        assert.deepStrictEqual(states, ["thinking", "attention"]);
         done();
       }
     });
     monitor.start();
+
+    // Step 2: 300ms — gemini text, no toolCalls (deferred idle starts)
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "delete file" }] },
+        { type: "gemini", content: "I will delete it", tokens: { input: 5, output: 5 } },
+      ]));
+    }, 300);
+
+    // Step 3: 800ms — toolCalls arrive (within 2s defer) → cancel idle, emit attention
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "delete file" }] },
+        {
+          type: "gemini",
+          content: "I will delete it",
+          tokens: { input: 5, output: 10 },
+          toolCalls: [{ name: "run_shell_command", status: "success", args: {} }],
+        },
+      ]));
+    }, 800);
+  });
+
+  it("should cancel deferred attention when user sends new message", (_, done) => {
+    const filePath = path.join(chatsDir, SESSION_FILE);
+    fs.writeFileSync(filePath, makeSessionJson([
+      { type: "user", content: [{ text: "hello" }] },
+      { type: "gemini", content: "Hi!", tokens: { input: 5, output: 3 } },
+    ]));
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new GeminiLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    // 500ms: user sends new message (before 4s defer fires)
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "hello" }] },
+        { type: "gemini", content: "Hi!", tokens: { input: 5, output: 3 } },
+        { type: "user", content: [{ text: "follow up" }] },
+      ]));
+    }, 500);
+
+    // After 6s: deferred attention should NOT have been emitted
+    setTimeout(() => {
+      assert.ok(!states.includes("attention"),
+        `deferred attention should have been cancelled, got: ${states}`);
+      assert.ok(states.includes("thinking"));
+      done();
+    }, 6000);
   });
 
   it("should detect tool error as error state", (_, done) => {
@@ -104,30 +209,6 @@ describe("GeminiLogMonitor", () => {
     monitor = new GeminiLogMonitor(config, (sid, state, event) => {
       if (state === "error") {
         assert.strictEqual(event, "PostToolUseFailure");
-        done();
-      }
-    });
-    monitor.start();
-  });
-
-  it("should detect successful tool call as attention", (_, done) => {
-    const filePath = path.join(chatsDir, SESSION_FILE);
-    fs.writeFileSync(filePath, makeSessionJson([
-      { type: "user", content: [{ text: "list files" }] },
-      {
-        type: "gemini",
-        content: "Here are the files",
-        tokens: { input: 10, output: 20 },
-        toolCalls: [
-          { name: "list_files", status: "success", args: {}, displayName: "ListFiles" },
-        ],
-      },
-    ]));
-
-    const config = makeConfig(tmpDir);
-    monitor = new GeminiLogMonitor(config, (sid, state, event) => {
-      if (state === "attention") {
-        assert.strictEqual(event, "Stop");
         done();
       }
     });
@@ -158,7 +239,7 @@ describe("GeminiLogMonitor", () => {
     monitor.start();
   });
 
-  it("should dedup: same state + same msgCount → no re-emit", (_, done) => {
+  it("should dedup: same state + same msgCount + same hasTools → no re-emit", (_, done) => {
     const filePath = path.join(chatsDir, SESSION_FILE);
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
@@ -171,9 +252,8 @@ describe("GeminiLogMonitor", () => {
     });
     monitor.start();
 
-    // After several poll cycles, should only have been called once
+    // Touch the file to update mtime but keep same content
     setTimeout(() => {
-      // Touch the file to update mtime but keep same content
       const content = fs.readFileSync(filePath, "utf8");
       fs.writeFileSync(filePath, content);
     }, 200);
@@ -183,6 +263,120 @@ describe("GeminiLogMonitor", () => {
       assert.strictEqual(calls[0], "thinking");
       done();
     }, 600);
+  });
+
+  it("should skip follow-up text after tools complete in same turn", (_, done) => {
+    const filePath = path.join(chatsDir, SESSION_FILE);
+    // Step 1: user message
+    fs.writeFileSync(filePath, makeSessionJson([
+      { type: "user", content: [{ text: "do stuff" }] },
+    ]));
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new GeminiLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    // Step 2: gemini with tools → attention, turnHasTools=true
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "do stuff" }] },
+        {
+          type: "gemini", content: "Done",
+          tokens: { input: 5, output: 5 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
+      ]));
+    }, 200);
+
+    // Step 3: follow-up text (no tools) → should be SKIPPED (turnHasTools=true)
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "do stuff" }] },
+        {
+          type: "gemini", content: "Done",
+          tokens: { input: 5, output: 5 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
+        { type: "gemini", content: "Summary", tokens: { input: 5, output: 10 } },
+      ]));
+    }, 500);
+
+    // Only 1 attention (from tools), follow-up text skipped
+    setTimeout(() => {
+      const attentionCalls = states.filter(s => s === "attention");
+      assert.strictEqual(attentionCalls.length, 1,
+        `expected 1 attention (tools only), got ${attentionCalls.length}: ${states}`);
+      done();
+    }, 2000);
+  });
+
+  it("should reset turnHasTools on new user message", (_, done) => {
+    const filePath = path.join(chatsDir, SESSION_FILE);
+    // Step 1: user message
+    fs.writeFileSync(filePath, makeSessionJson([
+      { type: "user", content: [{ text: "turn 1" }] },
+    ]));
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new GeminiLogMonitor(config, (sid, state) => {
+      states.push(state);
+    });
+    monitor.start();
+
+    // Step 2: gemini with tools → attention, turnHasTools=true
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "turn 1" }] },
+        {
+          type: "gemini", content: "Done",
+          tokens: { input: 5, output: 5 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
+      ]));
+    }, 200);
+
+    // Step 3: new user message → resets turnHasTools
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "turn 1" }] },
+        {
+          type: "gemini", content: "Done",
+          tokens: { input: 5, output: 5 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
+        { type: "user", content: [{ text: "turn 2" }] },
+      ]));
+    }, 400);
+
+    // Step 4: gemini text without tools → should NOT be skipped (new turn, turnHasTools reset)
+    setTimeout(() => {
+      fs.writeFileSync(filePath, makeSessionJson([
+        { type: "user", content: [{ text: "turn 1" }] },
+        {
+          type: "gemini", content: "Done",
+          tokens: { input: 5, output: 5 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
+        { type: "user", content: [{ text: "turn 2" }] },
+        { type: "gemini", content: "Reply", tokens: { input: 5, output: 5 } },
+      ]));
+    }, 600);
+
+    // Check states: thinking → attention → thinking → (deferred pending, not yet fired)
+    setTimeout(() => {
+      const thinkingCount = states.filter(s => s === "thinking").length;
+      assert.ok(thinkingCount >= 2,
+        `should have 2+ thinking events (turnHasTools reset), got: ${states}`);
+      assert.ok(states.includes("attention"), `should have attention: ${states}`);
+      // Verify a pending deferred exists (from step 4 gemini-no-tools)
+      assert.strictEqual(monitor._pendingIdle.size, 1,
+        "should have a pending deferred completion");
+      done();
+    }, 1500);
   });
 
   it("should skip mtime-unchanged files", (_, done) => {
@@ -198,16 +392,14 @@ describe("GeminiLogMonitor", () => {
     });
     monitor.start();
 
-    // Multiple poll cycles — file untouched → only 1 call
     setTimeout(() => {
       assert.strictEqual(callCount, 1);
       done();
     }, 500);
   });
 
-  it("should detect incremental changes (new messages appended)", (_, done) => {
+  it("should detect incremental changes (user → gemini with tools)", (_, done) => {
     const filePath = path.join(chatsDir, SESSION_FILE);
-    // Start with user message
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
     ]));
@@ -223,11 +415,14 @@ describe("GeminiLogMonitor", () => {
     });
     monitor.start();
 
-    // Simulate Gemini completing reply
     setTimeout(() => {
       fs.writeFileSync(filePath, makeSessionJson([
         { type: "user", content: [{ text: "hello" }] },
-        { type: "gemini", content: "Hi!", tokens: { input: 5, output: 3 } },
+        {
+          type: "gemini", content: "Done!",
+          tokens: { input: 5, output: 3 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
       ]));
     }, 250);
   });
@@ -237,7 +432,6 @@ describe("GeminiLogMonitor", () => {
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
     ]));
-    // Backdate mtime
     const oldTime = new Date(Date.now() - 600000);
     fs.utimesSync(filePath, oldTime, oldTime);
 
@@ -289,25 +483,21 @@ describe("GeminiLogMonitor", () => {
     ]));
 
     const config = makeConfig(tmpDir);
-    const states = [];
     monitor = new GeminiLogMonitor(config, (sid, state, event) => {
-      states.push({ state, event });
       if (state === "sleeping" && event === "SessionEnd") {
         done();
       }
     });
     monitor.start();
 
-    // Manually age the tracked entry to trigger stale cleanup
     setTimeout(() => {
       for (const tracked of monitor._tracked.values()) {
-        tracked.lastEventTime = Date.now() - 400000; // 6+ min ago
+        tracked.lastEventTime = Date.now() - 400000;
       }
     }, 200);
   });
 
   it("should resolve cwd from projects.json", (_, done) => {
-    // Create a mock projects.json
     const geminiDir = path.join(tmpDir, ".gemini-projects");
     fs.mkdirSync(geminiDir, { recursive: true });
     const projectsPath = path.join(geminiDir, "projects.json");
@@ -315,7 +505,6 @@ describe("GeminiLogMonitor", () => {
       projects: { "d:\\animation": "animation", "c:\\users\\ruller": "ruller" },
     }));
 
-    // Monkey-patch _loadCwdMap to use our custom path
     const filePath = path.join(chatsDir, SESSION_FILE);
     fs.writeFileSync(filePath, makeSessionJson([
       { type: "user", content: [{ text: "hello" }] },
@@ -327,8 +516,6 @@ describe("GeminiLogMonitor", () => {
       done();
     });
 
-    // Override _loadCwdMap to read from our test path
-    const origLoad = monitor._loadCwdMap.bind(monitor);
     monitor._loadCwdMap = function () {
       try {
         const mtime = fs.statSync(projectsPath).mtimeMs;
@@ -366,7 +553,6 @@ describe("GeminiLogMonitor", () => {
       cwds.push(extra.cwd);
     });
 
-    // Override _loadCwdMap
     monitor._loadCwdMap = function () {
       try {
         const mtime = fs.statSync(projectsPath).mtimeMs;
@@ -385,18 +571,17 @@ describe("GeminiLogMonitor", () => {
     monitor.start();
 
     setTimeout(() => {
-      // First call should have old cwd
       assert.strictEqual(cwds[0], "c:\\old");
-
-      // Update projects.json
       fs.writeFileSync(projectsPath, JSON.stringify({
         projects: { "d:\\new-project": "animation" },
       }));
-
-      // Update session to trigger new event
       fs.writeFileSync(filePath, makeSessionJson([
         { type: "user", content: [{ text: "hello" }] },
-        { type: "gemini", content: "reply", tokens: { input: 5, output: 3 } },
+        {
+          type: "gemini", content: "reply",
+          tokens: { input: 5, output: 3 },
+          toolCalls: [{ name: "read_file", status: "success", args: {} }],
+        },
       ]));
     }, 250);
 
@@ -425,7 +610,6 @@ describe("GeminiLogMonitor", () => {
   });
 
   it("should track multiple project directories independently", (_, done) => {
-    // Create a second project dir
     const chatsDir2 = path.join(tmpDir, "otherproject", "chats");
     fs.mkdirSync(chatsDir2, { recursive: true });
 
@@ -437,7 +621,7 @@ describe("GeminiLogMonitor", () => {
       "session-aaa"
     ));
     fs.writeFileSync(file2, makeSessionJson(
-      [{ type: "gemini", content: "done", tokens: { input: 1, output: 1 } }],
+      [{ type: "user", content: [{ text: "in other" }] }],
       "session-bbb"
     ));
 
