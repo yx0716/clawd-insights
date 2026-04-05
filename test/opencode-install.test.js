@@ -122,6 +122,38 @@ describe("opencode plugin installer", () => {
     assert.deepStrictEqual(config.plugin, [thirdParty, pluginDir]);
   });
 
+  it("does not stomp scoped npm packages named opencode-plugin", () => {
+    // opencode.json accepts both absolute paths and npm package specifiers.
+    // path.basename("@vendor/opencode-plugin") === "opencode-plugin", so a
+    // naive basename check would clobber the scoped package. Clawd only ever
+    // writes absolute paths, so the stale-path match must be gated on the
+    // entry actually being an absolute path.
+    const scoped = "@vendor/opencode-plugin";
+    const bareNpm = "opencode-plugin"; // hypothetical unscoped npm pkg
+    const configPath = makeTempConfigDir({ plugin: [scoped, bareNpm] });
+    const pluginDir = "/fake/clawd/hooks/opencode-plugin";
+
+    const result = registerOpencodePlugin({ silent: true, configPath, pluginDir });
+
+    assert.strictEqual(result.added, true);
+    const config = readConfig(configPath);
+    assert.deepStrictEqual(config.plugin, [scoped, bareNpm, pluginDir]);
+  });
+
+  it("updates stale Windows absolute plugin paths", () => {
+    // Config files can roam between machines; a Windows-style absolute path
+    // (C:/...) should still be recognized as stale even when tests run on POSIX.
+    const staleWin = "C:/old/clawd/hooks/opencode-plugin";
+    const configPath = makeTempConfigDir({ plugin: [staleWin] });
+    const pluginDir = "/new/clawd/hooks/opencode-plugin";
+
+    const result = registerOpencodePlugin({ silent: true, configPath, pluginDir });
+
+    assert.strictEqual(result.added, true);
+    const config = readConfig(configPath);
+    assert.deepStrictEqual(config.plugin, [pluginDir]);
+  });
+
   it("skips silently when ~/.config/opencode/ does not exist (no configPath override)", () => {
     // Use a non-existent home dir by overriding HOME temporarily
     const fakeHome = path.join(os.tmpdir(), `clawd-opencode-no-config-${Date.now()}`);

@@ -318,7 +318,21 @@ function startHttpServer() {
             };
             ctx.pendingPermissions.push(permEntry);
             ctx.permLog(`opencode showing bubble: tool=${toolName} session=${sessionId}`);
-            ctx.showPermissionBubble(permEntry);
+            try {
+              ctx.showPermissionBubble(permEntry);
+            } catch (bubbleErr) {
+              // If bubble creation fails (BrowserWindow error, bad html,
+              // window-positioning crash, etc), we have already 200-ACKed
+              // the plugin and it is waiting for a bridge reply. Without
+              // this rescue the permEntry would linger in pendingPermissions
+              // until the opencode TUI hits its own timeout (minutes).
+              // Pop the ghost entry and send an immediate reject so the
+              // TUI unblocks and the user can re-answer in the terminal.
+              ctx.permLog(`opencode bubble failed: ${bubbleErr && bubbleErr.message} — reject via bridge`);
+              const popIdx = ctx.pendingPermissions.indexOf(permEntry);
+              if (popIdx !== -1) ctx.pendingPermissions.splice(popIdx, 1);
+              ctx.replyOpencodePermission({ bridgeUrl, bridgeToken, requestId, reply: "reject", toolName });
+            }
             return;
           }
 

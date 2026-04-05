@@ -76,17 +76,29 @@ function registerOpencodePlugin(options = {}) {
 
   if (!Array.isArray(settings.plugin)) settings.plugin = [];
 
-  // Idempotency: match by exact path OR by directory basename. Basename
-  // catches stale paths from earlier installs at different locations (dev
-  // vs packaged) and updates them in place. Substring matching was too
-  // loose and would stomp unrelated third-party plugins like
-  // opencode-plugin-wakatime; basename equality requires the final segment
-  // to be exactly "opencode-plugin".
+  // Idempotency: match by exact path OR by directory basename on an
+  // absolute-path entry. Basename catches stale paths from earlier installs
+  // at different locations (dev vs packaged) and updates them in place.
+  // The isAbsolute guard is critical: opencode also accepts npm package
+  // specifiers in the plugin array (e.g. "opencode-wakatime" or a scoped
+  // "@vendor/opencode-plugin"), and path.basename of a scoped package name
+  // happens to return the segment after the slash — so a naive basename
+  // equality would stomp any third-party scoped package ending in
+  // "/opencode-plugin". Clawd itself only ever writes absolute paths, so
+  // restricting the match to absolute entries is safe.
   let matchIndex = -1;
   for (let i = 0; i < settings.plugin.length; i++) {
     const entry = settings.plugin[i];
     if (typeof entry !== "string") continue;
-    if (entry === pluginDir || path.basename(entry.replace(/\\/g, "/")) === PLUGIN_DIR_NAME) {
+    if (entry === pluginDir) {
+      matchIndex = i;
+      break;
+    }
+    const normalized = entry.replace(/\\/g, "/");
+    // Platform-agnostic absolute-path check: POSIX (/foo) or Windows (C:/foo).
+    // Config files can sync across machines, so we accept either shape.
+    const isAbsolute = path.posix.isAbsolute(normalized) || path.win32.isAbsolute(normalized);
+    if (isAbsolute && path.posix.basename(normalized) === PLUGIN_DIR_NAME) {
       matchIndex = i;
       break;
     }
