@@ -1,4 +1,4 @@
-// Shared JSON utilities for hook installers (claude / cursor / gemini /
+// Shared utilities for hook installers (claude / cursor / gemini /
 // codebuddy / opencode). Keeps config-file mutation behavior identical
 // across agents so a fix in one place fixes all of them.
 
@@ -25,4 +25,15 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
-module.exports = { writeJsonAtomic };
+/**
+ * Rewrite a path so it points at the asar.unpacked mirror instead of asar.
+ * In packaged builds, __dirname resolves to the virtual app.asar/ tree, but
+ * external processes (Claude/Cursor/Gemini/opencode) cannot read inside asar
+ * and must use the physical copy under app.asar.unpacked/ (see package.json
+ * "asarUnpack"). No-op for dev/source installs.
+ */
+function asarUnpackedPath(p) {
+  return p.replace("app.asar/", "app.asar.unpacked/");
+}
+
+module.exports = { writeJsonAtomic, asarUnpackedPath };

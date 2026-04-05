@@ -21,7 +21,7 @@
 //   A random 32-byte hex token gates the bridge endpoint since localhost
 //   TCP is visible to any process on the machine.
 
-import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, promises as fsp } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { randomBytes, timingSafeEqual } from "crypto";
@@ -111,12 +111,28 @@ let _bridgeTokenBuf = null;
 let _bridgeServer = null;
 
 // Debug log is reset on plugin init so each opencode startup gets a clean
-// file. Only session.* ignores are logged; high-frequency message.part.*
-// ignores are skipped to avoid synchronous fsync on every text delta.
+// file. message.part.updated ignores are filtered out at the event-handler
+// level to keep volume low, but we still write via a batched async flush
+// (libuv threadpool) so even a burst of MAP/SEND/POST lines from a single
+// event tick never blocks the opencode TUI main thread.
+const _debugBuffer = [];
+let _debugFlushing = false;
 function debugLog(msg) {
-  try {
-    appendFileSync(DEBUG_LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
-  } catch {}
+  _debugBuffer.push(`[${new Date().toISOString()}] ${msg}\n`);
+  scheduleDebugFlush();
+}
+function scheduleDebugFlush() {
+  if (_debugFlushing || _debugBuffer.length === 0) return;
+  _debugFlushing = true;
+  setImmediate(async () => {
+    const chunk = _debugBuffer.join("");
+    _debugBuffer.length = 0;
+    try {
+      await fsp.appendFile(DEBUG_LOG_PATH, chunk, "utf8");
+    } catch {}
+    _debugFlushing = false;
+    if (_debugBuffer.length > 0) scheduleDebugFlush();
+  });
 }
 
 function resetDebugLog() {

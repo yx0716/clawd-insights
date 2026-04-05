@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { resolveNodeBin } = require("./server-config");
-const { writeJsonAtomic } = require("./json-utils");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 const MARKER = "gemini-hook.js";
 
 /** Extract the existing absolute node path from hook commands containing marker. */
@@ -55,8 +55,7 @@ function registerGeminiHooks(options = {}) {
     return { added: 0, skipped: 0, updated: 0 };
   }
 
-  let hookScript = path.resolve(__dirname, "gemini-hook.js").replace(/\\/g, "/");
-  hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "gemini-hook.js").replace(/\\/g, "/"));
 
   let settings = {};
   try {

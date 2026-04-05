@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin } = require("./server-config");
-const { writeJsonAtomic } = require("./json-utils");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 
 // Hooks supported by all Claude Code versions
 const CORE_HOOKS = [
@@ -324,10 +324,7 @@ function reconcileVersionedHooks(settings, supportedEvents, versionInfo) {
 function registerHooks(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
   const hookPort = getHookServerPort(options.port);
-  let hookScript = path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/");
-  // In packaged builds, __dirname points to app.asar (virtual); the actual
-  // unpacked file lives under app.asar.unpacked (see package.json asarUnpack).
-  hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/"));
 
   // Read existing settings
   let settings = {};
@@ -413,8 +410,7 @@ function registerHooks(options = {}) {
 
   // Register auto-start hook for SessionStart (launches app if not running)
   if (options.autoStart) {
-    let autoStartScript = path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/");
-    autoStartScript = autoStartScript.replace("app.asar/", "app.asar.unpacked/");
+    const autoStartScript = asarUnpackedPath(path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/"));
 
     if (!Array.isArray(settings.hooks.SessionStart)) {
       settings.hooks.SessionStart = [];

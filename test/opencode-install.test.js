@@ -88,7 +88,7 @@ describe("opencode plugin installer", () => {
     assert.strictEqual(config.plugin.length, 1);
   });
 
-  it("updates stale plugin paths in place by marker match", () => {
+  it("updates stale plugin paths in place by directory basename match", () => {
     const stalePath = "/old/install/location/hooks/opencode-plugin";
     const configPath = makeTempConfigDir({
       plugin: ["opencode-wakatime", stalePath],
@@ -105,6 +105,21 @@ describe("opencode plugin installer", () => {
     const config = readConfig(configPath);
     // Order preserved, stale path replaced in place
     assert.deepStrictEqual(config.plugin, ["opencode-wakatime", newPath]);
+  });
+
+  it("does not stomp third-party plugins whose name contains opencode-plugin", () => {
+    // Earlier substring match would have mistakenly clobbered paths like
+    // /somewhere/opencode-plugin-wakatime because "opencode-plugin" is a
+    // substring. Basename equality requires the full final segment to match.
+    const thirdParty = "/some/where/opencode-plugin-wakatime";
+    const configPath = makeTempConfigDir({ plugin: [thirdParty] });
+    const pluginDir = "/fake/clawd/hooks/opencode-plugin";
+
+    const result = registerOpencodePlugin({ silent: true, configPath, pluginDir });
+
+    assert.strictEqual(result.added, true);
+    const config = readConfig(configPath);
+    assert.deepStrictEqual(config.plugin, [thirdParty, pluginDir]);
   });
 
   it("skips silently when ~/.config/opencode/ does not exist (no configPath override)", () => {

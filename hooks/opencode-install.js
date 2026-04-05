@@ -14,10 +14,9 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { writeJsonAtomic } = require("./json-utils");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 
 const PLUGIN_DIR_NAME = "opencode-plugin";
-const PLUGIN_MARKER = "clawd-opencode-plugin"; // for idempotency check by substring match
 
 /**
  * Resolve the absolute path to hooks/opencode-plugin/ as seen from a running
@@ -28,12 +27,9 @@ const PLUGIN_MARKER = "clawd-opencode-plugin"; // for idempotency check by subst
  * @param {string} [baseDir]  defaults to __dirname (hooks/); exposed for tests
  */
 function resolvePluginDir(baseDir) {
-  let dir = path.resolve(baseDir || __dirname, PLUGIN_DIR_NAME);
   // Normalize to forward slashes for JSON storage + cross-platform opencode compat
-  dir = dir.replace(/\\/g, "/");
-  // When running from an asar package, redirect to the unpacked copy
-  dir = dir.replace("app.asar/", "app.asar.unpacked/");
-  return dir;
+  const dir = path.resolve(baseDir || __dirname, PLUGIN_DIR_NAME).replace(/\\/g, "/");
+  return asarUnpackedPath(dir);
 }
 
 /**
@@ -80,14 +76,17 @@ function registerOpencodePlugin(options = {}) {
 
   if (!Array.isArray(settings.plugin)) settings.plugin = [];
 
-  // Idempotency: match by exact path OR by the plugin marker substring.
-  // The marker check catches stale paths from earlier installs at different
-  // locations (e.g. dev vs packaged), so we update them in place.
+  // Idempotency: match by exact path OR by directory basename. Basename
+  // catches stale paths from earlier installs at different locations (dev
+  // vs packaged) and updates them in place. Substring matching was too
+  // loose and would stomp unrelated third-party plugins like
+  // opencode-plugin-wakatime; basename equality requires the final segment
+  // to be exactly "opencode-plugin".
   let matchIndex = -1;
   for (let i = 0; i < settings.plugin.length; i++) {
     const entry = settings.plugin[i];
     if (typeof entry !== "string") continue;
-    if (entry === pluginDir || entry.includes(PLUGIN_MARKER) || entry.includes(PLUGIN_DIR_NAME)) {
+    if (entry === pluginDir || path.basename(entry.replace(/\\/g, "/")) === PLUGIN_DIR_NAME) {
       matchIndex = i;
       break;
     }

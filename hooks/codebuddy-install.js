@@ -6,7 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { resolveNodeBin, buildPermissionUrl, DEFAULT_SERVER_PORT, readRuntimePort } = require("./server-config");
-const { writeJsonAtomic } = require("./json-utils");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 const MARKER = "codebuddy-hook.js";
 const HTTP_MARKER = "/permission";
 
@@ -76,8 +76,7 @@ function registerCodeBuddyHooks(options = {}) {
     return { added: 0, skipped: 0, updated: 0 };
   }
 
-  let hookScript = path.resolve(__dirname, "codebuddy-hook.js").replace(/\\/g, "/");
-  hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "codebuddy-hook.js").replace(/\\/g, "/"));
 
   let settings = {};
   try {

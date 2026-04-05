@@ -234,15 +234,16 @@ function startHttpServer() {
           return;
         }
 
-        if (ctx.doNotDisturb) {
-          ctx.permLog("SKIPPED: DND mode");
-          ctx.sendPermissionResponse(res, "deny", "Clawd is in Do Not Disturb mode");
+        let data;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          res.writeHead(400);
+          res.end("bad json");
           return;
         }
 
         try {
-          const data = JSON.parse(body);
-
           // ── opencode branch ──
           // opencode plugin (agents/opencode.js) posts fire-and-forget. We
           // always 200 ACK immediately; the user's decision routes through
@@ -250,6 +251,11 @@ function startHttpServer() {
           // replyOpencodePermission). This means no res is retained on the
           // permEntry, no res.on("close") abort handler, and hideBubbles
           // degrades to "TUI only" (plugin doesn't wait on us).
+          //
+          // DND handling is branch-specific: opencode cannot observe the
+          // HTTP response (fire-and-forget), so a generic HTTP deny would
+          // leave the TUI hanging until timeout. Instead we route DND
+          // through the same reverse bridge the plugin uses for replies.
           if (data.agent_id === "opencode") {
             res.writeHead(200, { [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID });
             res.end("ok");
@@ -276,10 +282,19 @@ function startHttpServer() {
               return;
             }
 
-            // DND: proactively reject via bridge, no bubble
+            // DND: proactively reject via bridge so the TUI unblocks
+            // immediately instead of waiting for opencode's own timeout.
             if (ctx.doNotDisturb) {
               ctx.permLog(`opencode DND → reject request=${requestId}`);
               ctx.replyOpencodePermission({ bridgeUrl, bridgeToken, requestId, reply: "reject", toolName });
+              return;
+            }
+
+            // hideBubbles: drop silently, let opencode TUI handle it.
+            // (Unlike CC we have no HTTP connection to "hold open", so the
+            // only meaningful degradation is to not render a bubble.)
+            if (ctx.hideBubbles) {
+              ctx.permLog(`opencode bubble hidden: tool=${toolName} — TUI fallback`);
               return;
             }
 
@@ -302,19 +317,17 @@ function startHttpServer() {
               opencodePatterns: patterns,
             };
             ctx.pendingPermissions.push(permEntry);
+            ctx.permLog(`opencode showing bubble: tool=${toolName} session=${sessionId}`);
+            ctx.showPermissionBubble(permEntry);
+            return;
+          }
 
-            // hideBubbles: drop silently, let opencode TUI handle it.
-            // (Unlike CC we have no HTTP connection to "hold open", so the
-            // only meaningful degradation is to not render a bubble.)
-            if (ctx.hideBubbles) {
-              ctx.permLog(`opencode bubble hidden: tool=${toolName} — TUI fallback`);
-              // Pop the entry back off — we never intend to resolve it ourselves.
-              const popIdx = ctx.pendingPermissions.indexOf(permEntry);
-              if (popIdx !== -1) ctx.pendingPermissions.splice(popIdx, 1);
-            } else {
-              ctx.permLog(`opencode showing bubble: tool=${toolName} session=${sessionId}`);
-              ctx.showPermissionBubble(permEntry);
-            }
+          // ── Claude Code branch ──
+          // DND here sends an HTTP deny — CC waits synchronously on the
+          // response, so this unblocks the caller immediately.
+          if (ctx.doNotDisturb) {
+            ctx.permLog("SKIPPED: DND mode");
+            ctx.sendPermissionResponse(res, "deny", "Clawd is in Do Not Disturb mode");
             return;
           }
 
@@ -388,9 +401,14 @@ function startHttpServer() {
             ctx.permLog(`showing bubble: tool=${toolName} session=${sessionId} suggestions=${suggestions.length} stack=${ctx.pendingPermissions.length}`);
             ctx.showPermissionBubble(permEntry);
           }
-        } catch {
-          res.writeHead(400);
-          res.end("bad json");
+        } catch (err) {
+          ctx.permLog(`/permission handler error: ${err && err.message}`);
+          // Response may already be sent (opencode branch 200-ACKs before
+          // processing), so guard against a second writeHead.
+          if (!res.headersSent) {
+            res.writeHead(500);
+            res.end("internal error");
+          }
         }
       });
     } else {
@@ -420,12 +438,18 @@ function startHttpServer() {
     activeServerPort = listenPorts[listenIndex];
     writeRuntimeConfig(activeServerPort);
     console.log(`Clawd state server listening on 127.0.0.1:${activeServerPort}`);
-    syncClawdHooks();
-    syncGeminiHooks();
-    syncCursorHooks();
-    syncCodeBuddyHooks();
-    syncOpencodePlugin();
-    watchSettingsForHookLoss();
+    // Defer hook/plugin registration off the startup path. Each sync call
+    // reads+parses+writes a config JSON (50-150ms cumulative on slow disks),
+    // and all five operate on independent files for independent agents, so
+    // none of them need to block the HTTP server from accepting traffic.
+    setImmediate(() => {
+      syncClawdHooks();
+      syncGeminiHooks();
+      syncCursorHooks();
+      syncCodeBuddyHooks();
+      syncOpencodePlugin();
+      watchSettingsForHookLoss();
+    });
   });
 
   httpServer.listen(listenPorts[listenIndex], "127.0.0.1");
