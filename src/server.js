@@ -76,6 +76,18 @@ function syncCursorHooks() {
   }
 }
 
+function syncOpencodePlugin() {
+  try {
+    const { registerOpencodePlugin } = require("../hooks/opencode-install.js");
+    const { added, created } = registerOpencodePlugin({ silent: true });
+    if (added || created) {
+      console.log(`Clawd: synced opencode plugin (added=${added}, created=${created})`);
+    }
+  } catch (err) {
+    console.warn("Clawd: failed to sync opencode plugin:", err.message);
+  }
+}
+
 function sendStateHealthResponse(res) {
   const body = JSON.stringify({ ok: true, app: CLAWD_SERVER_ID, port: getHookServerPort() });
   res.writeHead(200, {
@@ -336,6 +348,7 @@ function startHttpServer() {
     syncGeminiHooks();
     syncCursorHooks();
     syncCodeBuddyHooks();
+    syncOpencodePlugin();
     watchSettingsForHookLoss();
   });
 
@@ -348,6 +361,6 @@ function cleanup() {
   if (httpServer) httpServer.close();
 }
 
-return { startHttpServer, getHookServerPort, syncClawdHooks, syncGeminiHooks, syncCursorHooks, syncCodeBuddyHooks, cleanup };
+return { startHttpServer, getHookServerPort, syncClawdHooks, syncGeminiHooks, syncCursorHooks, syncCodeBuddyHooks, syncOpencodePlugin, cleanup };
 
 };
