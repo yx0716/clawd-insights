@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { resolveNodeBin } = require("./server-config");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 const MARKER = "cursor-hook.js";
 
 /** Extract the existing absolute node path from hook commands containing marker. */
@@ -40,20 +41,6 @@ const CURSOR_HOOK_EVENTS = [
   "stop",
 ];
 
-function writeJsonAtomic(filePath, data) {
-  const dir = path.dirname(filePath);
-  const base = path.basename(filePath);
-  const tmpPath = path.join(dir, `.${base}.${process.pid}.${Date.now()}.tmp`);
-  fs.mkdirSync(dir, { recursive: true });
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch {}
-    throw err;
-  }
-}
-
 /**
  * Register Clawd hooks into ~/.cursor/hooks.json
  * @param {object} [options]
@@ -74,8 +61,7 @@ function registerCursorHooks(options = {}) {
       return { added: 0, skipped: 0, updated: 0 };
     }
   }
-  let hookScript = path.resolve(__dirname, "cursor-hook.js").replace(/\\/g, "/");
-  hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "cursor-hook.js").replace(/\\/g, "/"));
 
   let settings = {};
   try {

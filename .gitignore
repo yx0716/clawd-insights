@@ -8,6 +8,8 @@ Thumbs.db
 
 # Claude Code local config
 .claude/
+# OpenCode local config
+.opencode/
 # Development plans & review notes
 PLAN.md
 PLAN-*.md

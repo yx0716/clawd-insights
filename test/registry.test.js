@@ -5,7 +5,7 @@ const registry = require("../agents/registry");
 describe("Agent Registry", () => {
   it("should return all seven agents", () => {
     const agents = registry.getAllAgents();
-    assert.strictEqual(agents.length, 7);
+    assert.strictEqual(agents.length, 8);
     const ids = agents.map((a) => a.id);
     assert.ok(ids.includes("claude-code"));
     assert.ok(ids.includes("codex"));
@@ -14,6 +14,7 @@ describe("Agent Registry", () => {
     assert.ok(ids.includes("cursor-agent"));
     assert.ok(ids.includes("codebuddy"));
     assert.ok(ids.includes("kiro-cli"));
+    assert.ok(ids.includes("opencode"));
   });
 
   it("should look up agents by ID", () => {

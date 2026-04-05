@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { resolveNodeBin, buildPermissionUrl, DEFAULT_SERVER_PORT, readRuntimePort } = require("./server-config");
+const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 const MARKER = "codebuddy-hook.js";
 const HTTP_MARKER = "/permission";
 
@@ -57,20 +58,6 @@ const CODEBUDDY_HOOK_EVENTS = [
   "PreCompact",
 ];
 
-function writeJsonAtomic(filePath, data) {
-  const dir = path.dirname(filePath);
-  const base = path.basename(filePath);
-  const tmpPath = path.join(dir, `.${base}.${process.pid}.${Date.now()}.tmp`);
-  fs.mkdirSync(dir, { recursive: true });
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-    fs.renameSync(tmpPath, filePath);
-  } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch {}
-    throw err;
-  }
-}
-
 /**
  * Register Clawd hooks into ~/.codebuddy/settings.json
  * Uses Claude Code-compatible nested format: { matcher, hooks: [{ type, command }] }
@@ -89,8 +76,7 @@ function registerCodeBuddyHooks(options = {}) {
     return { added: 0, skipped: 0, updated: 0 };
   }
 
-  let hookScript = path.resolve(__dirname, "codebuddy-hook.js").replace(/\\/g, "/");
-  hookScript = hookScript.replace("app.asar/", "app.asar.unpacked/");
+  const hookScript = asarUnpackedPath(path.resolve(__dirname, "codebuddy-hook.js").replace(/\\/g, "/"));
 
   let settings = {};
   try {
