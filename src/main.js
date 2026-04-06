@@ -70,6 +70,13 @@ function savePrefs() {
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
 let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
 
+// ── Analytics modules (initialized in createWindow) ──
+let _analyticsLog = null;
+let _analyticsData = null;
+let _analyticsAI = null;
+let _analyticsDash = null;
+let _analyticsScan = null;
+
 // ── CSS <object> sizing (mirrors styles.css #clawd) ──
 const OBJ_SCALE_W = 1.9;   // width: 190%
 const OBJ_SCALE_H = 1.3;   // height: 130%
@@ -272,6 +279,7 @@ const _stateCtx = {
   miniPeekOut: () => miniPeekOut(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
+  logAnalyticsEvent: (...args) => _analyticsLog ? _analyticsLog.logEvent(...args) : null,
 };
 const _state = require("./state")(_stateCtx);
 const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride,
@@ -474,6 +482,7 @@ const _menuCtx = {
   clampToScreen,
   getNearestWorkArea,
   reapplyMacVisibility,
+  toggleAnalyticsDashboard: () => _analyticsDash ? _analyticsDash.toggleDashboard() : null,
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
@@ -932,8 +941,46 @@ if (!gotTheLock) {
     updateDebugLog = path.join(app.getPath("userData"), "update-debug.log");
     createWindow();
 
+    // ── Initialize analytics modules ──
+    const os = require("os");
+    const analyticsPath = path.join(os.homedir(), ".clawd", "analytics.jsonl");
+    _analyticsLog = require("./analytics-log")({ analyticsPath });
+    _analyticsData = require("./analytics-data")({ analyticsPath });
+    _analyticsAI = require("./analytics-ai")({
+      getAIConfig: () => {
+        try {
+          const p = loadPrefs();
+          return (p && p.aiConfig) || null;
+        } catch { return null; }
+      },
+      setAIConfig: (config) => {
+        try {
+          const raw = fs.existsSync(PREFS_PATH) ? JSON.parse(fs.readFileSync(PREFS_PATH, "utf8")) : {};
+          raw.aiConfig = config;
+          fs.writeFileSync(PREFS_PATH, JSON.stringify(raw));
+        } catch (err) {
+          console.warn("Clawd: failed to save AI config:", err.message);
+        }
+      },
+    });
+    _analyticsScan = require("./analytics-scan")({});
+    _analyticsDash = require("./analytics")({
+      analyticsData: _analyticsData,
+      analyticsAI: _analyticsAI,
+      analyticsScan: _analyticsScan,
+    });
+
     // Register global shortcut for toggling pet visibility
     registerToggleShortcut();
+
+    // Register analytics dashboard shortcut
+    try {
+      globalShortcut.register("CommandOrControl+Shift+Alt+A", () => {
+        if (_analyticsDash) _analyticsDash.toggleDashboard();
+      });
+    } catch (err) {
+      console.warn("Clawd: failed to register analytics shortcut:", err.message);
+    }
 
     // Auto-register Claude Code hooks on every launch (dedup-safe)
     syncClawdHooks();
@@ -992,6 +1039,8 @@ if (!gotTheLock) {
     _state.cleanup();
     _tick.cleanup();
     _mini.cleanup();
+    if (_analyticsLog) _analyticsLog.cleanup();
+    if (_analyticsDash) _analyticsDash.cleanup();
     if (_codexMonitor) _codexMonitor.stop();
     if (_geminiMonitor) _geminiMonitor.stop();
     stopTopmostWatchdog();

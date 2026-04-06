@@ -1,16 +1,27 @@
 <p align="center">
   <img src="assets/tray-icon.png" width="128" alt="Clawd">
 </p>
-<h1 align="center">Clawd on Desk</h1>
+<h1 align="center">clawd-on-desk-insights</h1>
+<p align="center">
+  A desktop pet fork with a RescueTime-style analytics dashboard and AI-generated coding session insights.
+</p>
 <p align="center">
   <a href="README.zh-CN.md">中文版</a>
 </p>
 
-A desktop pet that reacts to your AI coding agent sessions in real-time. Clawd lives on your screen — thinking when you prompt, typing when tools run, juggling subagents, reviewing permissions, celebrating when tasks complete, and sleeping when you're away.
+A fork of `rullerzhou-afk/clawd-on-desk` that keeps the real-time desktop pet experience and adds a local insights layer on top. It tracks agent activity on screen, scans local conversation history, and generates AI summaries of what each session was trying to achieve and what it actually accomplished.
 
 > Supports Windows 11, macOS, and Ubuntu/Linux. Requires Node.js. Works with **Claude Code**, **Codex CLI**, **Copilot CLI**, **Gemini CLI**, and **Cursor Agent**.
 
 ## Features
+
+### Insights Dashboard
+- **RescueTime-style timeline** — visualize sessions by day, duration, project, and agent in a dedicated analytics window
+- **Local history scanning** — read Claude Code, Codex CLI, and Cursor Agent conversation files directly from your machine
+- **Session-level AI review** — summarize each conversation from the user's point of view, including outcomes, topics, and time breakdown
+- **Flexible analysis backends** — use local Claude Code, local Codex, or a configured API / Ollama fallback
+- **Batch pre-analysis** — precompute recent session summaries and reuse provider-aware cached results in the dashboard
+- **Quick access** — open the analytics dashboard from the tray menu or with `Cmd/Ctrl+Shift+Alt+A`
 
 ### Multi-Agent Support
 - **Claude Code** — full integration via command hooks + HTTP permission hooks
@@ -94,16 +105,18 @@ Easter eggs — try double-clicking, rapid 4-clicks, or poking Clawd repeatedly 
 ## Quick Start
 
 ```bash
-# Clone the repo
-git clone https://github.com/rullerzhou-afk/clawd-on-desk.git
-cd clawd-on-desk
+# Clone your fork
+git clone https://github.com/yx0716/clawd-on-desk-insights.git
+cd clawd-on-desk-insights
 
 # Install dependencies
 npm install
 
-# Start Clawd (auto-registers Claude Code hooks on launch)
+# Start Clawd Insights (auto-registers Claude Code hooks on launch)
 npm start
 ```
+
+After launch, open the analytics dashboard from the tray menu or press `Cmd/Ctrl+Shift+Alt+A`.
 
 ### Agent Setup
 
@@ -112,6 +125,16 @@ npm start
 **Codex CLI** — works out of the box. Clawd polls `~/.codex/sessions/` for JSONL logs automatically.
 
 **Copilot CLI** — requires manual hook setup. See [docs/copilot-setup.md](docs/copilot-setup.md) for instructions.
+
+### Insights Setup
+
+The analytics dashboard works locally and does not require a server. It reads local history from:
+
+- `~/.claude/projects/`
+- `~/.codex/sessions/`
+- `~/.cursor/projects/`
+
+For AI-generated session summaries, the app prefers a local `claude` or `codex` CLI. If neither is available, you can configure an API provider or Ollama as a fallback inside the app.
 
 ### Remote SSH (Claude Code & Codex CLI)
 
@@ -146,17 +169,27 @@ Remote hooks run in `CLAWD_REMOTE` mode which skips PID collection (remote PIDs 
 
 > Thanks to [@Magic-Bytes](https://github.com/Magic-Bytes) for the original SSH tunneling idea ([#9](https://github.com/rullerzhou-afk/clawd-on-desk/issues/9)).
 
+### Sharing Trial Builds
+
+For a quick same-platform trial build from your current machine:
+
+```bash
+npm run package:trial
+```
+
+Artifacts are written to `dist/`. For cross-platform artifacts from one branch, use the `Build & Release` GitHub Actions workflow. Manual runs upload artifacts only; `v*` tags publish a GitHub Release. See [docs/trial-sharing.md](docs/trial-sharing.md).
+
 ### macOS Notes
 
 - **From source** (`npm start`): works out of the box on Intel and Apple Silicon.
 - **DMG installer**: the app is not signed with an Apple Developer certificate, so macOS Gatekeeper will block it. To open:
   - Right-click the app → **Open** → click **Open** in the dialog, or
-  - Run `xattr -cr /Applications/Clawd\ on\ Desk.app` in Terminal.
+  - Run `xattr -cr /Applications/Clawd\ on\ Desk\ Insights.app` in Terminal.
 
 ### Linux Notes
 
 - **From source** (`npm start`): `--no-sandbox` is passed automatically to work around chrome-sandbox SUID requirements in dev mode.
-- **Packages**: AppImage and `.deb` are available from [GitHub Releases](https://github.com/rullerzhou-afk/clawd-on-desk/releases). After deb install, the app icon appears in GNOME's app menu.
+- **Packages**: AppImage and `.deb` can be distributed from this repository's Releases page. After deb install, the app icon appears in GNOME's app menu.
 - **Terminal focus**: uses `wmctrl` or `xdotool` (whichever is available). Install one for session terminal jumping to work: `sudo apt install wmctrl` or `sudo apt install xdotool`.
 - **Auto-update**: when running from a cloned repo, "Check for Updates" performs `git pull` + `npm install` (if dependencies changed) and restarts the app automatically.
 
@@ -165,6 +198,8 @@ Remote hooks run in `CLAWD_REMOTE` mode which skips PID collection (remote PIDs 
 | Limitation | Details |
 |---|---|
 | **Codex CLI: no terminal focus** | Codex sessions use JSONL log polling which doesn't carry terminal PID info. Clicking Clawd won't jump to the Codex terminal. Claude Code and Copilot CLI work fine. |
+| **Insights scan coverage** | The analytics dashboard currently scans local histories from Claude Code, Codex CLI, and Cursor Agent. Copilot CLI and Gemini CLI still drive pet states, but their local conversation histories are not yet part of the dashboard scanner. |
+| **Insights need a summarizer** | AI session summaries require a local `claude` or `codex` CLI, or a configured API / Ollama backend. Without one, the dashboard still shows timelines and raw session metadata. |
 | **Codex CLI: Windows hooks disabled** | Codex hardcodes hooks off on Windows, so we poll log files instead. This means ~1.5s latency vs near-instant for hook-based agents. |
 | **Copilot CLI: manual hook setup** | Copilot hooks require manually creating `~/.copilot/hooks/hooks.json`. Claude Code and Codex work out of the box. |
 | **Copilot CLI: no permission bubble** | Copilot's `preToolUse` hook only supports deny, not the full allow/deny flow. Permission bubbles only work with Claude Code. |
@@ -188,7 +223,7 @@ Some things we'd like to explore in the future:
 
 ## Contributing
 
-Clawd on Desk is a community-driven project. Bug reports, feature ideas, and pull requests are all welcome — open an [issue](https://github.com/rullerzhou-afk/clawd-on-desk/issues) to discuss or submit a PR directly.
+`clawd-on-desk-insights` is a community-driven fork. Bug reports, feature ideas, and pull requests are all welcome — open an issue in this repository or submit a PR directly.
 
 ### Contributors
 

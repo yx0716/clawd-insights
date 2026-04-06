@@ -100,6 +100,7 @@ const i18n = {
     sessionJustNow: "just now",
     sessionMinAgo: "{n}m ago",
     sessionHrAgo: "{n}h ago",
+    analytics: "Analytics Dashboard",
     soundEffects: "Sound Effects",
     showPet: "Show Clawd",
     hidePet: "Hide Clawd",
@@ -152,6 +153,7 @@ const i18n = {
     sessionJustNow: "刚刚",
     sessionMinAgo: "{n}分钟前",
     sessionHrAgo: "{n}小时前",
+    analytics: "数据分析面板",
     soundEffects: "音效",
     showPet: "显示 Clawd",
     hidePet: "隐藏 Clawd",
@@ -275,6 +277,11 @@ module.exports = function initMenu(ctx) {
           buildTrayMenu();
           ctx.savePrefs();
         },
+      },
+      { type: "separator" },
+      {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
       },
       { type: "separator" },
       {
@@ -462,6 +469,11 @@ module.exports = function initMenu(ctx) {
       {
         label: `${t("sessions")} (${ctx.sessions.size})`,
         submenu: ctx.buildSessionSubmenu(),
+      },
+      { type: "separator" },
+      {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
       },
     ];
     // macOS: Dock and Menu Bar visibility toggles

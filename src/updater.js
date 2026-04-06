@@ -217,7 +217,7 @@ function setupAutoUpdater() {
       }).then(({ response }) => {
         if (response === 0) {
           ctx.updateLog("User chose to download, opening GitHub Releases");
-          shell.openExternal("https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest");
+          shell.openExternal("https://github.com/yx0716/clawd-on-desk-insights/releases/latest");
         } else {
           ctx.updateLog("User chose to download later");
         }
@@ -354,9 +354,9 @@ function fetchLatestVersion() {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.github.com',
-      path: '/repos/rullerzhou-afk/clawd-on-desk/releases/latest',
+      path: '/repos/yx0716/clawd-on-desk-insights/releases/latest',
       headers: {
-        'User-Agent': 'Clawd-on-Desk'
+        'User-Agent': 'Clawd-on-Desk-Insights'
       }
     };
 

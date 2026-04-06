@@ -1,16 +1,27 @@
 <p align="center">
   <img src="assets/tray-icon.png" width="128" alt="Clawd">
 </p>
-<h1 align="center">Clawd 桌宠</h1>
+<h1 align="center">clawd-on-desk-insights</h1>
+<p align="center">
+  一个带 RescueTime 风格分析面板和 AI 会话洞察能力的桌宠分支。
+</p>
 <p align="center">
   <a href="README.md">English</a>
 </p>
 
-一个能实时感知 AI 编程助手工作状态的桌面宠物。Clawd 住在你的屏幕上——你提问时它思考，工具运行时它打字，子代理工作时它杂耍，审批权限时它弹卡片，任务完成时它庆祝，你离开时它睡觉。
+这是基于 `rullerzhou-afk/clawd-on-desk` 的一个 fork，在保留实时桌宠反馈的基础上，增加了本地会话扫描与 AI 洞察层。它既能在屏幕上感知 Agent 的实时状态，也能回看本地对话历史，用 AI 总结每段会话想做什么、做成了什么，以及时间都花在了哪里。
 
 > 支持 Windows 11、macOS 和 Ubuntu/Linux。需要 Node.js。支持 **Claude Code**、**Codex CLI**、**Copilot CLI**、**Gemini CLI** 与 **Cursor Agent**。
 
 ## 功能特性
+
+### 洞察面板
+- **RescueTime 风格时间线** — 按日期、项目、Agent、时长可视化查看会话分布
+- **本地历史扫描** — 直接读取你机器上的 Claude Code、Codex CLI、Cursor Agent 对话文件
+- **单会话 AI 复盘** — 从用户视角总结对话目标、成果、关键话题和时间分配
+- **灵活分析后端** — 支持本地 Claude Code、本地 Codex，以及 API / Ollama 备选
+- **批量预分析** — 可对最近会话批量生成摘要，并复用按 provider 隔离的缓存结果
+- **快捷入口** — 可从托盘菜单打开分析面板，或使用 `Cmd/Ctrl+Shift+Alt+A`
 
 ### 多 Agent 支持
 - **Claude Code** — 通过 command hook + HTTP 权限 hook 完整集成
@@ -92,9 +103,9 @@
 ## 快速开始
 
 ```bash
-# 克隆仓库
-git clone https://github.com/rullerzhou-afk/clawd-on-desk.git
-cd clawd-on-desk
+# 克隆你的 fork
+git clone https://github.com/yx0716/clawd-on-desk-insights.git
+cd clawd-on-desk-insights
 
 # 安装依赖
 npm install
@@ -102,9 +113,29 @@ npm install
 # 注册 Claude Code hooks（仅在确认版本兼容时注册 versioned hooks；版本未知时自动回退到核心 hooks 并清理旧的不兼容条目）
 node hooks/install.js
 
-# 启动 Clawd
+# 启动 Clawd Insights
 npm start
 ```
+
+启动后可从托盘菜单打开分析面板，或使用 `Cmd/Ctrl+Shift+Alt+A`。
+
+### Agent 配置
+
+**Claude Code** — 开箱即用。应用启动时会自动注册 hooks。只有在确认 Claude Code 版本兼容时才会注册 versioned hooks；如果无法识别版本，会自动回退到核心 hooks 并清理旧的不兼容条目。
+
+**Codex CLI** — 开箱即用。Clawd 会自动轮询 `~/.codex/sessions/`。
+
+**Copilot CLI** — 需要手动配置 hooks，见 [docs/copilot-setup.md](docs/copilot-setup.md)。
+
+### 洞察面板配置
+
+分析面板是纯本地工作的，不依赖服务端。它会从以下目录读取本地历史：
+
+- `~/.claude/projects/`
+- `~/.codex/sessions/`
+- `~/.cursor/projects/`
+
+如果要生成 AI 会话摘要，应用会优先使用本地 `claude` 或 `codex` CLI；如果本地 CLI 不可用，也可以在应用里配置 API provider 或 Ollama 作为备选。
 
 ### 远程 SSH 模式（Claude Code & Codex CLI）
 
@@ -139,17 +170,31 @@ Host my-server
 
 > 感谢 [@Magic-Bytes](https://github.com/Magic-Bytes) 提出 SSH 隧道方案（[#9](https://github.com/rullerzhou-afk/clawd-on-desk/issues/9)）。
 
+### 试用包分发
+
+如果你想快速给同平台用户试用，可在本机直接打包：
+
+```bash
+npm run package:trial
+```
+
+产物会输出到 `dist/`。如果只想做本机冒烟测试或先发 `.app` 目录，可运行：
+
+```bash
+npm run package:trial:dir
+```
+
 ### macOS 说明
 
 - **源码运行**（`npm start`）：Intel 和 Apple Silicon 均可直接使用。
 - **DMG 安装包**：未签名 Apple 开发者证书，macOS Gatekeeper 会拦截。解决方法：
   - 右键点击应用 → **打开** → 在弹窗中点击 **打开**，或
-  - 在终端运行 `xattr -cr /Applications/Clawd\ on\ Desk.app`
+  - 在终端运行 `xattr -cr /Applications/Clawd\ on\ Desk\ Insights.app`
 
 ### Linux 说明
 
 - **源码运行**（`npm start`）：自动传入 `--no-sandbox` 参数，跳过 chrome-sandbox SUID 校验。
-- **安装包**：AppImage 和 `.deb` 可从 [GitHub Releases](https://github.com/rullerzhou-afk/clawd-on-desk/releases) 下载。deb 安装后应用图标会出现在 GNOME 应用菜单。
+- **安装包**：AppImage 和 `.deb` 可通过本仓库的 Releases 页面分发。deb 安装后应用图标会出现在 GNOME 应用菜单。
 - **终端聚焦**：依赖 `wmctrl` 或 `xdotool`（有一个就行）。安装：`sudo apt install wmctrl` 或 `sudo apt install xdotool`。
 - **自动更新**：源码运行时，"检查更新"会执行 `git pull` + `npm install`（依赖有变化时）并自动重启。
 
@@ -158,6 +203,8 @@ Host my-server
 | 限制 | 说明 |
 |------|------|
 | **Codex CLI：无法跳转终端** | Codex 通过 JSONL 日志轮询，日志中不含终端 PID，点击桌宠无法跳转到 Codex 终端。Claude Code 和 Copilot CLI 正常。 |
+| **洞察扫描范围** | 当前分析面板只扫描 Claude Code、Codex CLI、Cursor Agent 的本地历史。Copilot CLI 和 Gemini CLI 仍会驱动桌宠状态，但暂未接入分析面板的历史扫描链路。 |
+| **洞察摘要依赖总结后端** | AI 会话摘要需要本地 `claude` / `codex` CLI，或已配置的 API / Ollama。没有这些后端时，面板仍可展示时间线和基础会话信息。 |
 | **Codex CLI：Windows hooks 禁用** | Codex 在 Windows 上硬编码禁用了 hooks，因此走日志轮询，延迟约 1.5 秒（hook 方式几乎无延迟）。 |
 | **Copilot CLI：需手动配置 hooks** | Copilot 需要手动创建 `~/.copilot/hooks/hooks.json`。Claude Code 和 Codex 开箱即用。 |
 | **Copilot CLI：无权限气泡** | Copilot 的 `preToolUse` 只支持拒绝，无法做完整的允许/拒绝审批流。权限气泡仅支持 Claude Code。 |
@@ -175,7 +222,7 @@ Host my-server
 
 ## 参与贡献
 
-Clawd on Desk 是一个社区驱动的项目。欢迎提 Bug、提需求、提 PR —— 在 [Issues](https://github.com/rullerzhou-afk/clawd-on-desk/issues) 里聊或直接提交 PR。
+`clawd-on-desk-insights` 是一个社区驱动的 fork。欢迎提 Bug、提需求、提 PR —— 可直接在本仓库提 issue 或提交 PR。
 
 ### 贡献者
 
