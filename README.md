@@ -3,13 +3,30 @@
 </p>
 <h1 align="center">clawd-on-desk-insights</h1>
 <p align="center">
-  A desktop pet fork with a RescueTime-style analytics dashboard and AI-generated coding session insights.
+  You work with coding agents for hours every day.<br>
+  <strong>But what did you actually walk away with?</strong>
 </p>
 <p align="center">
   <a href="README.zh-CN.md">中文版</a>
 </p>
 
+<<<<<<< HEAD
 A desktop pet that reacts to your AI coding agent sessions in real-time. Clawd lives on your screen, scans local conversation history, and adds a RescueTime-style insights layer with AI-generated session summaries. Ships with two built-in themes: **Clawd** (pixel crab) and **Calico** (calico cat), with full support for custom themes.
+=======
+<p align="center">
+  <img src="assets/screenshot-timeline.png" width="800" alt="Timeline Dashboard">
+</p>
+
+<p align="center">
+  <img src="assets/screenshot-analysis.png" width="800" alt="AI Session Analysis">
+</p>
+
+Every conversation leaves an **imprint** — an idea you explored, a bug you solved, a decision you made. This tool makes those imprints visible.
+
+A fork of [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) that keeps the desktop pet and adds an insights layer: scan local conversation history, visualize agent usage on a timeline, and generate AI summaries of what each session actually accomplished.
+
+All data stays on your machine. Analysis runs through your own Claude Code or Codex CLI.
+>>>>>>> f070cc1 (docs: add dashboard screenshots and rewrite README intro)
 
 > Supports Windows 11, macOS, and Ubuntu/Linux. Requires Node.js. Works with **Claude Code**, **Codex CLI**, **Copilot CLI**, **Gemini CLI**, **Cursor Agent**, **Kiro CLI**, and **opencode**.
 
