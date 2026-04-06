@@ -4,6 +4,18 @@
 
 const area = document.getElementById("hit-area");
 
+// ── Theme config (injected via preload-hit.js additionalArguments) ──
+let tc = window.hitThemeConfig || {};
+let _reactions = (tc && tc.reactions) || {};
+
+// Theme switch: IPC push overrides additionalArguments
+if (window.hitAPI && window.hitAPI.onThemeConfig) {
+  window.hitAPI.onThemeConfig((cfg) => {
+    tc = cfg || {};
+    _reactions = (tc && tc.reactions) || {};
+  });
+}
+
 // --- State synced from main ---
 let currentSvg = null;
 let currentState = null;
@@ -121,17 +133,14 @@ window.addEventListener("blur", stopDrag);
 
 // --- Click reaction logic (2-click = poke, 4-click = flail) ---
 const CLICK_WINDOW_MS = 400;
-const REACT_LEFT_SVG = "clawd-react-left.svg";
-const REACT_RIGHT_SVG = "clawd-react-right.svg";
-const REACT_ANNOYED_SVG = "clawd-react-annoyed.svg";
-const REACT_DOUBLE_SVGS = ["clawd-react-double.svg", "clawd-react-double-jump.svg"];
-const REACT_SINGLE_DURATION = 2500;
-const REACT_ANNOYED_DURATION = 3500;
-const REACT_DOUBLE_DURATION = 3500;
 
 let clickCount = 0;
 let clickTimer = null;
 let firstClickDir = null;
+
+function _getReaction(name) {
+  return _reactions[name] || null;
+}
 
 function handleClick(clientX) {
   if (miniMode) {
@@ -154,22 +163,30 @@ function handleClick(clientX) {
 
   if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
 
-  if (clickCount >= 4) {
+  const doubleReact = _getReaction("double");
+  const annoyedReact = _getReaction("annoyed");
+  const leftReact = _getReaction("clickLeft");
+  const rightReact = _getReaction("clickRight");
+
+  if (clickCount >= 4 && doubleReact) {
     clickCount = 0;
     firstClickDir = null;
-    const doubleSvg = REACT_DOUBLE_SVGS[Math.floor(Math.random() * REACT_DOUBLE_SVGS.length)];
-    playReaction(doubleSvg, REACT_DOUBLE_DURATION);
+    const files = doubleReact.files || [doubleReact.file];
+    const file = files[Math.floor(Math.random() * files.length)];
+    playReaction(file, doubleReact.duration || 3500);
   } else if (clickCount >= 2) {
     clickTimer = setTimeout(() => {
       clickTimer = null;
       clickCount = 0;
-      if (Math.random() < 0.5) {
+      if (annoyedReact && Math.random() < 0.5) {
         firstClickDir = null;
-        playReaction(REACT_ANNOYED_SVG, REACT_ANNOYED_DURATION);
+        playReaction(annoyedReact.file, annoyedReact.duration || 3500);
+      } else if (leftReact && rightReact) {
+        const react = firstClickDir === "left" ? leftReact : rightReact;
+        firstClickDir = null;
+        playReaction(react.file, react.duration || 2500);
       } else {
-        const svg = firstClickDir === "left" ? REACT_LEFT_SVG : REACT_RIGHT_SVG;
         firstClickDir = null;
-        playReaction(svg, REACT_SINGLE_DURATION);
       }
     }, CLICK_WINDOW_MS);
   } else {
@@ -182,6 +199,7 @@ function handleClick(clientX) {
 }
 
 function playReaction(svg, duration) {
+  if (!svg) return;
   isReacting = true;
   window.hitAPI.playClickReaction(svg, duration);
   // Local timer to ungate input after duration

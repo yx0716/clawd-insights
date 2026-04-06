@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require("url");
 
 // ── Defaults (used when theme.json omits optional fields) ──
 
@@ -47,43 +48,77 @@ const DEFAULT_EYE_TRACKING = {
 
 const REQUIRED_STATES = ["idle", "working", "thinking", "sleeping", "waking"];
 
+// ── SVG sanitization config ──
+const DANGEROUS_TAGS = new Set([
+  "script", "foreignobject", "iframe", "embed", "object", "applet",
+  "meta", "link", "base", "form", "input", "textarea", "button",
+]);
+const DANGEROUS_ATTR_RE = /^on/i;
+const DANGEROUS_HREF_RE = /^\s*javascript\s*:/i;
+const HREF_ATTRS = new Set(["href", "xlink:href", "src", "action", "formaction"]);
+
 // ── State ──
 
 let activeTheme = null;
 let builtinThemesDir = null;   // set by init()
 let assetsSvgDir = null;       // assets/svg/ for built-in theme
+let userDataDir = null;        // app.getPath("userData") — set by init()
+let userThemesDir = null;      // {userData}/themes/
+let themeCacheDir = null;      // {userData}/theme-cache/
 
 // ── Public API ──
 
 /**
  * Initialize the loader. Call once at startup from main.js.
  * @param {string} appDir - __dirname of the calling module (src/)
+ * @param {string} userData - app.getPath("userData")
  */
-function init(appDir) {
+function init(appDir, userData) {
   builtinThemesDir = path.join(appDir, "..", "themes");
   assetsSvgDir = path.join(appDir, "..", "assets", "svg");
+  if (userData) {
+    userDataDir = userData;
+    userThemesDir = path.join(userData, "themes");
+    themeCacheDir = path.join(userData, "theme-cache");
+  }
 }
 
 /**
  * Discover all available themes.
- * Phase 1: only built-in themes.
- * @returns {{ id: string, name: string, path: string }[]}
+ * Scans built-in themes dir + {userData}/themes/
+ * @returns {{ id: string, name: string, path: string, builtin: boolean }[]}
  */
 function discoverThemes() {
   const themes = [];
-  if (!builtinThemesDir) return themes;
+  const seen = new Set();
+
+  // Built-in themes
+  if (builtinThemesDir) {
+    _scanThemesDir(builtinThemesDir, true, themes, seen);
+  }
+
+  // User-installed themes (override built-in if same id)
+  if (userThemesDir) {
+    _scanThemesDir(userThemesDir, false, themes, seen);
+  }
+
+  return themes;
+}
+
+function _scanThemesDir(dir, builtin, themes, seen) {
   try {
-    for (const entry of fs.readdirSync(builtinThemesDir, { withFileTypes: true })) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const jsonPath = path.join(builtinThemesDir, entry.name, "theme.json");
+      if (seen.has(entry.name)) continue;
+      const jsonPath = path.join(dir, entry.name, "theme.json");
       if (!fs.existsSync(jsonPath)) continue;
       try {
         const cfg = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-        themes.push({ id: entry.name, name: cfg.name || entry.name, path: jsonPath });
+        themes.push({ id: entry.name, name: cfg.name || entry.name, path: jsonPath, builtin });
+        seen.add(entry.name);
       } catch { /* skip malformed */ }
     }
   } catch { /* dir not found */ }
-  return themes;
 }
 
 /**
@@ -92,14 +127,13 @@ function discoverThemes() {
  * @returns {object} merged theme config
  */
 function loadTheme(themeId) {
-  const jsonPath = path.join(builtinThemesDir, themeId, "theme.json");
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-  } catch (e) {
-    console.error(`[theme-loader] Failed to load theme "${themeId}":`, e.message);
+  // Try built-in first, then user themes dir
+  const { raw, isBuiltin, themeDir } = _readThemeJson(themeId);
+
+  if (!raw) {
+    console.error(`[theme-loader] Theme "${themeId}" not found`);
     if (themeId !== "clawd") return loadTheme("clawd");
-    throw e;
+    throw new Error("Default theme 'clawd' not found");
   }
 
   const errors = validateTheme(raw);
@@ -109,9 +143,188 @@ function loadTheme(themeId) {
   }
 
   // Merge defaults for optional fields
-  const theme = mergeDefaults(raw, themeId);
+  const theme = mergeDefaults(raw, themeId, isBuiltin);
+  theme._themeDir = themeDir;
+
+  // For external themes: sanitize SVGs + resolve asset paths
+  if (!isBuiltin) {
+    const assetsDir = _resolveExternalAssetsDir(themeId, themeDir);
+    theme._assetsDir = assetsDir;
+    theme._assetsFileUrl = pathToFileURL(assetsDir).href;
+  } else {
+    theme._assetsDir = assetsSvgDir;
+    theme._assetsFileUrl = null; // built-in uses relative path
+  }
+
   activeTheme = theme;
   return theme;
+}
+
+/**
+ * Read theme.json from built-in or user themes directory.
+ */
+function _readThemeJson(themeId) {
+  // Built-in first
+  const builtinPath = path.join(builtinThemesDir, themeId, "theme.json");
+  if (fs.existsSync(builtinPath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(builtinPath, "utf8"));
+      return { raw, isBuiltin: true, themeDir: path.join(builtinThemesDir, themeId) };
+    } catch (e) {
+      console.error(`[theme-loader] Failed to parse built-in theme "${themeId}":`, e.message);
+    }
+  }
+
+  // User themes
+  if (userThemesDir) {
+    const userPath = path.join(userThemesDir, themeId, "theme.json");
+    if (fs.existsSync(userPath)) {
+      // Path traversal check: resolved path must be within userThemesDir
+      const resolved = path.resolve(userPath);
+      if (!resolved.startsWith(path.resolve(userThemesDir) + path.sep)) {
+        console.error(`[theme-loader] Path traversal detected for theme "${themeId}"`);
+        return { raw: null, isBuiltin: false, themeDir: null };
+      }
+      try {
+        const raw = JSON.parse(fs.readFileSync(userPath, "utf8"));
+        return { raw, isBuiltin: false, themeDir: path.join(userThemesDir, themeId) };
+      } catch (e) {
+        console.error(`[theme-loader] Failed to parse user theme "${themeId}":`, e.message);
+      }
+    }
+  }
+
+  return { raw: null, isBuiltin: false, themeDir: null };
+}
+
+/**
+ * Resolve external theme assets: sanitize SVGs → cache dir, return cache path.
+ * Non-SVG files (GIF/APNG/WebP) are used directly from theme dir (no sanitization needed).
+ */
+function _resolveExternalAssetsDir(themeId, themeDir) {
+  const sourceAssetsDir = path.join(themeDir, "assets");
+  if (!themeCacheDir) return sourceAssetsDir;
+
+  const cacheDir = path.join(themeCacheDir, themeId, "assets");
+  const cacheMetaPath = path.join(themeCacheDir, themeId, ".cache-meta.json");
+
+  // Load existing cache meta
+  let cacheMeta = {};
+  try {
+    cacheMeta = JSON.parse(fs.readFileSync(cacheMetaPath, "utf8"));
+  } catch { /* no cache yet */ }
+
+  // Ensure cache directory exists
+  fs.mkdirSync(cacheDir, { recursive: true });
+
+  // Scan source assets and sanitize SVGs
+  let metaChanged = false;
+  try {
+    const files = fs.readdirSync(sourceAssetsDir);
+    for (const file of files) {
+      const srcFile = path.join(sourceAssetsDir, file);
+
+      // Path traversal check
+      const resolvedSrc = path.resolve(srcFile);
+      if (!resolvedSrc.startsWith(path.resolve(sourceAssetsDir) + path.sep) &&
+          resolvedSrc !== path.resolve(sourceAssetsDir)) {
+        console.warn(`[theme-loader] Skipping suspicious path: ${file}`);
+        continue;
+      }
+
+      let stat;
+      try { stat = fs.statSync(srcFile); } catch { continue; }
+      if (!stat.isFile()) continue;
+
+      if (file.endsWith(".svg")) {
+        // Check cache freshness
+        const cached = cacheMeta[file];
+        if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) {
+          // Cache is fresh
+          continue;
+        }
+
+        // Sanitize and cache
+        try {
+          const svgContent = fs.readFileSync(srcFile, "utf8");
+          const sanitized = sanitizeSvg(svgContent);
+          fs.writeFileSync(path.join(cacheDir, file), sanitized, "utf8");
+          cacheMeta[file] = { mtime: stat.mtimeMs, size: stat.size };
+          metaChanged = true;
+        } catch (e) {
+          console.error(`[theme-loader] Failed to sanitize ${file}:`, e.message);
+        }
+      }
+      // Non-SVG files are NOT copied — we serve them directly from source
+    }
+  } catch (e) {
+    console.error(`[theme-loader] Failed to scan assets for theme "${themeId}":`, e.message);
+  }
+
+  if (metaChanged) {
+    try {
+      fs.writeFileSync(cacheMetaPath, JSON.stringify(cacheMeta, null, 2), "utf8");
+    } catch {}
+  }
+
+  return cacheDir; // SVGs from cache, non-SVGs resolved at getAssetPath() time
+}
+
+// ── SVG Sanitization ──
+
+/**
+ * Sanitize SVG content by removing dangerous elements and attributes.
+ * Uses htmlparser2 for robust parsing.
+ * @param {string} svgContent - raw SVG string
+ * @returns {string} sanitized SVG string
+ */
+function sanitizeSvg(svgContent) {
+  const { parseDocument } = require("htmlparser2");
+  const render = require("dom-serializer");
+
+  const doc = parseDocument(svgContent, { xmlMode: true });
+  _sanitizeNode(doc);
+  return render.default(doc, { xmlMode: true });
+}
+
+/**
+ * Recursively walk DOM tree and remove dangerous nodes/attributes.
+ */
+function _sanitizeNode(node) {
+  if (!node.children) return;
+
+  // Walk backwards so removal doesn't skip siblings
+  for (let i = node.children.length - 1; i >= 0; i--) {
+    const child = node.children[i];
+
+    // Remove dangerous elements entirely
+    if (child.type === "tag" || child.type === "script" || child.type === "style") {
+      const tagName = (child.name || "").toLowerCase();
+      if (DANGEROUS_TAGS.has(tagName)) {
+        node.children.splice(i, 1);
+        continue;
+      }
+    }
+
+    // Clean attributes on element nodes
+    if (child.attribs) {
+      const keys = Object.keys(child.attribs);
+      for (const key of keys) {
+        // Remove on* event handlers
+        if (DANGEROUS_ATTR_RE.test(key)) {
+          delete child.attribs[key];
+          continue;
+        }
+        // Remove javascript: URLs
+        if (HREF_ATTRS.has(key.toLowerCase()) && DANGEROUS_HREF_RE.test(child.attribs[key])) {
+          delete child.attribs[key];
+        }
+      }
+    }
+
+    // Recurse into children
+    _sanitizeNode(child);
+  }
 }
 
 /**
@@ -123,8 +336,6 @@ function getActiveTheme() {
 
 /**
  * Resolve a display hint filename to current theme's file.
- * Hook scripts send original Clawd filenames like "clawd-working-building.svg".
- * This maps them to the current theme's file via displayHintMap.
  * @param {string} hookFilename - original filename from hook/server
  * @returns {string|null} theme-local filename, or null if not mapped
  */
@@ -134,25 +345,56 @@ function resolveHint(hookFilename) {
 }
 
 /**
- * Get the SVG/asset base path for the active theme.
- * Built-in "clawd" theme uses assets/svg/, external themes will use theme-cache.
+ * Get the absolute directory path for assets of the active theme.
+ * Built-in: assets/svg/. External: theme-cache for SVGs, theme dir for non-SVGs.
  * @returns {string} absolute directory path
  */
 function getAssetsDir() {
   if (!activeTheme) return assetsSvgDir;
-  // Phase 1: built-in theme always uses assets/svg/
   if (activeTheme._builtin) return assetsSvgDir;
-  // Phase 2 will return theme-cache path for external themes
-  return assetsSvgDir;
+  return activeTheme._assetsDir || assetsSvgDir;
 }
 
 /**
- * Get relative asset path prefix for renderer (used in <object data="...">).
- * @returns {string} relative path like "../assets/svg"
+ * Get asset path for a specific file.
+ * For external themes: SVGs come from cache, non-SVGs from source theme dir.
+ * @param {string} filename
+ * @returns {string} absolute file path
+ */
+function getAssetPath(filename) {
+  if (!activeTheme || activeTheme._builtin) {
+    return path.join(assetsSvgDir, filename);
+  }
+
+  // External theme: SVGs from cache, everything else from source
+  if (filename.endsWith(".svg")) {
+    return path.join(activeTheme._assetsDir, filename);
+  }
+  // Non-SVG: direct from theme's assets dir (no sanitization needed)
+  return path.join(activeTheme._themeDir, "assets", filename);
+}
+
+/**
+ * Get asset path prefix for renderer (used in <object data="..."> and <img src="...">).
+ * Built-in: relative path. External: file:// URL.
+ * @returns {string} path prefix
  */
 function getRendererAssetsPath() {
-  // Phase 1: always relative to src/index.html
-  return "../assets/svg";
+  if (!activeTheme || activeTheme._builtin) {
+    return "../assets/svg";
+  }
+  // External theme: return file:// URL to the cache dir for SVGs
+  return activeTheme._assetsFileUrl || "../assets/svg";
+}
+
+/**
+ * Get the base file:// URL for non-SVG assets of external themes.
+ * For <img> loading of GIF/APNG/WebP files that live in the source theme dir.
+ * @returns {string|null} file:// URL or null for built-in
+ */
+function getRendererSourceAssetsPath() {
+  if (!activeTheme || activeTheme._builtin) return null;
+  return pathToFileURL(path.join(activeTheme._themeDir, "assets")).href;
 }
 
 /**
@@ -164,11 +406,13 @@ function getRendererConfig() {
   const t = activeTheme;
   return {
     assetsPath: getRendererAssetsPath(),
+    // For external themes: non-SVG assets served from source dir (not cache)
+    sourceAssetsPath: getRendererSourceAssetsPath(),
     eyeTracking: t.eyeTracking,
     glyphFlips: t.miniMode ? t.miniMode.glyphFlips : {},
     dragSvg: t.reactions && t.reactions.drag ? t.reactions.drag.file : null,
     idleFollowSvg: t.states.idle[0],
-    // renderer needs to know which states need eye tracking (for future <object> vs <img> decision)
+    // renderer needs to know which states need eye tracking (for <object> vs <img> decision)
     eyeTrackingStates: t.eyeTracking.enabled ? t.eyeTracking.states : [],
   };
 }
@@ -183,6 +427,18 @@ function getHitRendererConfig() {
     reactions: t.reactions || {},
     idleFollowSvg: t.states.idle[0],
   };
+}
+
+/**
+ * Ensure the user themes directory exists.
+ * @returns {string} absolute path to user themes dir
+ */
+function ensureUserThemesDir() {
+  if (!userThemesDir) return null;
+  try {
+    fs.mkdirSync(userThemesDir, { recursive: true });
+  } catch {}
+  return userThemesDir;
 }
 
 // ── Validation ──
@@ -231,8 +487,8 @@ function validateTheme(cfg) {
 
 // ── Internal helpers ──
 
-function mergeDefaults(raw, themeId) {
-  const theme = { ...raw, _id: themeId, _builtin: true };
+function mergeDefaults(raw, themeId, isBuiltin) {
+  const theme = { ...raw, _id: themeId, _builtin: !!isBuiltin };
 
   // timings
   theme.timings = {
@@ -274,7 +530,6 @@ function mergeDefaults(raw, themeId) {
   }
 
   // Merge mini timings into main timings for state.js convenience
-  // state.js reads MIN_DISPLAY_MS and AUTO_RETURN_MS as flat objects
   if (theme.miniMode.timings) {
     Object.assign(theme.timings.minDisplay, theme.miniMode.timings.minDisplay || {});
     Object.assign(theme.timings.autoReturn, theme.miniMode.timings.autoReturn || {});
@@ -307,8 +562,12 @@ module.exports = {
   getActiveTheme,
   resolveHint,
   getAssetsDir,
+  getAssetPath,
   getRendererAssetsPath,
+  getRendererSourceAssetsPath,
   getRendererConfig,
   getHitRendererConfig,
+  ensureUserThemesDir,
   validateTheme,
+  sanitizeSvg,
 };

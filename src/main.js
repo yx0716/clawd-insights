@@ -63,6 +63,7 @@ function savePrefs() {
     miniMode: _mini.getMiniMode(), miniEdge: _mini.getMiniEdge(), preMiniX: _mini.getPreMiniX(), preMiniY: _mini.getPreMiniY(), lang,
     showTray, showDock,
     autoStartWithClaude, bubbleFollowPet, hideBubbles, showSessionId, soundMuted,
+    theme: activeTheme ? activeTheme._id : "clawd",
   };
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
@@ -72,7 +73,7 @@ let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
 
 // ── Theme loader ──
 const themeLoader = require("./theme-loader");
-themeLoader.init(__dirname);
+themeLoader.init(__dirname, app.getPath("userData"));
 
 function loadThemeFromPrefs(prefs) {
   return themeLoader.loadTheme((prefs && prefs.theme) || "clawd");
@@ -483,6 +484,10 @@ const _menuCtx = {
   clampToScreen,
   getNearestWorkArea,
   reapplyMacVisibility,
+  switchTheme: (id) => switchTheme(id),
+  discoverThemes: () => themeLoader.discoverThemes(),
+  getActiveThemeId: () => activeTheme ? activeTheme._id : "clawd",
+  ensureUserThemesDir: () => themeLoader.ensureUserThemesDir(),
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
@@ -628,6 +633,9 @@ function createWindow() {
       webPreferences: {
         preload: path.join(__dirname, "preload-hit.js"),
         backgroundThrottling: false,
+        additionalArguments: [
+          "--hit-theme-config=" + JSON.stringify(themeLoader.getHitRendererConfig()),
+        ],
       },
     });
     // setShape: native hit region, no per-pixel alpha dependency.
@@ -866,6 +874,58 @@ const { enterMiniMode, exitMiniMode, enterMiniViaMenu, miniPeekIn, miniPeekOut,
 // Convenience getters for mini state (used throughout main.js)
 Object.defineProperties(this || {}, {}); // no-op placeholder
 // Mini state is accessed via _mini getters in ctx objects below
+
+// ── Theme switching ──
+function switchTheme(themeId) {
+  if (!win || win.isDestroyed()) return;
+  if (activeTheme && activeTheme._id === themeId) return;
+
+  // 1. Cleanup timers in all modules
+  _state.cleanup();
+  _tick.cleanup();
+  _mini.cleanup();
+  // ⚠️ Don't clear pendingPermissions — permission bubbles are independent BrowserWindows
+  // ��️ Don't clear sessions — keep active session tracking
+  // ��️ Don't clear displayHint — semantic tokens resolve through new theme's map
+
+  // 2. If currently in mini mode and new theme doesn't support mini, exit first
+  const newTheme = themeLoader.loadTheme(themeId);
+  if (_mini.getMiniMode() && !newTheme.miniMode.supported) {
+    _mini.exitMiniMode();
+  }
+
+  // 3. Update active theme
+  activeTheme = newTheme;
+
+  const rendererConfig = themeLoader.getRendererConfig();
+  const hitConfig = themeLoader.getHitRendererConfig();
+
+  // 4. Reload both windows
+  win.webContents.reload();
+  hitWin.webContents.reload();
+
+  // 5. After reload completes, push new config via IPC + restart tick
+  let ready = 0;
+  const onReady = () => {
+    if (++ready < 2) return;
+    // Re-apply current state so renderer shows correct animation
+    const { state, svg } = resolveDisplayState();
+    sendToRenderer("state-change", state, svg);
+    syncHitWin();
+    startMainTick();
+  };
+  win.webContents.once("did-finish-load", () => {
+    win.webContents.send("theme-config", rendererConfig);
+    onReady();
+  });
+  hitWin.webContents.once("did-finish-load", () => {
+    hitWin.webContents.send("theme-config", hitConfig);
+    onReady();
+  });
+
+  savePrefs();
+  rebuildAllMenus();
+}
 
 // ── Auto-install VS Code / Cursor terminal-focus extension ──
 const EXT_ID = "clawd.clawd-terminal-focus";

@@ -103,6 +103,8 @@ const i18n = {
     soundEffects: "Sound Effects",
     showPet: "Show Clawd",
     hidePet: "Hide Clawd",
+    theme: "Theme",
+    openThemeDir: "Open Theme Folder…",
     toggleShortcut: "Toggle Shortcut: {shortcut}",
     quit: "Quit",
   },
@@ -155,15 +157,47 @@ const i18n = {
     soundEffects: "音效",
     showPet: "显示 Clawd",
     hidePet: "隐藏 Clawd",
+    theme: "主题",
+    openThemeDir: "打开主题文件夹…",
     toggleShortcut: "切换快捷键: {shortcut}",
     quit: "退出",
   },
 };
 
+const { shell } = require("electron");
+
 module.exports = function initMenu(ctx) {
   // ── Translation helper ──
   function t(key) {
     return (i18n[ctx.lang] || i18n.en)[key] || key;
+  }
+
+  // ── Theme submenu builder ──
+  function buildThemeSubmenu() {
+    const themes = ctx.discoverThemes ? ctx.discoverThemes() : [];
+    const activeId = ctx.getActiveThemeId ? ctx.getActiveThemeId() : "clawd";
+
+    const items = themes.map(theme => ({
+      label: theme.name + (theme.builtin ? "" : " ✦"),
+      type: "radio",
+      checked: theme.id === activeId,
+      click: () => {
+        if (theme.id !== activeId && ctx.switchTheme) {
+          ctx.switchTheme(theme.id);
+        }
+      },
+    }));
+
+    items.push({ type: "separator" });
+    items.push({
+      label: t("openThemeDir"),
+      click: () => {
+        const dir = ctx.ensureUserThemesDir ? ctx.ensureUserThemesDir() : null;
+        if (dir) shell.openPath(dir);
+      },
+    });
+
+    return items;
   }
 
   // ── System tray ──
@@ -275,6 +309,11 @@ module.exports = function initMenu(ctx) {
           buildTrayMenu();
           ctx.savePrefs();
         },
+      },
+      { type: "separator" },
+      {
+        label: t("theme"),
+        submenu: buildThemeSubmenu(),
       },
       { type: "separator" },
       {
@@ -462,6 +501,11 @@ module.exports = function initMenu(ctx) {
       {
         label: `${t("sessions")} (${ctx.sessions.size})`,
         submenu: ctx.buildSessionSubmenu(),
+      },
+      { type: "separator" },
+      {
+        label: t("theme"),
+        submenu: buildThemeSubmenu(),
       },
     ];
     // macOS: Dock and Menu Bar visibility toggles

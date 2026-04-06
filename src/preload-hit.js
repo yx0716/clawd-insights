@@ -1,6 +1,14 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// Parse hit-renderer theme config from additionalArguments (synchronous, available on first load)
+const hitThemeArg = process.argv.find(a => a.startsWith("--hit-theme-config="));
+const hitThemeConfig = hitThemeArg ? JSON.parse(hitThemeArg.slice("--hit-theme-config=".length)) : null;
+
+contextBridge.exposeInMainWorld("hitThemeConfig", hitThemeConfig);
+
 contextBridge.exposeInMainWorld("hitAPI", {
+  // Theme config push (for hot-switch; additionalArguments won't update on reload)
+  onThemeConfig: (cb) => ipcRenderer.on("theme-config", (_, cfg) => cb(cfg)),
   // Sends → main
   dragLock: (locked) => ipcRenderer.send("drag-lock", locked),
   moveWindowBy: (dx, dy) => ipcRenderer.send("move-window-by", dx, dy),

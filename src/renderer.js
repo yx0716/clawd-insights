@@ -6,12 +6,37 @@ const container = document.getElementById("pet-container");
 
 // ── Theme config (injected via preload.js additionalArguments) ──
 let tc = window.themeConfig || {};
-const _assetsPath = tc.assetsPath || "../assets/svg";
-const _eyeIds = (tc.eyeTracking && tc.eyeTracking.ids) || { eyes: "eyes-js", body: "body-js", shadow: "shadow-js", dozeEyes: "eyes-doze" };
-const _bodyScale = (tc.eyeTracking && tc.eyeTracking.bodyScale) || 0.33;
-const _shadowStretch = (tc.eyeTracking && tc.eyeTracking.shadowStretch) || 0.15;
-const _shadowShift = (tc.eyeTracking && tc.eyeTracking.shadowShift) || 0.3;
-const _eyeTrackingStates = (tc.eyeTrackingStates) || ["idle", "dozing", "mini-idle"];
+
+function initWithConfig(cfg) {
+  tc = cfg || {};
+  _assetsPath = tc.assetsPath || "../assets/svg";
+  _sourceAssetsPath = tc.sourceAssetsPath || null;
+  _eyeIds = (tc.eyeTracking && tc.eyeTracking.ids) || { eyes: "eyes-js", body: "body-js", shadow: "shadow-js", dozeEyes: "eyes-doze" };
+  _bodyScale = (tc.eyeTracking && tc.eyeTracking.bodyScale) || 0.33;
+  _shadowStretch = (tc.eyeTracking && tc.eyeTracking.shadowStretch) || 0.15;
+  _shadowShift = (tc.eyeTracking && tc.eyeTracking.shadowShift) || 0.3;
+  _eyeTrackingStates = (tc.eyeTrackingStates) || ["idle", "dozing", "mini-idle"];
+  _dragSvg = tc.dragSvg || "clawd-react-drag.svg";
+  _idleFollowSvg = tc.idleFollowSvg || "clawd-idle-follow.svg";
+  _glyphFlipDefs = tc.glyphFlips || { "pixel-z": 4, "pixel-z-small": 3 };
+}
+
+let _assetsPath;
+let _sourceAssetsPath;
+let _eyeIds;
+let _bodyScale;
+let _shadowStretch;
+let _shadowShift;
+let _eyeTrackingStates;
+let _dragSvg;
+let _idleFollowSvg;
+let _glyphFlipDefs;
+initWithConfig(tc);
+
+// Theme switch: reload + IPC push overrides additionalArguments
+window.electronAPI.onThemeConfig((newConfig) => {
+  initWithConfig(newConfig);
+});
 
 // Release an <object> SVG element: navigate away to unload the SVG document
 // (stops CSS animations and frees the internal frame), then remove from DOM.
@@ -21,8 +46,14 @@ function releaseObject(el) {
   el.remove();
 }
 
+// Release an <img> element from DOM
+function releaseImg(el) {
+  if (!el) return;
+  try { el.src = ""; } catch {}
+  el.remove();
+}
+
 // --- Reaction state (visual side) ---
-const REACT_DRAG_SVG = (tc.dragSvg) || "clawd-react-drag.svg";
 let isReacting = false;
 let isDragReacting = false;
 let reactTimer = null;
@@ -45,14 +76,12 @@ window.electronAPI.onMiniModeChange((enabled, edge) => {
 // Counter-flip asymmetric pixel-art glyphs (Zzz) inside SVG defs so they
 // render correctly when the container has scaleX(-1). Only the glyph shape
 // is flipped — CSS animation transforms (float direction) are unaffected.
-const GLYPH_FLIP_DEFS = (tc.glyphFlips) || { "pixel-z": 4, "pixel-z-small": 3 };
-
 function applyGlyphFlipCompensation(objectEl) {
-  if (!objectEl) return;
+  if (!objectEl || objectEl.tagName !== "OBJECT") return;
   try {
     const doc = objectEl.contentDocument;
     if (!doc) return;
-    for (const [id, w] of Object.entries(GLYPH_FLIP_DEFS)) {
+    for (const [id, w] of Object.entries(_glyphFlipDefs)) {
       const el = doc.getElementById(id);
       if (el) el.setAttribute("transform", `translate(${w}, 0) scale(-1, 1)`);
     }
@@ -60,11 +89,11 @@ function applyGlyphFlipCompensation(objectEl) {
 }
 
 function removeGlyphFlipCompensation(objectEl) {
-  if (!objectEl) return;
+  if (!objectEl || objectEl.tagName !== "OBJECT") return;
   try {
     const doc = objectEl.contentDocument;
     if (!doc) return;
-    for (const id of Object.keys(GLYPH_FLIP_DEFS)) {
+    for (const id of Object.keys(_glyphFlipDefs)) {
       const el = doc.getElementById(id);
       if (el) el.removeAttribute("transform");
     }
@@ -73,20 +102,39 @@ function removeGlyphFlipCompensation(objectEl) {
 
 function getObjectSvgName(objectEl) {
   if (!objectEl) return null;
-  const data = objectEl.getAttribute("data") || objectEl.data || "";
+  const data = (objectEl.tagName === "OBJECT")
+    ? (objectEl.getAttribute("data") || objectEl.data || "")
+    : (objectEl.getAttribute("src") || objectEl.src || "");
   if (!data) return null;
   const clean = data.split(/[?#]/)[0];
   const parts = clean.split("/");
   return parts[parts.length - 1] || null;
 }
 
-const SVG_IDLE_FOLLOW = (tc.idleFollowSvg) || "clawd-idle-follow.svg";
+// ── Dual-channel rendering ──
+// Object channel: <object type="image/svg+xml"> for SVG states needing eye tracking
+// Img channel: <img> for all other formats (SVG/GIF/APNG/WebP pure playback)
 
-function shouldTrackEyes(state, svg) {
-  // Check if the state needs eye tracking (based on theme eyeTracking.states)
-  if (!_eyeTrackingStates.includes(state)) return false;
-  // Only track if the file is SVG (needed for contentDocument access)
-  return svg && svg.endsWith(".svg");
+/**
+ * Determine if a state+file needs the <object> channel (eye tracking).
+ */
+function needsObjectChannel(state, file) {
+  if (!file) return false;
+  if (!file.endsWith(".svg")) return false;
+  return _eyeTrackingStates.includes(state);
+}
+
+/**
+ * Get the full asset URL for a file.
+ * SVGs use _assetsPath (which may point to cache for external themes).
+ * Non-SVGs use _sourceAssetsPath if available (direct from theme dir).
+ */
+function getAssetUrl(file) {
+  if (!file) return "";
+  if (file.endsWith(".svg") || !_sourceAssetsPath) {
+    return `${_assetsPath}/${file}`;
+  }
+  return `${_sourceAssetsPath}/${file}`;
 }
 
 // --- IPC-triggered reactions (from hit window via main relay) ---
@@ -99,38 +147,8 @@ function playReaction(svgFile, durationMs) {
   detachEyeTracking();
   window.electronAPI.pauseCursorPolling();
 
-  // Reuse existing swap pattern
-  if (pendingNext) {
-    releaseObject(pendingNext);
-    pendingNext = null;
-  }
-
-  const next = document.createElement("object");
-  next.type = "image/svg+xml";
-  next.id = "clawd";
-  next.style.opacity = "0";
-
-  const swap = () => {
-    if (pendingNext !== next) return;
-    next.style.transition = "none";
-    next.style.opacity = "1";
-    for (const child of [...container.querySelectorAll("object")]) {
-      if (child !== next) releaseObject(child);
-    }
-    pendingNext = null;
-    clawdEl = next;
-    currentDisplayedSvg = svgFile;
-  };
-
-  next.addEventListener("load", swap, { once: true });
-  next.data = `${_assetsPath}/${svgFile}`;
-  container.appendChild(next);
-  pendingNext = next;
-  setTimeout(() => {
-    if (pendingNext !== next) return;
-    try { if (!next.contentDocument) { releaseObject(next); pendingNext = null; return; } } catch {}
-    swap();
-  }, 3000);
+  // Reactions always use <img> channel (no eye tracking needed)
+  swapToFile(svgFile, null, false);
 
   reactTimer = setTimeout(() => endReaction(), durationMs);
 }
@@ -143,7 +161,6 @@ function endReaction() {
 }
 
 function cancelReaction() {
-  // Click timers are now in hit-renderer.js — only clear local reaction state
   if (isReacting) {
     if (reactTimer) { clearTimeout(reactTimer); reactTimer = null; }
     isReacting = false;
@@ -153,40 +170,11 @@ function cancelReaction() {
   }
 }
 
-// --- Drag reaction (loops while dragging, idle-follow only) ---
-function swapToSvg(svgFile) {
-  if (pendingNext) { releaseObject(pendingNext); pendingNext = null; }
-  const next = document.createElement("object");
-  next.type = "image/svg+xml";
-  next.id = "clawd";
-  next.style.opacity = "0";
-  const swap = () => {
-    if (pendingNext !== next) return;
-    next.style.transition = "none";
-    next.style.opacity = "1";
-    for (const child of [...container.querySelectorAll("object")]) {
-      if (child !== next) releaseObject(child);
-    }
-    pendingNext = null;
-    clawdEl = next;
-    currentDisplayedSvg = svgFile;
-  };
-  next.addEventListener("load", swap, { once: true });
-  next.data = `${_assetsPath}/${svgFile}`;
-  container.appendChild(next);
-  pendingNext = next;
-  setTimeout(() => {
-    if (pendingNext !== next) return;
-    try { if (!next.contentDocument) { releaseObject(next); pendingNext = null; return; } } catch {}
-    swap();
-  }, 3000);
-}
-
+// --- Drag reaction (loops while dragging) ---
 function startDragReaction() {
   if (isDragReacting) return;
-  if (dndEnabled) return;  // DND: just move the window, no reaction animation
+  if (dndEnabled) return;
 
-  // Drag interrupts click reaction if active
   if (isReacting) {
     if (reactTimer) { clearTimeout(reactTimer); reactTimer = null; }
     isReacting = false;
@@ -195,7 +183,7 @@ function startDragReaction() {
   isDragReacting = true;
   detachEyeTracking();
   window.electronAPI.pauseCursorPolling();
-  swapToSvg(REACT_DRAG_SVG);
+  swapToFile(_dragSvg, null, false);
 }
 
 function endDragReaction() {
@@ -204,24 +192,114 @@ function endDragReaction() {
   window.electronAPI.resumeFromReaction();
 }
 
-// --- State change → switch SVG animation (preload + instant swap) ---
+// --- Generic swap function: handles both <object> and <img> channels ---
 let clawdEl = document.getElementById("clawd");
 let pendingNext = null;
 let currentDisplayedSvg = getObjectSvgName(clawdEl);
 currentIdleSvg = currentDisplayedSvg;
 
+/**
+ * Swap to a new animation file.
+ * @param {string} file - animation filename
+ * @param {string|null} state - current state name (for eye tracking decision)
+ * @param {boolean} [useObjectChannel] - force object channel (true), img (false), or auto (undefined)
+ */
+function swapToFile(file, state, useObjectChannel) {
+  if (pendingNext) {
+    if (pendingNext.tagName === "OBJECT") releaseObject(pendingNext);
+    else releaseImg(pendingNext);
+    pendingNext = null;
+  }
+
+  const useObj = useObjectChannel !== undefined ? useObjectChannel : needsObjectChannel(state, file);
+  const url = getAssetUrl(file);
+
+  if (useObj) {
+    // Object channel: <object type="image/svg+xml">
+    const next = document.createElement("object");
+    next.type = "image/svg+xml";
+    next.id = "clawd";
+    next.style.opacity = "0";
+
+    const swap = () => {
+      if (pendingNext !== next) return;
+      next.style.transition = "none";
+      next.style.opacity = "1";
+      for (const child of [...container.querySelectorAll("object, img.clawd-img")]) {
+        if (child !== next) {
+          if (child.tagName === "OBJECT") releaseObject(child);
+          else releaseImg(child);
+        }
+      }
+      pendingNext = null;
+      clawdEl = next;
+      currentDisplayedSvg = file;
+
+      if (state && needsObjectChannel(state, file)) {
+        attachEyeTracking(next);
+      }
+      if (miniLeftFlip) applyGlyphFlipCompensation(next);
+    };
+
+    next.addEventListener("load", swap, { once: true });
+    next.data = url;
+    container.appendChild(next);
+    pendingNext = next;
+    setTimeout(() => {
+      if (pendingNext !== next) return;
+      try { if (!next.contentDocument) { releaseObject(next); pendingNext = null; return; } } catch {}
+      swap();
+    }, 3000);
+  } else {
+    // Img channel: <img> for pure playback (all formats)
+    const next = document.createElement("img");
+    next.className = "clawd-img";
+    next.id = "clawd";
+    next.style.opacity = "0";
+
+    const swap = () => {
+      if (pendingNext !== next) return;
+      next.style.transition = "none";
+      next.style.opacity = "1";
+      for (const child of [...container.querySelectorAll("object, img.clawd-img")]) {
+        if (child !== next) {
+          if (child.tagName === "OBJECT") releaseObject(child);
+          else releaseImg(child);
+        }
+      }
+      pendingNext = null;
+      clawdEl = next;
+      currentDisplayedSvg = file;
+    };
+
+    next.addEventListener("load", swap, { once: true });
+    next.src = url;
+    container.appendChild(next);
+    pendingNext = next;
+    // Timeout fallback for images that fail to load
+    setTimeout(() => {
+      if (pendingNext !== next) return;
+      swap();
+    }, 3000);
+  }
+}
+
+// --- State change → switch animation (preload + instant swap) ---
 window.electronAPI.onStateChange((state, svg) => {
   // Main process state change → cancel any active click reaction
   cancelReaction();
 
   if (pendingNext) {
-    releaseObject(pendingNext);
+    if (pendingNext.tagName === "OBJECT") releaseObject(pendingNext);
+    else releaseImg(pendingNext);
     pendingNext = null;
   }
+
+  // Same file already displayed — just update eye tracking state
   if (clawdEl && clawdEl.isConnected && currentDisplayedSvg === svg) {
-    if (shouldTrackEyes(state, svg) && !eyeTarget) {
-      attachEyeTracking(clawdEl);
-    } else if (!shouldTrackEyes(state, svg)) {
+    if (needsObjectChannel(state, svg) && !eyeTarget) {
+      if (clawdEl.tagName === "OBJECT") attachEyeTracking(clawdEl);
+    } else if (!needsObjectChannel(state, svg)) {
       detachEyeTracking();
     }
     currentIdleSvg = svg;
@@ -229,40 +307,8 @@ window.electronAPI.onStateChange((state, svg) => {
   }
   detachEyeTracking();
 
-  const next = document.createElement("object");
-  next.type = "image/svg+xml";
-  next.id = "clawd";
-  next.style.opacity = "0";
-
-  const swap = () => {
-    if (pendingNext !== next) return;
-    next.style.transition = "none";
-    next.style.opacity = "1";
-    for (const child of [...container.querySelectorAll("object")]) {
-      if (child !== next) releaseObject(child);
-    }
-    pendingNext = null;
-    clawdEl = next;
-    currentDisplayedSvg = svg;
-
-    if (shouldTrackEyes(state, svg)) {
-      attachEyeTracking(next);
-    }
-    if (miniLeftFlip) applyGlyphFlipCompensation(next);
-
-    // Track current SVG for click reaction gating
-    currentIdleSvg = svg;
-  };
-
-  next.addEventListener("load", swap, { once: true });
-  next.data = `${_assetsPath}/${svg}`;
-  container.appendChild(next);
-  pendingNext = next;
-  setTimeout(() => {
-    if (pendingNext !== next) return;
-    try { if (!next.contentDocument) { releaseObject(next); pendingNext = null; return; } } catch {}
-    swap();
-  }, 3000);
+  swapToFile(svg, state);
+  currentIdleSvg = svg;
 });
 
 // --- Eye tracking (idle state only) ---
@@ -282,7 +328,6 @@ function applyEyeMove(dx, dy) {
     const bdy = Math.round(dy * _bodyScale * 2) / 2;
     if (bodyTarget) bodyTarget.style.transform = `translate(${bdx}px, ${bdy}px)`;
     if (shadowTarget) {
-      // Shadow stretches toward lean direction (feet stay anchored)
       const absDx = Math.abs(bdx);
       const scaleX = 1 + absDx * _shadowStretch;
       const shiftX = Math.round(bdx * _shadowShift * 2) / 2;
@@ -292,6 +337,7 @@ function applyEyeMove(dx, dy) {
 }
 
 function attachEyeTracking(objectEl) {
+  if (!objectEl || objectEl.tagName !== "OBJECT") return;
   const token = ++eyeAttachToken;
   eyeTarget = null;
   bodyTarget = null;
@@ -320,7 +366,6 @@ function attachEyeTracking(objectEl) {
       console.warn("Timed out waiting for SVG eye targets");
       return;
     }
-    // setTimeout fallback — rAF may be throttled in unfocused windows
     setTimeout(() => tryAttach(attempt + 1), 16);
   };
 
@@ -343,7 +388,7 @@ window.electronAPI.onEyeMove((dx, dy) => {
     eyeTarget = null;
     bodyTarget = null;
     shadowTarget = null;
-    if (clawdEl && clawdEl.isConnected) attachEyeTracking(clawdEl);
+    if (clawdEl && clawdEl.isConnected && clawdEl.tagName === "OBJECT") attachEyeTracking(clawdEl);
     return;
   }
   applyEyeMove(effectiveDx, dy);
@@ -363,7 +408,7 @@ window.electronAPI.onPlaySound((name) => {
 
 // --- Wake from doze (smooth eye opening) ---
 window.electronAPI.onWakeFromDoze(() => {
-  if (clawdEl && clawdEl.contentDocument) {
+  if (clawdEl && clawdEl.tagName === "OBJECT" && clawdEl.contentDocument) {
     try {
       const eyes = clawdEl.contentDocument.getElementById(_eyeIds.dozeEyes || "eyes-doze");
       if (eyes) eyes.style.transform = "scaleY(1)";
@@ -371,3 +416,18 @@ window.electronAPI.onWakeFromDoze(() => {
   }
 });
 
+// --- Initial frame: set data from theme config (avoids hardcoded path in HTML) ---
+if (clawdEl && clawdEl.tagName === "OBJECT" && !clawdEl.data) {
+  const initialSvg = _idleFollowSvg;
+  const url = getAssetUrl(initialSvg);
+  clawdEl.data = url;
+  currentDisplayedSvg = initialSvg;
+  currentIdleSvg = initialSvg;
+  // Attach eye tracking once loaded
+  clawdEl.addEventListener("load", () => {
+    if (clawdEl && clawdEl.isConnected) {
+      attachEyeTracking(clawdEl);
+      if (miniLeftFlip) applyGlyphFlipCompensation(clawdEl);
+    }
+  }, { once: true });
+}
