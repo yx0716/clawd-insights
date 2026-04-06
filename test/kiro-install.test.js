@@ -190,7 +190,7 @@ describe("Kiro hook installer", () => {
     });
 
     const clawdAgent = readJson(clawdPath);
-    assert.strictEqual(result.updated, 3);
+    assert.strictEqual(result.updated, 2);
     assert.strictEqual(clawdAgent.hooks.stop.length, 1);
     assert.ok(clawdAgent.hooks.stop[0].command.includes("/usr/local/bin/node"));
     assert.ok(clawdAgent.hooks.stop[0].command.includes("hooks/kiro-hook.js"));

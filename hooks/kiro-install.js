@@ -183,15 +183,6 @@ function generateClawdTemplateFromBuiltin(options = {}) {
   return { template: null, error: lastError };
 }
 
-function seedClawdAgentFromBuiltin(filePath, options = {}) {
-  const result = generateClawdTemplateFromBuiltin(options);
-  if (!result.template) {
-    return { seeded: false, error: result.error };
-  }
-  writeJsonAtomic(filePath, result.template);
-  return { seeded: true, command: result.command };
-}
-
 function syncClawdAgentFromBuiltin(filePath, options = {}) {
   const result = generateClawdTemplateFromBuiltin(options);
   if (!result.template) {
@@ -217,22 +208,6 @@ function syncClawdAgentFromBuiltin(filePath, options = {}) {
   }
 
   return { synced: true, changed: false, command: result.command };
-}
-
-function shouldReseedLegacyClawdAgent(filePath) {
-  try {
-    const settings = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    return settings
-      && settings.name === CLAWD_AGENT_NAME
-      && settings.description === "Clawd desktop pet hook integration"
-      && settings.hooks
-      && !Object.prototype.hasOwnProperty.call(settings, "prompt")
-      && !Object.prototype.hasOwnProperty.call(settings, "tools")
-      && !Object.prototype.hasOwnProperty.call(settings, "resources")
-      && !Object.prototype.hasOwnProperty.call(settings, "model");
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -348,9 +323,7 @@ module.exports = {
     generateClawdTemplateFromBuiltin,
     getKiroCliCandidates,
     injectHooksIntoFile,
-    seedClawdAgentFromBuiltin,
     syncClawdAgentFromBuiltin,
-    shouldReseedLegacyClawdAgent,
   },
 };
 
