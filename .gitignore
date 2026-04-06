@@ -26,6 +26,8 @@ docs/
 
 # WIP artwork (unpublished, All Rights Reserved)
 tools/calico-*
+!tools/calico-final.svg
+!tools/calico-test.html
 
 # Debug logs
 logs/
