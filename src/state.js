@@ -1,10 +1,14 @@
 // src/state.js — State machine + session management + DND + wake poll
 // Extracted from main.js L158-240, L299-505, L544-960
 
-const { screen } = require("electron");
+let screen;
+try { ({ screen } = require("electron")); } catch { screen = null; }
 const path = require("path");
 
 module.exports = function initState(ctx) {
+
+const _getCursor = ctx.getCursorScreenPoint || (screen ? () => screen.getCursorScreenPoint() : null);
+const _kill = ctx.processKill || process.kill.bind(process);
 
 // ── SVG filename constants ──
 const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
@@ -273,13 +277,13 @@ function applyState(state, svgOverride) {
 
 // ── Wake poll ──
 function startWakePoll() {
-  if (wakePollTimer) return;
-  const cursor = screen.getCursorScreenPoint();
+  if (!_getCursor || wakePollTimer) return;
+  const cursor = _getCursor();
   lastWakeCursorX = cursor.x;
   lastWakeCursorY = cursor.y;
 
   wakePollTimer = setInterval(() => {
-    const cursor = screen.getCursorScreenPoint();
+    const cursor = _getCursor();
     const moved = cursor.x !== lastWakeCursorX || cursor.y !== lastWakeCursorY;
 
     if (moved) {
@@ -418,7 +422,7 @@ function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain
 }
 
 function isProcessAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
+  try { _kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 }
 
 function cleanStaleSessions() {
