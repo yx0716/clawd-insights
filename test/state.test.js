@@ -2,10 +2,16 @@
 const { describe, it, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert");
 
+// Load default theme for test ctx
+const themeLoader = require("../src/theme-loader");
+themeLoader.init(require("path").join(__dirname, "..", "src"));
+const _defaultTheme = themeLoader.loadTheme("clawd");
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeCtx(overrides = {}) {
   return {
+    theme: _defaultTheme,
     doNotDisturb: false,
     miniTransitioning: false,
     miniMode: false,
@@ -48,7 +54,7 @@ function update(api, o = {}) {
     o.id || "s1", o.state || "working", o.event || "PreToolUse",
     o.sourcePid ?? null, o.cwd || "/tmp", o.editor || null,
     o.pidChain || null, o.agentPid ?? null, o.agentId || "claude-code",
-    o.host || null, o.headless || false, o.displaySvg,
+    o.host || null, o.headless || false, o.displayHint,
   );
 }
 
@@ -57,7 +63,7 @@ function rawSession(state, opts = {}) {
   return {
     state,
     updatedAt: opts.updatedAt ?? Date.now(),
-    displaySvg: opts.displaySvg || null,
+    displayHint: opts.displayHint || null,
     sourcePid: opts.sourcePid || null,
     cwd: opts.cwd || "",
     editor: opts.editor || null,

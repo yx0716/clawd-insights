@@ -1,8 +1,15 @@
 const { describe, it, beforeEach } = require("node:test");
 const assert = require("node:assert");
+const path = require("path");
+
+// Load default theme for test ctx
+const themeLoader = require("../src/theme-loader");
+themeLoader.init(path.join(__dirname, "..", "src"));
+const _defaultTheme = themeLoader.loadTheme("clawd");
 
 function makeCtx() {
   return {
+    theme: _defaultTheme,
     doNotDisturb: false,
     miniTransitioning: false,
     miniMode: false,
@@ -10,6 +17,7 @@ function makeCtx() {
     idlePaused: false,
     forceEyeResend: false,
     mouseStillSince: Date.now(),
+    playSound() {},
     sendToRenderer() {},
     syncHitWin() {},
     sendToHitWin() {},

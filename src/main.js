@@ -70,18 +70,23 @@ function savePrefs() {
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
 let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
 
-// ── CSS <object> sizing (mirrors styles.css #clawd) ──
-const OBJ_SCALE_W = 1.9;   // width: 190%
-const OBJ_SCALE_H = 1.3;   // height: 130%
-const OBJ_OFF_X   = -0.45; // left: -45%
-const OBJ_OFF_Y   = -0.25; // top: -25%
+// ── Theme loader ──
+const themeLoader = require("./theme-loader");
+themeLoader.init(__dirname);
 
+function loadThemeFromPrefs(prefs) {
+  return themeLoader.loadTheme((prefs && prefs.theme) || "clawd");
+}
+let activeTheme = loadThemeFromPrefs(loadPrefs());
+
+// ── CSS <object> sizing (from theme) ──
 function getObjRect(bounds) {
+  const os = activeTheme.objectScale;
   return {
-    x: bounds.x + bounds.width * OBJ_OFF_X,
-    y: bounds.y + bounds.height * OBJ_OFF_Y,
-    w: bounds.width * OBJ_SCALE_W,
-    h: bounds.height * OBJ_SCALE_H,
+    x: bounds.x + bounds.width * os.offsetX,
+    y: bounds.y + bounds.height * os.offsetY,
+    w: bounds.width * os.widthRatio,
+    h: bounds.height * os.heightRatio,
   };
 }
 
@@ -245,6 +250,7 @@ function reapplyMacVisibility() {
 
 // ── State machine — delegated to src/state.js ──
 const _stateCtx = {
+  get theme() { return activeTheme; },
   get win() { return win; },
   get hitWin() { return hitWin; },
   get doNotDisturb() { return doNotDisturb; },
@@ -285,20 +291,22 @@ const STATE_PRIORITY = _state.STATE_PRIORITY;
 // ── Hit-test: SVG bounding box → screen coordinates ──
 function getHitRectScreen(bounds) {
   const obj = getObjRect(bounds);
-  const scale = Math.min(obj.w, obj.h) / 45;
-  const offsetX = obj.x + (obj.w - 45 * scale) / 2;
-  const offsetY = obj.y + (obj.h - 45 * scale) / 2;
+  const vb = activeTheme.viewBox;
+  const scale = Math.min(obj.w, obj.h) / vb.width;
+  const offsetX = obj.x + (obj.w - vb.width * scale) / 2;
+  const offsetY = obj.y + (obj.h - vb.height * scale) / 2;
   const hb = _state.getCurrentHitBox();
   return {
-    left:   offsetX + (hb.x + 15) * scale,
-    top:    offsetY + (hb.y + 25) * scale,
-    right:  offsetX + (hb.x + 15 + hb.w) * scale,
-    bottom: offsetY + (hb.y + 25 + hb.h) * scale,
+    left:   offsetX + (hb.x + -vb.x) * scale,
+    top:    offsetY + (hb.y + -vb.y) * scale,
+    right:  offsetX + (hb.x + -vb.x + hb.w) * scale,
+    bottom: offsetY + (hb.y + -vb.y + hb.h) * scale,
   };
 }
 
 // ── Main tick — delegated to src/tick.js ──
 const _tickCtx = {
+  get theme() { return activeTheme; },
   get win() { return win; },
   get currentState() { return _state.getCurrentState(); },
   get currentSvg() { return _state.getCurrentSvg(); },
@@ -545,6 +553,9 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       backgroundThrottling: false,
+      additionalArguments: [
+        "--theme-config=" + JSON.stringify(themeLoader.getRendererConfig()),
+      ],
     },
   });
 
@@ -827,6 +838,7 @@ function clampToScreen(x, y, w, h) {
 
 // ── Mini Mode — initialized here after state module ──
 const _miniCtx = {
+  get theme() { return activeTheme; },
   get win() { return win; },
   get currentSize() { return currentSize; },
   get doNotDisturb() { return doNotDisturb; },

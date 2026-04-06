@@ -6,11 +6,13 @@ const area = document.getElementById("hit-area");
 
 // --- State synced from main ---
 let currentSvg = null;
+let currentState = null;
 let miniMode = false;
 let dndEnabled = false;
 
 window.hitAPI.onStateSync((data) => {
   if (data.currentSvg !== undefined) currentSvg = data.currentSvg;
+  if (data.currentState !== undefined) currentState = data.currentState;
   if (data.miniMode !== undefined) {
     miniMode = data.miniMode;
     area.style.cursor = miniMode ? "default" : "";
@@ -139,7 +141,7 @@ function handleClick(clientX) {
   if (isReacting || isDragReacting) return;
 
   // Non-idle: focus terminal, no reaction
-  if (currentSvg !== "clawd-idle-follow.svg" && currentSvg !== "clawd-idle-living.svg") {
+  if (currentState !== "idle") {
     window.hitAPI.focusTerminal();
     return;
   }

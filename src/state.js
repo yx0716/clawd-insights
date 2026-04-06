@@ -10,64 +10,23 @@ module.exports = function initState(ctx) {
 const _getCursor = ctx.getCursorScreenPoint || (screen ? () => screen.getCursorScreenPoint() : null);
 const _kill = ctx.processKill || process.kill.bind(process);
 
-// ── SVG filename constants ──
-const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
-const SVG_IDLE_LOOK = "clawd-idle-look.svg";
-const SVG_IDLE_LIVING = "clawd-idle-living.svg";
+// ── Theme-driven constants (from ctx.theme, populated by theme-loader) ──
+const theme = ctx.theme;
 
-// ── State → SVG mapping ──
-const STATE_SVGS = {
-  idle: [SVG_IDLE_FOLLOW, "clawd-working-debugger.svg", "clawd-idle-reading.svg"],
-  yawning: ["clawd-idle-yawn.svg"],
-  dozing: ["clawd-idle-doze.svg"],
-  collapsing: ["clawd-collapse-sleep.svg"],
-  thinking: ["clawd-working-thinking.svg"],
-  working: ["clawd-working-typing.svg"],
-  juggling: ["clawd-working-juggling.svg"],
-  sweeping: ["clawd-working-sweeping.svg"],
-  error: ["clawd-error.svg"],
-  attention: ["clawd-happy.svg"],
-  notification: ["clawd-notification.svg"],
-  carrying: ["clawd-working-carrying.svg"],
-  sleeping: ["clawd-sleeping.svg"],
-  waking: ["clawd-wake.svg"],
-};
+const SVG_IDLE_FOLLOW = theme.states.idle[0];
 
-// Mini mode SVG mappings
-STATE_SVGS["mini-idle"]  = ["clawd-mini-idle.svg"];
-STATE_SVGS["mini-alert"] = ["clawd-mini-alert.svg"];
-STATE_SVGS["mini-happy"] = ["clawd-mini-happy.svg"];
-STATE_SVGS["mini-enter"] = ["clawd-mini-enter.svg"];
-STATE_SVGS["mini-peek"]  = ["clawd-mini-peek.svg"];
-STATE_SVGS["mini-crabwalk"] = ["clawd-mini-crabwalk.svg"];
-STATE_SVGS["mini-enter-sleep"] = ["clawd-mini-enter-sleep.svg"];
-STATE_SVGS["mini-sleep"] = ["clawd-mini-sleep.svg"];
+// ── State → SVG mapping (merged from theme.states + theme.miniMode.states) ──
+const STATE_SVGS = { ...theme.states };
+if (theme.miniMode && theme.miniMode.states) {
+  Object.assign(STATE_SVGS, theme.miniMode.states);
+}
 
-const MIN_DISPLAY_MS = {
-  attention: 4000,
-  error: 5000,
-  sweeping: 5500,
-  notification: 2500,
-  carrying: 3000,
-  working: 1000,
-  thinking: 1000,
-  "mini-alert": 4000,
-  "mini-happy": 4000,
-};
+const MIN_DISPLAY_MS = theme.timings.minDisplay;
+const AUTO_RETURN_MS = theme.timings.autoReturn;
 
-const AUTO_RETURN_MS = {
-  attention: 4000,
-  error: 5000,
-  sweeping: 300000,
-  notification: 2500,
-  carrying: 3000,
-  "mini-alert": 4000,
-  "mini-happy": 4000,
-};
-
-const DEEP_SLEEP_TIMEOUT = 600000;
-const YAWN_DURATION = 3000;
-const WAKE_DURATION = 1500;
+const DEEP_SLEEP_TIMEOUT = theme.timings.deepSleepTimeout;
+const YAWN_DURATION = theme.timings.yawnDuration;
+const WAKE_DURATION = theme.timings.wakeDuration;
 const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "waking"]);
 
 const STATE_PRIORITY = {
@@ -77,16 +36,8 @@ const STATE_PRIORITY = {
 
 const ONESHOT_STATES = new Set(["attention", "error", "sweeping", "notification", "carrying"]);
 
-// Session display hints (e.g. Cursor tool_name → svg); basename only, allowlisted
-const DISPLAY_HINT_SVGS = new Set([
-  "clawd-working-typing.svg",
-  "clawd-working-building.svg",
-  "clawd-working-juggling.svg",
-  "clawd-working-conducting.svg",
-  "clawd-idle-reading.svg",
-  "clawd-working-debugger.svg",
-  "clawd-working-thinking.svg",
-]);
+// Session display hints — validated against theme.displayHintMap keys
+const DISPLAY_HINT_MAP = theme.displayHintMap || {};
 
 // ── Session tracking ──
 const sessions = new Map();
@@ -97,13 +48,10 @@ let startupRecoveryActive = false;
 let startupRecoveryTimer = null;
 const STARTUP_RECOVERY_MAX_MS = 300000;
 
-// ── Hit-test bounding boxes ──
-const HIT_BOXES = {
-  default:  { x: -1, y: 5, w: 17, h: 12 },
-  sleeping: { x: -2, y: 9, w: 19, h: 7 },
-  wide:     { x: -3, y: 3, w: 21, h: 14 },
-};
-const WIDE_SVGS = new Set(["clawd-error.svg", "clawd-notification.svg", "clawd-working-conducting.svg"]);
+// ── Hit-test bounding boxes (from theme) ──
+const HIT_BOXES = theme.hitBoxes;
+const WIDE_SVGS = new Set(theme.wideHitboxFiles || []);
+const SLEEPING_SVGS = new Set(theme.sleepingHitboxFiles || []);
 let currentHitBox = HIT_BOXES.default;
 
 // ── State machine internal ──
@@ -220,7 +168,7 @@ function applyState(state, svgOverride) {
   }
 
   // Update hit box based on SVG
-  if (svg === "clawd-sleeping.svg" || svg === "clawd-collapse-sleep.svg") {
+  if (SLEEPING_SVGS.has(svg)) {
     currentHitBox = HIT_BOXES.sleeping;
   } else if (WIDE_SVGS.has(svg)) {
     currentHitBox = HIT_BOXES.wide;
@@ -230,7 +178,7 @@ function applyState(state, svgOverride) {
 
   ctx.sendToRenderer("state-change", state, svg);
   ctx.syncHitWin();
-  ctx.sendToHitWin("hit-state-sync", { currentSvg: svg });
+  ctx.sendToHitWin("hit-state-sync", { currentSvg: svg, currentState: state });
   ctx.sendToHitWin("hit-cancel-reaction");
 
   if (state !== "idle" && state !== "mini-idle") {
@@ -316,20 +264,20 @@ function wakeFromDoze() {
   }, 350);
 }
 
-function pickDisplaySvg(state, existing, incoming) {
+function pickDisplayHint(state, existing, incoming) {
   if (state !== "working" && state !== "thinking" && state !== "juggling") {
     return null;
   }
   if (incoming !== undefined) {
     if (incoming === null || incoming === "") return null;
-    if (DISPLAY_HINT_SVGS.has(incoming)) return incoming;
-    return existing && existing.displaySvg != null ? existing.displaySvg : null;
+    if (DISPLAY_HINT_MAP[incoming] != null) return incoming;
+    return existing && existing.displayHint != null ? existing.displayHint : null;
   }
-  return existing && existing.displaySvg != null ? existing.displaySvg : null;
+  return existing && existing.displayHint != null ? existing.displayHint : null;
 }
 
 // ── Session management ──
-function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain, agentPid, agentId, host, headless, displaySvg) {
+function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain, agentPid, agentId, host, headless, displayHint) {
   if (startupRecoveryActive) {
     startupRecoveryActive = false;
     if (startupRecoveryTimer) { clearTimeout(startupRecoveryTimer); startupRecoveryTimer = null; }
@@ -388,26 +336,26 @@ function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain
     setState(displayState, getSvgOverride(displayState));
     return;
   } else if (state === "attention" || state === "notification" || SLEEP_SEQUENCE.has(state)) {
-    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), displaySvg: null, ...base });
+    sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), displayHint: null, ...base });
   } else if (ONESHOT_STATES.has(state)) {
     if (existing) {
       existing.updatedAt = Date.now();
-      existing.displaySvg = null;
+      existing.displayHint = null;
       if (sourcePid) existing.sourcePid = sourcePid;
       if (cwd) existing.cwd = cwd;
       if (editor) existing.editor = editor;
       if (pidChain && pidChain.length) existing.pidChain = pidChain;
       if (agentPid) existing.agentPid = agentPid;
     } else {
-      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), displaySvg: null, ...base });
+      sessions.set(sessionId, { state: "idle", updatedAt: Date.now(), displayHint: null, ...base });
     }
   } else {
     if (existing && existing.state === "juggling" && state === "working" && event !== "SubagentStop" && event !== "subagentStop") {
       existing.updatedAt = Date.now();
-      existing.displaySvg = pickDisplaySvg("juggling", existing, displaySvg);
+      existing.displayHint = pickDisplayHint("juggling", existing, displayHint);
     } else {
-      const ds = pickDisplaySvg(state, existing, displaySvg);
-      sessions.set(sessionId, { state, updatedAt: Date.now(), displaySvg: ds, ...base });
+      const dh = pickDisplayHint(state, existing, displayHint);
+      sessions.set(sessionId, { state, updatedAt: Date.now(), displayHint: dh, ...base });
     }
   }
   cleanStaleSessions();
@@ -444,7 +392,7 @@ function cleanStaleSessions() {
           if (!s.headless) removedNonHeadless = true;
           sessions.delete(id); changed = true;
         } else if (s.state !== "idle") {
-          s.state = "idle"; s.displaySvg = null; changed = true;
+          s.state = "idle"; s.displayHint = null; changed = true;
         }
       } else if (!s.pidReachable) {
         if (!s.headless) removedNonHeadless = true;
@@ -458,7 +406,7 @@ function cleanStaleSessions() {
         if (!s.headless) removedNonHeadless = true;
         sessions.delete(id); changed = true;
       } else if (s.state === "working" || s.state === "juggling" || s.state === "thinking") {
-        s.state = "idle"; s.displaySvg = null; s.updatedAt = now; changed = true;
+        s.state = "idle"; s.displayHint = null; s.updatedAt = now; changed = true;
       }
     }
   }
@@ -533,12 +481,15 @@ function getActiveWorkingCount() {
 
 function getWorkingSvg() {
   const n = getActiveWorkingCount();
-  if (n >= 3) return "clawd-working-building.svg";
-  if (n >= 2) return "clawd-working-juggling.svg";
-  return "clawd-working-typing.svg";
+  if (theme.workingTiers) {
+    for (const tier of theme.workingTiers) {
+      if (n >= tier.minSessions) return tier.file;
+    }
+  }
+  return STATE_SVGS.working[0];
 }
 
-function getWinningSessionDisplaySvg(targetState) {
+function getWinningSessionDisplayHint(targetState) {
   let best = null;
   let bestAt = -1;
   for (const [, s] of sessions) {
@@ -548,25 +499,26 @@ function getWinningSessionDisplaySvg(targetState) {
       best = s;
     }
   }
-  if (!best || !best.displaySvg) return null;
-  if (!DISPLAY_HINT_SVGS.has(best.displaySvg)) return null;
-  return best.displaySvg;
+  if (!best || !best.displayHint) return null;
+  // Resolve semantic hint token through displayHintMap
+  const resolved = DISPLAY_HINT_MAP[best.displayHint];
+  return resolved || null;
 }
 
 function getSvgOverride(state) {
   if (state === "idle") return SVG_IDLE_FOLLOW;
   if (state === "working") {
-    const hinted = getWinningSessionDisplaySvg("working");
+    const hinted = getWinningSessionDisplayHint("working");
     if (hinted) return hinted;
     return getWorkingSvg();
   }
   if (state === "juggling") {
-    const hinted = getWinningSessionDisplaySvg("juggling");
+    const hinted = getWinningSessionDisplayHint("juggling");
     if (hinted) return hinted;
     return getJugglingSvg();
   }
   if (state === "thinking") {
-    const hinted = getWinningSessionDisplaySvg("thinking");
+    const hinted = getWinningSessionDisplayHint("thinking");
     if (hinted) return hinted;
     return STATE_SVGS.thinking[0];
   }
@@ -578,7 +530,12 @@ function getJugglingSvg() {
   for (const [, s] of sessions) {
     if (!s.headless && s.state === "juggling") n++;
   }
-  return n >= 2 ? "clawd-working-conducting.svg" : "clawd-working-juggling.svg";
+  if (theme.jugglingTiers) {
+    for (const tier of theme.jugglingTiers) {
+      if (n >= tier.minSessions) return tier.file;
+    }
+  }
+  return STATE_SVGS.juggling[0];
 }
 
 // ── Session Dashboard ──

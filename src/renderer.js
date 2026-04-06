@@ -4,6 +4,15 @@
 
 const container = document.getElementById("pet-container");
 
+// ── Theme config (injected via preload.js additionalArguments) ──
+let tc = window.themeConfig || {};
+const _assetsPath = tc.assetsPath || "../assets/svg";
+const _eyeIds = (tc.eyeTracking && tc.eyeTracking.ids) || { eyes: "eyes-js", body: "body-js", shadow: "shadow-js", dozeEyes: "eyes-doze" };
+const _bodyScale = (tc.eyeTracking && tc.eyeTracking.bodyScale) || 0.33;
+const _shadowStretch = (tc.eyeTracking && tc.eyeTracking.shadowStretch) || 0.15;
+const _shadowShift = (tc.eyeTracking && tc.eyeTracking.shadowShift) || 0.3;
+const _eyeTrackingStates = (tc.eyeTrackingStates) || ["idle", "dozing", "mini-idle"];
+
 // Release an <object> SVG element: navigate away to unload the SVG document
 // (stops CSS animations and frees the internal frame), then remove from DOM.
 function releaseObject(el) {
@@ -13,7 +22,7 @@ function releaseObject(el) {
 }
 
 // --- Reaction state (visual side) ---
-const REACT_DRAG_SVG = "clawd-react-drag.svg";
+const REACT_DRAG_SVG = (tc.dragSvg) || "clawd-react-drag.svg";
 let isReacting = false;
 let isDragReacting = false;
 let reactTimer = null;
@@ -36,7 +45,7 @@ window.electronAPI.onMiniModeChange((enabled, edge) => {
 // Counter-flip asymmetric pixel-art glyphs (Zzz) inside SVG defs so they
 // render correctly when the container has scaleX(-1). Only the glyph shape
 // is flipped — CSS animation transforms (float direction) are unaffected.
-const GLYPH_FLIP_DEFS = { "pixel-z": 4, "pixel-z-small": 3 };
+const GLYPH_FLIP_DEFS = (tc.glyphFlips) || { "pixel-z": 4, "pixel-z-small": 3 };
 
 function applyGlyphFlipCompensation(objectEl) {
   if (!objectEl) return;
@@ -71,10 +80,13 @@ function getObjectSvgName(objectEl) {
   return parts[parts.length - 1] || null;
 }
 
-const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
+const SVG_IDLE_FOLLOW = (tc.idleFollowSvg) || "clawd-idle-follow.svg";
 
 function shouldTrackEyes(state, svg) {
-  return (state === "idle" && svg === SVG_IDLE_FOLLOW) || state === "mini-idle";
+  // Check if the state needs eye tracking (based on theme eyeTracking.states)
+  if (!_eyeTrackingStates.includes(state)) return false;
+  // Only track if the file is SVG (needed for contentDocument access)
+  return svg && svg.endsWith(".svg");
 }
 
 // --- IPC-triggered reactions (from hit window via main relay) ---
@@ -111,7 +123,7 @@ function playReaction(svgFile, durationMs) {
   };
 
   next.addEventListener("load", swap, { once: true });
-  next.data = `../assets/svg/${svgFile}`;
+  next.data = `${_assetsPath}/${svgFile}`;
   container.appendChild(next);
   pendingNext = next;
   setTimeout(() => {
@@ -160,7 +172,7 @@ function swapToSvg(svgFile) {
     currentDisplayedSvg = svgFile;
   };
   next.addEventListener("load", swap, { once: true });
-  next.data = `../assets/svg/${svgFile}`;
+  next.data = `${_assetsPath}/${svgFile}`;
   container.appendChild(next);
   pendingNext = next;
   setTimeout(() => {
@@ -243,7 +255,7 @@ window.electronAPI.onStateChange((state, svg) => {
   };
 
   next.addEventListener("load", swap, { once: true });
-  next.data = `../assets/svg/${svg}`;
+  next.data = `${_assetsPath}/${svg}`;
   container.appendChild(next);
   pendingNext = next;
   setTimeout(() => {
@@ -266,14 +278,14 @@ function applyEyeMove(dx, dy) {
     eyeTarget.style.transform = `translate(${dx}px, ${dy}px)`;
   }
   if (bodyTarget || shadowTarget) {
-    const bdx = Math.round(dx * 0.33 * 2) / 2;
-    const bdy = Math.round(dy * 0.33 * 2) / 2;
+    const bdx = Math.round(dx * _bodyScale * 2) / 2;
+    const bdy = Math.round(dy * _bodyScale * 2) / 2;
     if (bodyTarget) bodyTarget.style.transform = `translate(${bdx}px, ${bdy}px)`;
     if (shadowTarget) {
       // Shadow stretches toward lean direction (feet stay anchored)
       const absDx = Math.abs(bdx);
-      const scaleX = 1 + absDx * 0.15;
-      const shiftX = Math.round(bdx * 0.3 * 2) / 2;
+      const scaleX = 1 + absDx * _shadowStretch;
+      const shiftX = Math.round(bdx * _shadowShift * 2) / 2;
       shadowTarget.style.transform = `translate(${shiftX}px, 0) scaleX(${scaleX})`;
     }
   }
@@ -291,11 +303,11 @@ function attachEyeTracking(objectEl) {
 
     try {
       const svgDoc = objectEl.contentDocument;
-      const eyes = svgDoc && svgDoc.getElementById("eyes-js");
+      const eyes = svgDoc && svgDoc.getElementById(_eyeIds.eyes);
       if (eyes) {
         eyeTarget = eyes;
-        bodyTarget = svgDoc.getElementById("body-js");
-        shadowTarget = svgDoc.getElementById("shadow-js");
+        bodyTarget = svgDoc.getElementById(_eyeIds.body);
+        shadowTarget = svgDoc.getElementById(_eyeIds.shadow);
         applyEyeMove(lastEyeDx, lastEyeDy);
         return;
       }
@@ -353,7 +365,7 @@ window.electronAPI.onPlaySound((name) => {
 window.electronAPI.onWakeFromDoze(() => {
   if (clawdEl && clawdEl.contentDocument) {
     try {
-      const eyes = clawdEl.contentDocument.getElementById("eyes-doze");
+      const eyes = clawdEl.contentDocument.getElementById(_eyeIds.dozeEyes || "eyes-doze");
       if (eyes) eyes.style.transform = "scaleY(1)";
     } catch (e) {}
   }

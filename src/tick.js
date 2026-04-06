@@ -17,17 +17,12 @@ let idleWasActive = false;
 let lastEyeDx = 0, lastEyeDy = 0;
 let mainTickTimer = null;
 
-const MOUSE_IDLE_TIMEOUT = 20000;   // 20s → idle-look
-const MOUSE_SLEEP_TIMEOUT = 60000;  // 60s → yawning → dozing
-const SVG_IDLE_FOLLOW = "clawd-idle-follow.svg";
-const SVG_IDLE_LOOK = "clawd-idle-look.svg";
-
-// Random idle animations: picked when mouse is still for 20s
-const IDLE_ANIMS = [
-  { svg: SVG_IDLE_LOOK, duration: 6500 },
-  { svg: "clawd-working-debugger.svg", duration: 14000 },
-  { svg: "clawd-idle-reading.svg", duration: 14000 },
-];
+// ── Theme-driven constants ──
+const theme = ctx.theme;
+const MOUSE_IDLE_TIMEOUT = theme.timings.mouseIdleTimeout;
+const MOUSE_SLEEP_TIMEOUT = theme.timings.mouseSleepTimeout;
+const SVG_IDLE_FOLLOW = theme.states.idle[0];
+const IDLE_ANIMS = (theme.idleAnimations || []).map(a => ({ svg: a.file, duration: a.duration }));
 
 // ── Unified main tick (cursor polling for eye tracking + sleep + mini peek) ──
 // Input routing is handled by hitWin — no setIgnoreMouseEvents toggling here.
@@ -178,13 +173,13 @@ function startMainTick() {
     ctx.forceEyeResend = false;
 
     const obj = ctx.getObjRect(bounds);
-    const eyeScreenX = obj.x + obj.w * (22 / 45);
-    const eyeScreenY = obj.y + obj.h * (34 / 45);
+    const eyeScreenX = obj.x + obj.w * theme.eyeTracking.eyeRatioX;
+    const eyeScreenY = obj.y + obj.h * theme.eyeTracking.eyeRatioY;
 
     const relX = cursor.x - eyeScreenX;
     const relY = cursor.y - eyeScreenY;
 
-    const MAX_OFFSET = 3;
+    const MAX_OFFSET = theme.eyeTracking.maxOffset;
     const dist = Math.sqrt(relX * relX + relY * relY);
     let eyeDx = 0, eyeDy = 0;
     if (dist > 1) {

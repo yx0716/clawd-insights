@@ -5,7 +5,7 @@ const { screen } = require("electron");
 
 module.exports = function initMini(ctx) {
 
-const MINI_OFFSET_RATIO = 0.486;
+const MINI_OFFSET_RATIO = ctx.theme.miniMode.offsetRatio;
 const PEEK_OFFSET = 25;
 const SNAP_TOLERANCE = 30;
 const JUMP_PEAK_HEIGHT = 40;
