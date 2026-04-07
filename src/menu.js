@@ -535,15 +535,14 @@ module.exports = function initMenu(ctx) {
 <input id="v" type="number" min="1" max="75" step="1" value="${defaultVal}" autofocus>
 <div class="hint">1% ≈ tiny &nbsp; 15% ≈ large &nbsp; 75% = max</div>
 <div class="buttons">
-  <button onclick="close()">Cancel</button>
+  <button onclick="window.close()">Cancel</button>
   <button class="primary" onclick="ok()">OK</button>
 </div>
 <script>
-  const {ipcRenderer} = require("electron");
   const inp = document.getElementById("v");
   inp.select();
-  inp.addEventListener("keydown", e => { if (e.key === "Enter") ok(); if (e.key === "Escape") close(); });
-  function ok() { const n = parseFloat(inp.value); if (n >= 1 && n <= 75) ipcRenderer.send("proportional-custom", n); window.close(); }
+  inp.addEventListener("keydown", e => { if (e.key === "Enter") ok(); if (e.key === "Escape") window.close(); });
+  function ok() { const n = parseFloat(inp.value); if (n >= 1 && n <= 75) window.promptAPI.submit(n); window.close(); }
 </script></body></html>`;
 
     const promptWin = new BrowserWindow({
@@ -552,7 +551,11 @@ module.exports = function initMenu(ctx) {
       alwaysOnTop: true, skipTaskbar: true,
       frame: false, transparent: false,
       show: false,
-      webPreferences: { nodeIntegration: true, contextIsolation: false },
+      webPreferences: {
+        preload: path.join(__dirname, "preload-prompt.js"),
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
     });
     promptWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
     promptWin.once("ready-to-show", () => promptWin.show());
