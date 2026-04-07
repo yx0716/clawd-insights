@@ -68,6 +68,121 @@ module.exports = function initAnalyticsScan(ctx) {
     return candidates.some(value => HIDDEN_PROJECT_TOKENS.has(normalizeProjectToken(value)));
   }
 
+  // Peel leading pasted data blocks (JSON objects/arrays, fenced code blocks).
+  // Users often paste JSON dumps / logs / code AS CONTEXT and put their real
+  // question AFTER. Users also frequently paste truncated/malformed JSON
+  // (missing outer closers), so we can't rely on strict brace matching.
+  //
+  // Heuristic: if the text starts with code-like syntax, find the LAST
+  // structural closer (`}`, `]`, or closing fence) and return the prose
+  // that follows. Only apply if the remainder looks like natural language
+  // (contains CJK or Latin letters and is substantial).
+  function peelPastedData(text) {
+    if (!text) return text;
+    text = text.trim();
+    const first = text[0];
+    const looksCodeLike = first === "{" || first === "[" || text.startsWith("```");
+    if (!looksCodeLike) return text;
+
+    // Strategy 1: if there's a fenced code block, take what's after its close
+    if (text.startsWith("```")) {
+      const fenceClose = text.indexOf("```", 3);
+      if (fenceClose >= 0) {
+        const after = text.slice(fenceClose + 3).trim();
+        if (after.length >= 3 && /[\p{L}\u4e00-\u9fff]/u.test(after)) {
+          // Recurse in case there are more blocks
+          return peelPastedData(after);
+        }
+      }
+      return text;
+    }
+
+    // Strategy 2: find the LAST `}` or `]` and take text after it
+    let lastClose = -1;
+    for (let i = text.length - 1; i >= 0; i--) {
+      const c = text[i];
+      if (c === "}" || c === "]") { lastClose = i; break; }
+    }
+    if (lastClose >= 0 && lastClose < text.length - 1) {
+      const after = text.slice(lastClose + 1).trim();
+      // Require 3+ chars with at least one letter/CJK to avoid trailing punctuation noise
+      if (after.length >= 3 && /[\p{L}\u4e00-\u9fff]/u.test(after)) {
+        return after;
+      }
+    }
+    return text;
+  }
+
+  // Strip/filter noise from first user message (slash commands, system reminders, continuation, etc.)
+  function extractMeaningfulText(raw) {
+    if (!raw) return null;
+    let text = String(raw).trim();
+    if (!text) return null;
+    // Skip slash-command caveat wrapper
+    if (text.startsWith("Caveat: The messages below")) return null;
+    // Skip conversation continuation header
+    if (text.startsWith("This session is being continued from a previous conversation")) return null;
+    // Skip pure command invocations (starts directly with a command tag)
+    if (/^<(command-name|local-command-name|command-message|command-args|command-stdout|command-stderr|local-command-stdout|local-command-stderr)/.test(text)) return null;
+    // Skip pure system-reminder messages
+    if (text.startsWith("<system-reminder>") || text.startsWith("<system-")) return null;
+    // Strip embedded system-reminder / command tags and their content
+    text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, " ");
+    text = text.replace(/<(command-name|local-command-name|command-message|command-args|command-stdout|command-stderr|local-command-stdout|local-command-stderr)[^>]*>[\s\S]*?<\/[^>]+>/gi, " ");
+    // Peel pasted JSON/code blocks to find the user's actual prose
+    const peeled = peelPastedData(text);
+    if (peeled && peeled.length >= 3) text = peeled;
+    text = text.replace(/\s+/g, " ").trim();
+    if (text.length < 3) return null;
+    return text;
+  }
+
+  const FIRST_MSG_MAX = 200;
+  const DETAIL_MSG_MAX = 400; // per-message cap when building AI analysis prompt
+
+  // Detect Claude Code system-injected "fake user" messages that aren't from the
+  // real user (skill bootstraps, command output echoes, etc.)
+  function isSystemInjectedUserText(text) {
+    if (!text) return true;
+    const t = text.trim();
+    // Skill bootstrap: "Base directory for this skill: /path/..."
+    if (/^Base directory for this skill:/i.test(t)) return true;
+    // Third-person system narration: "The user just ran /xxx ..."
+    if (/^The user just ran \//.test(t)) return true;
+    // Plain /exit or /clear stdout passthrough
+    if (/^<local-command-stdout>/.test(t)) return true;
+    return false;
+  }
+
+  // Extract @file.ext references from a user message so we can preserve them
+  // even if the body gets truncated.
+  function extractFileRefs(text) {
+    if (!text) return [];
+    const refs = [];
+    const re = /@([A-Za-z0-9_./\\-]+\.[A-Za-z0-9]+)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (!refs.includes(m[1])) refs.push(m[1]);
+      if (refs.length >= 5) break;
+    }
+    return refs;
+  }
+
+  // Clean a user message for AI analysis: strip noise, peel pasted data,
+  // preserve file refs, then cap length.
+  function cleanUserMessageForAnalysis(raw) {
+    const meaningful = extractMeaningfulText(raw);
+    if (!meaningful) return null;
+    if (isSystemInjectedUserText(meaningful)) return null;
+    const refs = extractFileRefs(String(raw || ""));
+    let body = meaningful;
+    if (body.length > DETAIL_MSG_MAX) body = body.slice(0, DETAIL_MSG_MAX) + "…";
+    // Append file refs that got truncated out so the AI still sees them
+    const missing = refs.filter(r => !body.includes(r));
+    if (missing.length) body += ` [refs: ${missing.join(", ")}]`;
+    return body;
+  }
+
   const GAP_THRESHOLD = 30 * 60 * 1000; // 30 minutes — split blocks at this gap
 
   function splitIntoBlocks(timestamps) {
@@ -140,13 +255,19 @@ module.exports = function initAnalyticsScan(ctx) {
           if (d.type === "user") {
             sess.messages++; sess.turns++;
             if (!sess.firstUserMsg) {
+              if (d.isMeta === true) continue;
+              if (d.toolUseResult !== undefined) continue;
               const msg = d.message || {};
+              if (Array.isArray(msg.content) && msg.content.some(c => c && c.type === "tool_result")) continue;
               let text = "";
               if (typeof msg.content === "string") text = msg.content;
               else if (Array.isArray(msg.content)) {
                 for (const c of msg.content) { if (c && c.type === "text" && c.text) { text = c.text; break; } }
               }
-              if (text) sess.firstUserMsg = text.trim().slice(0, 80);
+              const meaningful = extractMeaningfulText(text);
+              if (meaningful && !isSystemInjectedUserText(meaningful)) {
+                sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
+              }
             }
           }
           if (d.type === "assistant") {
@@ -253,7 +374,10 @@ module.exports = function initAnalyticsScan(ctx) {
                 if (p.role === "user") {
                   sess.messages++; sess.turns++;
                   if (!sess.firstUserMsg && Array.isArray(p.content)) {
-                    for (const c of p.content) { if (c && c.type === "input_text" && c.text) { sess.firstUserMsg = c.text.trim().slice(0, 80); break; } }
+                    let text = "";
+                    for (const c of p.content) { if (c && c.type === "input_text" && c.text) { text = c.text; break; } }
+                    const meaningful = extractMeaningfulText(text);
+                    if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
                   }
                 }
                 if (p.role === "assistant") sess.messages++;
@@ -321,7 +445,8 @@ module.exports = function initAnalyticsScan(ctx) {
                 const msg = rec.message || {};
                 let text = typeof msg.content === "string" ? msg.content : "";
                 if (!text && Array.isArray(msg.content)) { for (const c of msg.content) { if (c && c.type === "text" && c.text) { text = c.text; break; } } }
-                if (text) sess.firstUserMsg = text.trim().slice(0, 80);
+                const meaningful = extractMeaningfulText(text);
+                if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
               }
             }
             if (role === "assistant") {
@@ -482,12 +607,13 @@ module.exports = function initAnalyticsScan(ctx) {
 
     const detail = {
       sessionId, agent,
-      userMessages: [],    // { ts, text (first 200 chars) }
+      userMessages: [],    // { ts, text } — cleaned/peeled for AI analysis
       toolCalls: [],       // { ts, name, inputSnippet }
       timestamps: [],      // all message timestamps
       title: null,
       cwd: null,
     };
+    let agentNameFallback = null;
 
     try {
       const content = fs.readFileSync(filePath, "utf8");
@@ -501,10 +627,16 @@ module.exports = function initAnalyticsScan(ctx) {
           const ts = d.timestamp ? new Date(d.timestamp).getTime() : null;
           if (ts) detail.timestamps.push(ts);
           if (d.type === "custom-title" && d.customTitle) detail.title = d.customTitle;
+          if (d.type === "agent-name" && d.agentName && !agentNameFallback) agentNameFallback = d.agentName;
           if (d.cwd && !detail.cwd) detail.cwd = d.cwd;
 
           if (d.type === "user") {
+            // Skip meta/slash-command entries
+            if (d.isMeta === true) continue;
+            // Skip tool_result responses (not user speech)
+            if (d.toolUseResult !== undefined) continue;
             const msg = d.message || {};
+            if (Array.isArray(msg.content) && msg.content.some(c => c && c.type === "tool_result")) continue;
             let text = "";
             if (typeof msg.content === "string") text = msg.content;
             else if (Array.isArray(msg.content)) {
@@ -512,7 +644,8 @@ module.exports = function initAnalyticsScan(ctx) {
                 if (c && c.type === "text" && c.text) text += c.text + " ";
               }
             }
-            detail.userMessages.push({ ts, text: text.trim().slice(0, 200) });
+            const cleaned = cleanUserMessageForAnalysis(text);
+            if (cleaned) detail.userMessages.push({ ts, text: cleaned });
           }
 
           if (d.type === "assistant") {
@@ -545,7 +678,8 @@ module.exports = function initAnalyticsScan(ctx) {
                   if (c && c.type === "input_text" && c.text) text += c.text + " ";
                 }
               }
-              detail.userMessages.push({ ts, text: text.trim().slice(0, 200) });
+              const cleaned = cleanUserMessageForAnalysis(text);
+              if (cleaned) detail.userMessages.push({ ts, text: cleaned });
             }
             if (p.type === "function_call" && p.name) {
               detail.toolCalls.push({ ts, name: p.name, inputSnippet: (p.arguments || "").slice(0, 100) });
@@ -561,7 +695,8 @@ module.exports = function initAnalyticsScan(ctx) {
                 if (c && c.type === "text" && c.text) text += c.text + " ";
               }
             }
-            detail.userMessages.push({ ts: null, text: text.trim().slice(0, 200) });
+            const cleaned = cleanUserMessageForAnalysis(text);
+            if (cleaned) detail.userMessages.push({ ts: null, text: cleaned });
           }
           if (d.role === "assistant") {
             const msg = d.message || {};
@@ -576,6 +711,9 @@ module.exports = function initAnalyticsScan(ctx) {
         }
       }
     } catch { return null; }
+
+    // Use agent-name as title fallback when no custom-title was set
+    if (!detail.title && agentNameFallback) detail.title = agentNameFallback;
 
     return detail;
   }
