@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawd Insights — Demo</title>
+<style>
+:root{--bg:#FFF8F0;--bg-card:#FFFFFF;--text:#2D3748;--text-secondary:#718096;--text-muted:#A0AEC0;--border:#F0E6D8;--border-light:#FAF0E6;--accent:#E8734A;--accent-light:#FFF0EB;--accent-dark:#C75A35;--shadow:0 1px 3px rgba(0,0,0,.06);--radius:12px;--radius-sm:8px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;padding:20px}
+.container{max-width:920px;margin:0 auto}
+
+/* Header */
+.header-block{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;margin-bottom:16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:24px}
+.header-title{flex:1}
+.header-title .sub{font-size:11px;color:var(--text-muted);letter-spacing:1px}
+.header-title h1{font-size:28px;font-weight:800;line-height:1.2}
+.header-title h1 span{color:var(--accent)}
+.header-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.hstat{background:var(--accent-light);border-radius:var(--radius-sm);padding:8px 14px;min-width:110px}
+.hstat .hl{font-size:9px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.hstat .hv{font-size:15px;font-weight:700;margin-top:1px}
+
+/* Tabs */
+.tabs-row{display:flex;align-items:center;gap:8px;margin-bottom:16px}
+.tabs{display:flex;gap:2px;background:var(--border);border-radius:8px;padding:2px}
+.tab{padding:5px 16px;border-radius:6px;font-size:12px;font-weight:600;color:var(--text-secondary);border:none;background:transparent;cursor:pointer}
+.tab.active{background:var(--bg-card);color:var(--accent);box-shadow:var(--shadow)}
+.tabs-spacer{flex:1}
+.date-label{font-size:11px;color:var(--text-muted)}
+
+/* Timeline */
+.timeline-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:16px;box-shadow:var(--shadow)}
+.range-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.range-row span{font-size:10px;color:var(--text-muted)}
+.range-row select{font-size:11px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--text)}
+.time-axis{display:flex;justify-content:space-between;padding-left:72px;margin-bottom:6px;font-size:9px;color:var(--text-muted)}
+.timeline-day{display:flex;align-items:flex-start;margin-bottom:3px;min-height:30px}
+.day-label{width:64px;flex-shrink:0;padding:2px 6px;text-align:right;line-height:1.3}
+.day-label .wd{font-weight:700;color:var(--text);font-size:13px}
+.day-label .dt{font-size:10px;color:var(--text-secondary)}
+.day-label .lanes{font-size:9px;color:var(--accent)}
+.timeline-tracks{flex:1;position:relative;min-height:22px;background:var(--bg);border-radius:4px;margin-bottom:1px}
+.agent-lane{position:relative;height:22px;margin-bottom:1px;background:var(--bg);border-radius:4px}
+.time-block{position:absolute;height:20px;border-radius:4px;display:flex;align-items:center;padding:0 4px;font-size:9px;font-weight:500;color:#fff;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:4px;box-shadow:0 1px 2px rgba(0,0,0,.1)}
+
+/* Panels */
+.panels-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;align-items:stretch}
+.panel{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+.panel-header{display:flex;align-items:center;gap:6px;margin-bottom:12px}
+.panel-title{font-size:14px;font-weight:700}
+.pie-wrap{display:flex;flex-direction:column;align-items:center}
+.pie{width:130px;height:130px;border-radius:50%;position:relative}
+.pie-hole{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:70px;height:70px;border-radius:50%;background:var(--bg-card);display:flex;flex-direction:column;align-items:center;justify-content:center}
+.pie-hole .ph-val{font-size:14px;font-weight:700}
+.pie-hole .ph-lbl{font-size:8px;color:var(--text-muted)}
+.pie-legend{margin-top:12px;width:100%}
+.pie-legend-item{display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 0}
+.pie-legend-item .pld{width:8px;height:8px;border-radius:2px;flex-shrink:0}
+.pie-legend-item .pln{flex:1;color:var(--text-secondary)}
+.pie-legend-item .plv{font-weight:600;white-space:nowrap}
+.bar-chart{display:flex;align-items:flex-end;gap:6px;height:140px;padding-top:10px}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;height:100%;justify-content:flex-end}
+.bar{width:100%;border-radius:4px 4px 0 0;background:linear-gradient(180deg,var(--accent),var(--accent-dark))}
+.bar-col .bar-label{font-size:9px;color:var(--text-muted)}
+.bar-col .bar-value{font-size:9px;color:var(--accent);font-weight:700}
+
+/* Sessions — horizontal list layout matching real screenshot */
+.events-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.events-header{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.panel-badge{font-size:9px;padding:2px 8px;border-radius:10px;background:var(--accent-light);color:var(--accent);font-weight:600}
+.evt-day-header{font-size:13px;font-weight:700;margin:14px 0 8px;display:flex;align-items:center;gap:8px}
+.evt-day-header:first-child{margin-top:0}
+.evt-day-count{font-size:10px;font-weight:500;color:var(--text-muted)}
+.evt-card{background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:6px;display:flex;align-items:flex-start;gap:14px}
+.evt-card.analyzed{border-left:3px solid var(--accent)}
+.evt-card.selected{border-color:var(--accent);background:var(--accent-light)}
+.evt-left{flex-shrink:0;width:100px}
+.evt-left .evt-time{font-size:12px;color:var(--text);font-weight:500}
+.evt-left .evt-dur{font-size:14px;font-weight:700;color:var(--accent)}
+.evt-left .evt-stats{font-size:10px;color:var(--text-muted)}
+.evt-agent{flex-shrink:0;width:60px;text-align:center}
+.evt-agent-badge{display:inline-block;font-size:9px;padding:3px 8px;border-radius:10px;font-weight:600;color:#fff}
+.evt-agent-badge.claude{background:var(--accent)}
+.evt-agent-badge.codex{background:#5B8DEF}
+.evt-agent-badge.cursor{background:#9F7AEA}
+.evt-right{flex:1;min-width:0}
+.evt-right .evt-project{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.evt-right .evt-project .edot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.evt-right .evt-desc{font-size:11px;color:var(--text-secondary);line-height:1.5;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+/* Analysis */
+.analysis-panel{background:var(--accent-light);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px}
+.analysis-summary{font-size:13px;font-weight:500;margin-bottom:10px;line-height:1.6}
+.topic-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px}
+.topic-tag{font-size:10px;padding:3px 10px;background:#fff;color:var(--accent);border-radius:10px;font-weight:500;border:1px solid rgba(232,115,74,.2)}
+.a-section{background:var(--bg-card);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:8px}
+.a-section-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;font-weight:700}
+.a-section-head .icon{font-size:15px}
+.a-section ul{list-style:none;padding:0}
+.a-section li{font-size:11px;margin-bottom:5px;padding-left:4px;line-height:1.5}
+.a-section li.ins{color:var(--text-secondary)}
+.a-section li.ins strong{color:var(--text);font-weight:700;font-size:12px;margin-right:2px}
+.a-section li.sug{color:var(--accent)}
+.bd-bar{display:flex;gap:3px;height:24px;border-radius:5px;overflow:hidden;margin-bottom:6px}
+.bd-bar .seg{display:flex;align-items:center;justify-content:center;font-size:8px;color:#fff;font-weight:600;padding:0 4px;overflow:hidden;white-space:nowrap}
+.bd-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.bd-legend span{font-size:10px;color:var(--text-secondary);display:flex;align-items:center;gap:3px}
+.bd-legend .dot{width:6px;height:6px;border-radius:2px;display:inline-block}
+.meta{margin-top:8px;font-size:10px;color:var(--text-muted)}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header-block">
+    <div class="header-title">
+      <div class="sub">Agent Usage</div>
+      <h1><span>Timeline</span></h1>
+    </div>
+    <div class="header-stats">
+      <div class="hstat"><div class="hl">Total Duration</div><div class="hv">34h50m</div></div>
+      <div class="hstat"><div class="hl">Sessions</div><div class="hv">39</div></div>
+      <div class="hstat"><div class="hl">Projects</div><div class="hv">8</div></div>
+      <div class="hstat"><div class="hl">Messages</div><div class="hv">3,214</div></div>
+      <div class="hstat"><div class="hl">Tool Calls</div><div class="hv">1,580</div></div>
+      <div class="hstat"><div class="hl">Agents</div><div class="hv">3</div></div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs-row">
+    <div class="tabs">
+      <button class="tab">Today</button>
+      <button class="tab">3 Days</button>
+      <button class="tab active">Week</button>
+    </div>
+    <div class="tabs-spacer"></div>
+    <div class="date-label">Past 7 days</div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="timeline-card">
+    <div class="range-row"><span>Range:</span><select><option>08:00</option></select><span>-</span><select><option>24:00</option></select></div>
+    <div class="time-axis"><span>08:00</span><span>10:00</span><span>12:00</span><span>14:00</span><span>16:00</span><span>18:00</span><span>20:00</span><span>22:00</span><span>24:00</span></div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Mon</div><div class="dt">04/06</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:58%;width:11%;background:#E8734A">1h23m</div>
+          <div class="time-block" style="left:74%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:84%;width:5%;background:#F6AD55"></div>
+          <div class="time-block" style="left:92%;width:4%;background:#9F7AEA"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Sun</div><div class="dt">04/05</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:20%;width:8%;background:#E8734A"></div>
+          <div class="time-block" style="left:30%;width:5%;background:#48BB78"></div>
+          <div class="time-block" style="left:72%;width:16%;background:#E8734A">1h52m</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Sat</div><div class="dt">04/04</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:10%;width:4%;background:#48BB78"></div>
+          <div class="time-block" style="left:16%;width:9%;background:#5B8DEF">1h24m</div>
+          <div class="time-block" style="left:78%;width:3%;background:#9F7AEA"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Fri</div><div class="dt">04/03</div><div class="lanes">3 lanes</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:4%;width:6%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:12%;width:5%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:32%;width:3%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:36%;width:2%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:42%;width:8%;background:#48BB78"></div>
+          <div class="time-block" style="left:55%;width:5%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:62%;width:4%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:82%;width:5%;background:#48BB78"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:30%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:34%;width:3%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:50%;width:2%;background:#F6AD55"></div>
+          <div class="time-block" style="left:54%;width:3%;background:#48BB78"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:40%;width:3%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:48%;width:3%;background:#F6AD55"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Thu</div><div class="dt">04/02</div><div class="lanes">4 lanes</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:4%;width:14%;background:#48BB78">0401-cache 2h38m</div>
+          <div class="time-block" style="left:22%;width:5%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:30%;width:3%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:36%;width:2%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:44%;width:14%;background:#48BB78"></div>
+          <div class="time-block" style="left:62%;width:8%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:74%;width:6%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:82%;width:3%;background:#5B8DEF"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:8%;width:3%;background:#48BB78"></div>
+          <div class="time-block" style="left:13%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:17%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:24%;width:8%;background:#48BB78"></div>
+          <div class="time-block" style="left:50%;width:2%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:56%;width:2%;background:#F6AD55"></div>
+          <div class="time-block" style="left:78%;width:3%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:82%;width:2%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:86%;width:4%;background:#E8734A"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:74%;width:2%;background:#9F7AEA"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:80%;width:4%;background:#E8734A"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Wed</div><div class="dt">04/01</div><div class="lanes">3 lanes</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:12%;width:3%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:18%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:34%;width:18%;background:#48BB78">prompt-evolution-chain</div>
+          <div class="time-block" style="left:72%;width:5%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:80%;width:4%;background:#5B8DEF"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:26%;width:4%;background:#E8734A"></div>
+          <div class="time-block" style="left:32%;width:2%;background:#48BB78"></div>
+          <div class="time-block" style="left:36%;width:3%;background:#48BB78"></div>
+          <div class="time-block" style="left:56%;width:3%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:62%;width:2%;background:#5B8DEF"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:52%;width:2%;background:#5B8DEF"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Tue</div><div class="dt">03/31</div><div class="lanes">2 lanes</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:6%;width:2%;background:#5B8DEF"></div>
+          <div class="time-block" style="left:10%;width:4%;background:#F6AD55"></div>
+          <div class="time-block" style="left:32%;width:3%;background:#9F7AEA"></div>
+          <div class="time-block" style="left:58%;width:2%;background:#5B8DEF"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:54%;width:8%;background:#48BB78">1h28m</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-day">
+      <div class="day-label"><div class="wd">Mon</div><div class="dt">03/30</div><div class="lanes">2 lanes</div></div>
+      <div class="timeline-tracks">
+        <div class="agent-lane">
+          <div class="time-block" style="left:42%;width:5%;background:#5B8DEF"></div>
+        </div>
+        <div class="agent-lane">
+          <div class="time-block" style="left:44%;width:2%;background:#9F7AEA"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Distribution + Trend -->
+  <div class="panels-row">
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Distribution</span></div>
+      <div class="pie-wrap">
+        <div class="pie" style="background:conic-gradient(#9F7AEA 0% 47%, #48BB78 47% 65%, #5B8DEF 65% 78%, #E8734A 78% 86%, #F6AD55 86% 93%, #4FD1C5 93% 100%)">
+          <div class="pie-hole"><span class="ph-val">34h50m</span><span class="ph-lbl">total</span></div>
+        </div>
+      </div>
+      <div class="pie-legend">
+        <div class="pie-legend-item"><div class="pld" style="background:#9F7AEA"></div><span class="pln">cache-revolution</span><span class="plv">16h30m · 47%</span></div>
+        <div class="pie-legend-item"><div class="pld" style="background:#48BB78"></div><span class="pln">prompt-evolution</span><span class="plv">6h18m · 18%</span></div>
+        <div class="pie-legend-item"><div class="pld" style="background:#5B8DEF"></div><span class="pln">wan2.2-study</span><span class="plv">4h32m · 13%</span></div>
+        <div class="pie-legend-item"><div class="pld" style="background:#E8734A"></div><span class="pln">1-explore</span><span class="plv">2h48m · 8%</span></div>
+        <div class="pie-legend-item"><div class="pld" style="background:#F6AD55"></div><span class="pln">daily-practice</span><span class="plv">2h34m · 7%</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-header"><span class="panel-title">Trend</span></div>
+      <div class="bar-chart">
+        <div class="bar-col"><div class="bar-value">57m</div><div class="bar" style="height:9%"></div><div class="bar-label">3/30</div></div>
+        <div class="bar-col"><div class="bar-value">2h44m</div><div class="bar" style="height:26%"></div><div class="bar-label">3/31</div></div>
+        <div class="bar-col"><div class="bar-value">7h20m</div><div class="bar" style="height:69%"></div><div class="bar-label">4/1</div></div>
+        <div class="bar-col"><div class="bar-value">10h40m</div><div class="bar" style="height:100%"></div><div class="bar-label">4/2</div></div>
+        <div class="bar-col"><div class="bar-value">6h</div><div class="bar" style="height:56%"></div><div class="bar-label">4/3</div></div>
+        <div class="bar-col"><div class="bar-value">2h2m</div><div class="bar" style="height:19%"></div><div class="bar-label">4/4</div></div>
+        <div class="bar-col"><div class="bar-value">2h60m</div><div class="bar" style="height:28%"></div><div class="bar-label">4/5</div></div>
+        <div class="bar-col"><div class="bar-value">2h8m</div><div class="bar" style="height:20%"></div><div class="bar-label">4/6</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis Panel -->
+  <div class="analysis-panel">
+    <div class="analysis-summary">
+      User explored a test-time scaling paper (arXiv 2603.01509) on Retrieval-Refinement-Ranking for T2V generation, obtained reading guidance and core framework understanding, and planned Feishu note organization.
+    </div>
+    <div class="topic-tags">
+      <span class="topic-tag">T2V test-time scaling</span>
+      <span class="topic-tag">Prompt Retrieval-Refinement-Ranking</span>
+      <span class="topic-tag">Feishu knowledge base</span>
+      <span class="topic-tag">cache self-evolution connection</span>
+      <span class="topic-tag">Literature management</span>
+    </div>
+
+    <div class="a-section" style="border-left:3px solid #48BB78">
+      <div class="a-section-head"><span class="icon" style="color:#48BB78">&#9733;</span>Outcomes</div>
+      <ul>
+        <li class="ins"><strong>Grasped 3-stage T2V pipeline</strong>：retrieves similar high-quality prompts, refines them for target context, then ranks generated results to pick the best video</li>
+        <li class="ins"><strong>Filed paper under Test-Time Scaling</strong>：placed in Feishu "T2V Test-Time Scaling" category; flagged partial relevance to cache-revolution though direct references are limited</li>
+        <li class="ins"><strong>Clarified cache-revolution overlap</strong>：test-time scaling shares compute-at-inference philosophy with cache enrichment, but paper's direct cache-self-evolution references are sparse</li>
+      </ul>
+    </div>
+
+    <div class="a-section" style="border-left:3px solid #5B8DEF">
+      <div class="a-section-head"><span class="icon" style="color:#5B8DEF">&#9719;</span>Time Breakdown</div>
+      <div class="bd-bar">
+        <div class="seg" style="width:50%;background:#E8734A">Paper reading 50%</div>
+        <div class="seg" style="width:30%;background:#5B8DEF">Feishu notes 30%</div>
+        <div class="seg" style="width:15%;background:#9F7AEA">Project link</div>
+        <div class="seg" style="width:5%;background:#48BB78"></div>
+      </div>
+      <div class="bd-legend">
+        <span><span class="dot" style="background:#E8734A"></span>Paper reading & discussion 50%</span>
+        <span><span class="dot" style="background:#5B8DEF"></span>Feishu note organization 30%</span>
+        <span><span class="dot" style="background:#9F7AEA"></span>Cache-revolution connection 15%</span>
+        <span><span class="dot" style="background:#48BB78"></span>Environment setup 5%</span>
+      </div>
+    </div>
+
+    <div class="a-section" style="border-left:3px solid var(--accent)">
+      <div class="a-section-head"><span class="icon" style="color:var(--accent)">&#9881;</span>Suggestions</div>
+      <ul>
+        <li class="sug">Follow up on the authors' subsequent work to see if the ranking framework has been applied to cache-related scenarios</li>
+        <li class="sug">Create a "candidate approaches" index in Feishu to collect related but not directly applicable ideas from reading sessions</li>
+      </ul>
+    </div>
+    <div class="meta">Token: 1,035 (in:3, out:1,032) · 32.9s · via claude-cli</div>
+  </div>
+
+  <!-- Sessions -->
+  <div class="events-card">
+    <div class="events-header"><span class="panel-title">Sessions</span><span class="panel-badge">39</span></div>
+
+    <div class="evt-day-header">Mon 4/6<span class="evt-day-count">1 session</span></div>
+    <div class="evt-card analyzed">
+      <div class="evt-left"><div class="evt-time">19:55-19:57</div><div class="evt-dur">2m</div><div class="evt-stats">8 msgs</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge codex">Codex</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#5B8DEF"></span>wan2.2</div><div class="evt-desc">Running benchmark tests on the video scoring pipeline with updated model weights</div></div>
+    </div>
+
+    <div class="evt-day-header">Sun 4/5<span class="evt-day-count">1 session</span></div>
+    <div class="evt-card analyzed selected">
+      <div class="evt-left"><div class="evt-time">12:21-23:00</div><div class="evt-dur">5h5m</div><div class="evt-stats">1837 msgs · 626 tools</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge claude">Claude Code</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#E8734A"></span>1-explore</div><div class="evt-desc">Building the analytics dashboard for clawd-on-desk — timeline view, AI session analysis, distribution charts, and batch pre-analysis</div></div>
+    </div>
+
+    <div class="evt-day-header">Fri 4/3<span class="evt-day-count">9 sessions</span></div>
+    <div class="evt-card analyzed">
+      <div class="evt-left"><div class="evt-time">16:17-17:00</div><div class="evt-dur">42m</div><div class="evt-stats">75 msgs · 68 tools</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge cursor">Cursor</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#9F7AEA"></span>cache-revolution</div><div class="evt-desc">Exploring Feishu document skills integration for automated note management</div></div>
+    </div>
+    <div class="evt-card analyzed">
+      <div class="evt-left"><div class="evt-time">15:43-16:04</div><div class="evt-dur">21m</div><div class="evt-stats">43 msgs</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge codex">Codex</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#F6AD55"></span>0_family</div><div class="evt-desc">Setting up family document workspace and configuring shared folder structure</div></div>
+    </div>
+    <div class="evt-card analyzed">
+      <div class="evt-left"><div class="evt-time">14:52-10:56</div><div class="evt-dur">2h3m</div><div class="evt-stats">273 msgs · 83 tools</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge claude">Claude Code</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#48BB78"></span>Feishu | Health Records</div><div class="evt-desc">Organizing family health checkup data into structured comparison tables across three annual reports in Feishu</div></div>
+    </div>
+    <div class="evt-card">
+      <div class="evt-left"><div class="evt-time">11:48-12:15</div><div class="evt-dur">2h2m</div><div class="evt-stats">147 msgs · 35 tools</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge claude">Claude Code</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#9F7AEA"></span>cache_revolution | Literature</div><div class="evt-desc">Reading a T2V test-time scaling paper and organizing notes in Feishu knowledge base</div></div>
+    </div>
+    <div class="evt-card">
+      <div class="evt-left"><div class="evt-time">09:20-11:47</div><div class="evt-dur">1h32m</div><div class="evt-stats">244 msgs · 76 tools</div></div>
+      <div class="evt-agent"><span class="evt-agent-badge claude">Claude Code</span></div>
+      <div class="evt-right"><div class="evt-project"><span class="edot" style="background:#9F7AEA"></span>cache_revolution | Weekly Report</div><div class="evt-desc">Structuring weekly progress report: Prompt chain mining pipeline, phrase embedding, and low-quality prompt filtering</div></div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
