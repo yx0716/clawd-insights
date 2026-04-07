@@ -1,6 +1,7 @@
 const { app, BrowserWindow, screen, Menu, ipcMain, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { applyStationaryCollectionBehavior } = require("./mac-window");
 
 // ── Autoplay policy: allow sound playback without user gesture ──
 // MUST be set before any BrowserWindow is created (before app.whenReady)
@@ -230,17 +231,21 @@ const pendingPermissions = _perm.pendingPermissions;
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
 
-// ── macOS fullscreen visibility helper ──
-// Re-apply visibleOnAllWorkspaces + alwaysOnTop to all windows after events
-// that may reset NSWindowCollectionBehavior (showInactive, dock.hide, etc.)
+// ── macOS cross-Space visibility helper ──
+// Prefer native collection behavior over Electron's setVisibleOnAllWorkspaces:
+// Electron may briefly hide the window while transforming process type, while
+// the native path also mirrors Masko Code's SkyLight-backed stationary Space.
 function reapplyMacVisibility() {
   if (!isMac) return;
-  const opts = { visibleOnFullScreen: true };
-  if (!showDock) opts.skipTransformProcessType = true;
   const apply = (w) => {
     if (w && !w.isDestroyed()) {
-      w.setVisibleOnAllWorkspaces(true, opts);
       w.setAlwaysOnTop(true, MAC_TOPMOST_LEVEL);
+      if (!applyStationaryCollectionBehavior(w)) {
+        const opts = { visibleOnFullScreen: true };
+        if (!showDock) opts.skipTransformProcessType = true;
+        w.setVisibleOnAllWorkspaces(true, opts);
+        applyStationaryCollectionBehavior(w);
+      }
     }
   };
   apply(win);
