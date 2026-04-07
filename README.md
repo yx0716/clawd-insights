@@ -251,6 +251,7 @@ Thanks to everyone who has helped make Clawd better:
   </tr>
   <tr>
     <td align="center"><a href="https://github.com/ssly"><img src="https://github.com/ssly.png" width="50" style="border-radius:50%" /><br /><sub>ssly</sub></a></td>
+    <td align="center"><a href="https://github.com/stickycandy"><img src="https://github.com/stickycandy.png" width="50" style="border-radius:50%" /><br /><sub>stickycandy</sub></a></td>
   </tr>
 </table>
 
