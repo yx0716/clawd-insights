@@ -76,7 +76,27 @@ module.exports = function initAnalytics(ctx) {
   });
 
   ipcMain.handle("analytics-save-ai-config", async (_event, config) => {
-    ctx.analyticsAI.setConfig(config);
+    // Merge with existing config: the GET handler masks apiKey before
+    // sending it to the renderer, so the form has no way to round-trip
+    // the saved key. If the incoming payload omits apiKey (or sends it
+    // as empty string), preserve the previously saved value instead of
+    // wiping it. Use `apiKey: null` to explicitly clear.
+    const existing = ctx.analyticsAI.getConfig() || {};
+    const incoming = config || {};
+    const merged = { ...existing, ...incoming };
+    if (incoming.apiKey === undefined || incoming.apiKey === "") {
+      if (existing.apiKey) merged.apiKey = existing.apiKey;
+      else delete merged.apiKey;
+    } else if (incoming.apiKey === null) {
+      delete merged.apiKey;
+    }
+    ctx.analyticsAI.setConfig(merged);
+    return { ok: true };
+  });
+
+  ipcMain.handle("analytics-clear-ai-config", async () => {
+    ctx.analyticsAI.setConfig(null);
+    return { ok: true };
   });
 
   ipcMain.handle("analytics-get-providers", async () => {

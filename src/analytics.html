@@ -167,6 +167,44 @@ body * { -webkit-app-region:no-drag; }
 .confirm-btns .btn-ok { background:var(--accent); color:#fff; border-color:var(--accent); }
 .confirm-btns .btn-cancel { background:var(--bg-card); color:var(--text-secondary); }
 
+/* Settings gear button (header) */
+.settings-btn {
+  width:32px; height:32px; border-radius:50%; border:1px solid var(--border);
+  background:var(--bg-card); cursor:pointer; display:flex; align-items:center;
+  justify-content:center; font-size:16px; color:var(--text-secondary);
+  flex-shrink:0; transition:background .15s,border-color .15s,color .15s;
+}
+.settings-btn:hover { background:var(--accent-light); border-color:var(--accent); color:var(--accent); }
+.settings-btn svg { width:16px; height:16px; }
+
+/* Settings dialog */
+.settings-dialog { background:var(--bg-card); border-radius:var(--radius); padding:22px 24px; box-shadow:var(--shadow-md); max-width:440px; width:92%; text-align:left; max-height:88vh; overflow-y:auto; }
+.settings-dialog h2 { font-size:16px; font-weight:700; color:var(--text); margin-bottom:4px; }
+.settings-dialog .settings-sub { font-size:11px; color:var(--text-muted); margin-bottom:14px; line-height:1.5; }
+.settings-field { margin-bottom:12px; }
+.settings-field label { display:block; font-size:11px; color:var(--text-secondary); font-weight:600; margin-bottom:4px; }
+.settings-field input,
+.settings-field select {
+  width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--border);
+  border-radius:6px; background:var(--bg); color:var(--text); font-family:inherit;
+}
+.settings-field input:focus,
+.settings-field select:focus { outline:none; border-color:var(--accent); }
+.settings-field .field-hint { font-size:10px; color:var(--text-muted); margin-top:3px; }
+.settings-field .field-hint code { background:var(--accent-light); color:var(--accent); padding:1px 4px; border-radius:3px; font-size:10px; }
+.settings-status { font-size:11px; padding:6px 10px; border-radius:6px; margin-bottom:10px; display:none; }
+.settings-status.success { background:#E6F4EA; color:#2E7D32; display:block; }
+.settings-status.error { background:#FDECEA; color:#C62828; display:block; }
+.settings-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; padding-top:12px; border-top:1px solid var(--border-light); }
+.settings-btns button { padding:7px 18px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid var(--border); font-family:inherit; }
+.settings-btns .btn-save { background:var(--accent); color:#fff; border-color:var(--accent); }
+.settings-btns .btn-save:hover { background:var(--accent-dark); }
+.settings-btns .btn-cancel { background:var(--bg-card); color:var(--text-secondary); }
+.settings-btns .btn-clear { background:var(--bg-card); color:#C62828; border-color:#FDECEA; margin-right:auto; }
+.settings-btns .btn-clear:hover { background:#FDECEA; }
+.analysis-error-link { color:var(--accent); text-decoration:underline; cursor:pointer; font-weight:600; }
+.analysis-error-link:hover { color:var(--accent-dark); }
+
 .evt-day-header { font-size:13px; font-weight:700; color:var(--text); margin:12px 0 6px; display:flex; align-items:center; gap:8px; }
 .evt-day-header:first-child { margin-top:0; }
 .evt-day-count { font-size:10px; font-weight:500; color:var(--text-muted); }
@@ -196,6 +234,9 @@ body * { -webkit-app-region:no-drag; }
       <div class="hstat"><div class="hl">Tool Calls</div><div class="hv" id="hTools">--</div></div>
       <div class="hstat"><div class="hl">Agents</div><div class="hv" id="hAgents">--</div></div>
     </div>
+    <button class="settings-btn" id="settingsBtn" title="AI Provider Settings" aria-label="AI Provider Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
   </div>
 
   <!-- Tabs + Legend -->
@@ -254,6 +295,43 @@ body * { -webkit-app-region:no-drag; }
 
 </div>
 <div class="tooltip" id="tooltip"></div>
+
+<!-- Settings modal (AI provider config) -->
+<div class="confirm-overlay" id="settingsOverlay" style="display:none">
+  <div class="settings-dialog">
+    <h2>AI Provider Settings</h2>
+    <div class="settings-sub">Configure an API key as a fallback when no local CLI (Claude Code / Codex) is available, or to override the default analyzer.</div>
+    <div class="settings-status" id="settingsStatus"></div>
+    <div class="settings-field">
+      <label for="settingsProvider">Provider</label>
+      <select id="settingsProvider">
+        <option value="claude">Claude (Anthropic)</option>
+        <option value="openai">OpenAI-Compatible (Qwen, DeepSeek, OpenRouter, etc.)</option>
+        <option value="ollama">Ollama (Local)</option>
+      </select>
+    </div>
+    <div class="settings-field" id="settingsApiKeyField">
+      <label for="settingsApiKey">API Key</label>
+      <input id="settingsApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
+      <div class="field-hint" id="settingsApiKeyHint">Stored locally in your prefs file. Leave blank to keep the existing key.</div>
+    </div>
+    <div class="settings-field">
+      <label for="settingsBaseUrl">Endpoint <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+      <input id="settingsBaseUrl" type="text" autocomplete="off" spellcheck="false" placeholder="">
+      <div class="field-hint" id="settingsBaseUrlHint"></div>
+    </div>
+    <div class="settings-field">
+      <label for="settingsModel">Model <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+      <input id="settingsModel" type="text" autocomplete="off" spellcheck="false" placeholder="">
+      <div class="field-hint" id="settingsModelHint"></div>
+    </div>
+    <div class="settings-btns">
+      <button class="btn-clear" id="settingsClearBtn" type="button">Clear</button>
+      <button class="btn-cancel" id="settingsCancelBtn" type="button">Cancel</button>
+      <button class="btn-save" id="settingsSaveBtn" type="button">Save</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const AGENT_COLORS = {"claude-code":"#E8734A","codex":"#5B8DEF","cursor-agent":"#9F7AEA","copilot-cli":"#48BB78","gemini-cli":"#F56565"};
@@ -705,7 +783,7 @@ async function selectSession(sid,agent){
     if(!analysisOptions.length)try{analysisOptions=await window.analyticsAPI.getAnalysisOptions();}catch{}
     if(!analysisProvider)try{analysisProvider=await window.analyticsAPI.getAnalysisProvider();}catch{}
     const selectedOption=getSelectedAnalysisOption()||analysisProvider;
-    if(!selectedOption){ld.style.display="none";ct.style.display="block";ct.innerHTML='<div style="text-align:center;color:var(--text-secondary)">No AI provider available</div>';return;}
+    if(!selectedOption){ld.style.display="none";ct.style.display="block";ct.innerHTML=renderNoProviderError();bindAnalysisErrorLinks(ct);return;}
     if(selectedOption.id)selectedAnalysisAgent=selectedOption.id;
     const ok=await showConfirm(selectedOption);
     if(!ok){panel.classList.remove("visible");selectedSessionId=null;refreshSel();return;}
@@ -719,8 +797,63 @@ async function selectSession(sid,agent){
     if(!r){ct.innerHTML='<div style="color:var(--text-secondary)">Could not analyze</div>';return;}
     setCachedAnalysis(sid,selectedAnalysisAgent,r);
     renderAnalysis(r);
+    // The result is cached even when it represents an error (CLI missing /
+    // API key not set / network failure). Wire up the inline "Open Settings"
+    // link so the user can recover without leaving the panel.
+    bindAnalysisErrorLinks(ct);
     if(currentData)renderEvents(currentData);
-  }catch(err){unmarkAnalyzing(sid);ld.style.display="none";ct.style.display="block";ct.innerHTML=`<div style="color:var(--text-secondary)">${err.message||err}</div>`;}
+  }catch(err){
+    unmarkAnalyzing(sid);
+    ld.style.display="none";ct.style.display="block";
+    ct.innerHTML=renderAnalysisErrorMessage(err && (err.message||String(err)));
+    bindAnalysisErrorLinks(ct);
+  }
+}
+
+// Detect "fixable" analyzer errors and append an Open Settings link.
+// Patterns come from analytics-ai.js isTransientAnalysisFailure().
+function isFixableAnalysisError(text) {
+  if (!text) return false;
+  const s = String(text);
+  return (
+    s.includes("未配置 API Key") ||
+    s.includes("未找到本地 CLI") ||
+    s.includes("Codex CLI 未找到") ||
+    s.includes("No AI provider available") ||
+    s.includes("requires an API key") ||
+    s.includes("--verbose") ||
+    s.includes("无法连接本地代理") ||
+    s.includes("网络初始化失败") ||
+    s.includes("claude-cli 执行失败") ||
+    s.includes("codex-cli 执行失败")
+  );
+}
+
+function renderNoProviderError() {
+  return `<div style="text-align:center;color:var(--text-secondary);padding:8px 0">`
+    + `No AI provider available.<br>`
+    + `<a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API key as a fallback.`
+    + `</div>`;
+}
+
+function renderAnalysisErrorMessage(rawText) {
+  const text = rawText || "Analysis failed";
+  const safe = escapeHtml(text);
+  if (isFixableAnalysisError(text)) {
+    return `<div style="color:var(--text-secondary);line-height:1.5">${safe}<br>`
+      + `<a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API provider as a fallback.</div>`;
+  }
+  return `<div style="color:var(--text-secondary)">${safe}</div>`;
+}
+
+// Wire up data-action="open-settings" links inside an analysis container.
+// Called after every renderAnalysis / error render so the link works even
+// when the message is loaded from cache.
+function bindAnalysisErrorLinks(container) {
+  if (!container) return;
+  container.querySelectorAll('[data-action="open-settings"]').forEach(el => {
+    el.onclick = (e) => { e.preventDefault(); openSettings(); };
+  });
 }
 
 function showConfirm(p){return new Promise(res=>{const o=document.createElement("div");o.className="confirm-overlay";const pn=formatAnalysisProvider(p);o.innerHTML=`<div class="confirm-dialog"><p>Use <span class="provider">${pn}</span> to analyze?<br><span style="font-size:11px;color:var(--text-muted)">Consumes a small amount of tokens</span></p><div class="confirm-btns"><button class="btn-ok">Analyze</button><button class="btn-cancel">Cancel</button></div></div>`;document.body.appendChild(o);o.querySelector(".btn-ok").onclick=()=>{o.remove();res(true);};o.querySelector(".btn-cancel").onclick=()=>{o.remove();res(false);};});}
@@ -804,7 +937,14 @@ function renderAnalysis(r){
     meta.push("cost: n/a");
   }
   if(meta.length)h+=`<div style="margin-top:6px;font-size:10px;color:var(--text-muted)">${meta.join(" · ")}</div>`;
+  // If the backend slipped a CLI failure into the summary string, append an
+  // inline Open Settings link so the user can recover. This complements the
+  // error path in selectSession() which only catches thrown errors.
+  if (r.summary && isFixableAnalysisError(r.summary)) {
+    h += `<div style="margin-top:8px;font-size:11px"><a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API provider as a fallback.</div>`;
+  }
   ct.innerHTML=h;
+  bindAnalysisErrorLinks(ct);
 }
 
 function refreshSel(){document.querySelectorAll(".time-block,.evt-card").forEach(el=>{el.classList.toggle("selected",el.dataset.sid===selectedSessionId);});}
@@ -831,6 +971,164 @@ window.analyticsAPI.getAnalysisOptions().then(opts=>{
   if(analysisOptions.length&&!analysisOptions.some(opt=>opt.id===selectedAnalysisAgent))selectedAnalysisAgent=analysisOptions[0].id;
   if(currentData)renderEvents(currentData);
 }).catch(()=>{});
+
+// ── Settings modal (AI provider config) ──
+const PROVIDER_DEFAULTS = {
+  claude: { baseUrl: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001", needsKey: true,
+    keyHint: "Get an API key from console.anthropic.com" },
+  openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true,
+    keyHint: "Works with OpenAI, Qwen, DeepSeek, OpenRouter, vLLM, etc. — set the endpoint accordingly" },
+  ollama: { baseUrl: "http://localhost:11434", model: "qwen2.5:7b", needsKey: false,
+    keyHint: "Ollama runs locally — no API key required" },
+};
+
+function setSettingsStatus(text, kind) {
+  const el = document.getElementById("settingsStatus");
+  el.textContent = text || "";
+  el.className = "settings-status" + (kind ? " " + kind : "");
+}
+
+function applyProviderDefaults(provider, opts) {
+  opts = opts || {};
+  const def = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.claude;
+  const baseUrlEl = document.getElementById("settingsBaseUrl");
+  const modelEl = document.getElementById("settingsModel");
+  const apiKeyField = document.getElementById("settingsApiKeyField");
+  const apiKeyEl = document.getElementById("settingsApiKey");
+  const apiKeyHint = document.getElementById("settingsApiKeyHint");
+  const baseUrlHint = document.getElementById("settingsBaseUrlHint");
+  const modelHint = document.getElementById("settingsModelHint");
+
+  baseUrlEl.placeholder = def.baseUrl;
+  modelEl.placeholder = def.model;
+  baseUrlHint.textContent = `Default: ${def.baseUrl}`;
+  modelHint.textContent = `Default: ${def.model}`;
+  apiKeyHint.textContent = def.needsKey
+    ? def.keyHint + ". Stored locally; leave blank to keep the existing key."
+    : def.keyHint;
+  apiKeyField.style.display = def.needsKey ? "block" : "none";
+  apiKeyEl.required = !!def.needsKey;
+  if (opts.clearKey) apiKeyEl.value = "";
+}
+
+let _settingsOpen = false;
+async function openSettings() {
+  if (_settingsOpen) return;
+  _settingsOpen = true;
+  setSettingsStatus("");
+  let cfg = null;
+  try { cfg = await window.analyticsAPI.getAIConfig(); } catch (e) { console.warn("getAIConfig failed", e); }
+  const provider = (cfg && cfg.provider) || "claude";
+  document.getElementById("settingsProvider").value = provider;
+  applyProviderDefaults(provider);
+  document.getElementById("settingsBaseUrl").value = (cfg && cfg.baseUrl) || "";
+  document.getElementById("settingsModel").value = (cfg && cfg.model) || "";
+  // The main process masks the key before sending it to us, so the input
+  // is always blank — show the masked hint inline so the user knows a key
+  // is already saved and they can leave the field empty to keep it.
+  const apiKeyEl = document.getElementById("settingsApiKey");
+  apiKeyEl.value = "";
+  if (cfg && cfg.apiKeyMasked) {
+    apiKeyEl.placeholder = cfg.apiKeyMasked + " (saved — leave blank to keep)";
+  } else {
+    apiKeyEl.placeholder = "sk-...";
+  }
+  document.getElementById("settingsOverlay").style.display = "flex";
+  // Focus the first empty / actionable field for keyboard users
+  setTimeout(() => {
+    if (cfg && cfg.apiKeyMasked) document.getElementById("settingsProvider").focus();
+    else apiKeyEl.focus();
+  }, 0);
+}
+
+function closeSettings() {
+  document.getElementById("settingsOverlay").style.display = "none";
+  _settingsOpen = false;
+}
+
+async function saveSettings() {
+  const provider = document.getElementById("settingsProvider").value;
+  const apiKey = document.getElementById("settingsApiKey").value.trim();
+  const baseUrl = document.getElementById("settingsBaseUrl").value.trim();
+  const model = document.getElementById("settingsModel").value.trim();
+  const def = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.claude;
+
+  // Validate: if the provider needs a key, ensure either user typed one
+  // OR there is one already saved (the GET handler tells us via apiKeyMasked).
+  if (def.needsKey && !apiKey) {
+    let existing = null;
+    try { existing = await window.analyticsAPI.getAIConfig(); } catch {}
+    if (!existing || !existing.apiKeyMasked || (existing.provider && existing.provider !== provider)) {
+      setSettingsStatus(`${provider} requires an API key`, "error");
+      document.getElementById("settingsApiKey").focus();
+      return;
+    }
+  }
+
+  // Build the payload. We omit apiKey when blank — the IPC handler will
+  // preserve the previously saved key. baseUrl/model also omitted when
+  // blank so the backend falls back to provider defaults.
+  const payload = { provider };
+  if (apiKey) payload.apiKey = apiKey;
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (model) payload.model = model;
+
+  try {
+    await window.analyticsAPI.saveAIConfig(payload);
+    setSettingsStatus("Saved", "success");
+    // Refresh the analysis option list so the API provider shows up in
+    // pickers (batch dialog, error-recovery flow, etc.) without reloading.
+    await refreshAnalysisOptions();
+    setTimeout(closeSettings, 600);
+  } catch (e) {
+    setSettingsStatus("Save failed: " + (e.message || e), "error");
+  }
+}
+
+async function clearSettings() {
+  if (!confirm("Clear the saved API key and provider config?")) return;
+  try {
+    await window.analyticsAPI.clearAIConfig();
+    setSettingsStatus("Cleared", "success");
+    document.getElementById("settingsApiKey").value = "";
+    document.getElementById("settingsApiKey").placeholder = "sk-...";
+    document.getElementById("settingsBaseUrl").value = "";
+    document.getElementById("settingsModel").value = "";
+    await refreshAnalysisOptions();
+    setTimeout(closeSettings, 600);
+  } catch (e) {
+    setSettingsStatus("Clear failed: " + (e.message || e), "error");
+  }
+}
+
+async function refreshAnalysisOptions() {
+  try {
+    const opts = await window.analyticsAPI.getAnalysisOptions();
+    analysisOptions = Array.isArray(opts) ? opts : [];
+    if (analysisOptions.length && !analysisOptions.some(opt => opt.id === selectedAnalysisAgent)) {
+      selectedAnalysisAgent = analysisOptions[0].id;
+    }
+    // Re-render so any open analysis panel / event cards reflect the new
+    // provider availability immediately.
+    if (currentData) renderEvents(currentData);
+  } catch (e) { console.warn("refreshAnalysisOptions failed", e); }
+}
+
+document.getElementById("settingsBtn").addEventListener("click", openSettings);
+document.getElementById("settingsCancelBtn").addEventListener("click", closeSettings);
+document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
+document.getElementById("settingsClearBtn").addEventListener("click", clearSettings);
+document.getElementById("settingsProvider").addEventListener("change", function() {
+  applyProviderDefaults(this.value, { clearKey: true });
+});
+// Click backdrop to close
+document.getElementById("settingsOverlay").addEventListener("click", function(e) {
+  if (e.target === this) closeSettings();
+});
+// Esc to close
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _settingsOpen) closeSettings();
+});
 
 // ── Demo mode (Ctrl+Shift+D) — sanitize sensitive data for screen recording ──
 let demoMode = false;
