@@ -622,12 +622,68 @@ module.exports = function initAnalyticsAI(ctx) {
     return process.cwd();
   }
 
+  // JSON Schema for analysis output. When passed to codex via --output-schema,
+  // OpenAI's strict mode forces the model to emit exactly this shape and skip
+  // unstructured "thinking out loud" — significantly cuts output tokens.
+  // NOTE: every nested object must have additionalProperties:false for strict mode.
+  const ANALYSIS_OUTPUT_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      summary: { type: "string" },
+      keyTopics: { type: "array", items: { type: "string" } },
+      outcomes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            headline: { type: "string" },
+            detail: { type: "string" },
+          },
+          required: ["headline", "detail"],
+        },
+      },
+      timeBreakdown: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            activity: { type: "string" },
+            percent: { type: "number" },
+          },
+          required: ["activity", "percent"],
+        },
+      },
+      suggestions: { type: "array", items: { type: "string" } },
+    },
+    required: ["summary", "keyTopics", "outcomes", "timeBreakdown", "suggestions"],
+  };
+
   async function callCodexCLI(codexPath, prompt, options = {}) {
     const env = await sanitizeCliProxyEnv(buildCliEnv(), "codex");
     return new Promise((resolve, reject) => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-codex-"));
       const outputFile = path.join(tmpDir, "last-message.txt");
-      const child = spawnCli(codexPath, ["exec", "--skip-git-repo-check", "-o", outputFile, "-"], {
+      const schemaFile = path.join(tmpDir, "output-schema.json");
+      try { fs.writeFileSync(schemaFile, JSON.stringify(ANALYSIS_OUTPUT_SCHEMA)); } catch { /* ignore */ }
+      // Phase 0 cost/speed optimization (2026-04-07): force codex into fast
+      // analysis mode. Without these, gpt-5.4 with `xhigh` reasoning_effort
+      // routinely takes 90+ seconds. With them, the same task finishes in ~10s.
+      const args = [
+        "exec",
+        "--skip-git-repo-check",
+        "--json",
+        "--ephemeral",                           // don't persist session to disk
+        "--sandbox", "read-only",                // forbid any writes
+        "-c", "model_reasoning_effort=low",      // gpt-5.4 default is xhigh — way too deep for analysis
+        "-c", "tools.web_search=false",          // also avoids 'minimal' incompat error
+        "--output-schema", schemaFile,           // strict JSON output, suppresses chain-of-thought text
+        "-o", outputFile,
+        "-",
+      ];
+      const child = spawnCli(codexPath, args, {
         cwd: resolveCodexWorkingDir(options.cwd),
         env,
         stdio: ["pipe", "pipe", "pipe"],
@@ -680,11 +736,55 @@ module.exports = function initAnalyticsAI(ctx) {
       child.on("close", (code, signal) => {
         if (settled) return;
         clearTimeout(timer);
-        const text = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, "utf8") : stdout;
+        let text = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, "utf8") : "";
         if (code === 0) {
           settled = true;
           cleanup();
-          return resolve({ text, usage: null, stderr });
+          // Parse codex 0.118+ JSONL output. Two output schemas exist depending
+          // on flags (`exec` vs `exec --json` modes), so we handle both.
+          let usage = null;
+          let model = null;
+          try {
+            const lines = stdout.split("\n").filter(Boolean);
+            for (const line of lines) {
+              try {
+                const obj = JSON.parse(line);
+
+                // ── model name (best effort, often missing in exec --json) ──
+                // Schema A: codex < 0.118 — wrapped in payload
+                if (obj.type === "turn_context" && obj.payload && obj.payload.model) model = obj.payload.model;
+                // Schema B: codex 0.118+ — flat top-level model field on turn.started
+                if (obj.type === "turn.started" && obj.model) model = obj.model;
+
+                // ── output text fallback (when -o file is empty) ──
+                // codex 0.118+ emits `item.completed` for the final agent message
+                if (obj.type === "item.completed" && obj.item && obj.item.type === "agent_message" && typeof obj.item.text === "string" && !text) {
+                  text = obj.item.text;
+                }
+
+                // ── token usage ──
+                // Schema A (older): event_msg.token_count.info.total_token_usage
+                if (obj.type === "event_msg" && obj.payload && obj.payload.type === "token_count" && obj.payload.info && obj.payload.info.total_token_usage) {
+                  const t = obj.payload.info.total_token_usage;
+                  usage = {
+                    input_tokens: t.input_tokens || 0,
+                    cached_input_tokens: t.cached_input_tokens || 0,
+                    output_tokens: (t.output_tokens || 0) + (t.reasoning_output_tokens || 0),
+                  };
+                }
+                // Schema B (codex 0.118+): turn.completed.usage (flat)
+                if (obj.type === "turn.completed" && obj.usage) {
+                  const u = obj.usage;
+                  usage = {
+                    input_tokens: u.input_tokens || 0,
+                    cached_input_tokens: u.cached_input_tokens || 0,
+                    output_tokens: (u.output_tokens || 0) + (u.reasoning_output_tokens || 0),
+                  };
+                }
+              } catch { /* skip non-json lines */ }
+            }
+          } catch { /* ignore parse errors */ }
+          return resolve({ text, usage, model, stderr });
         }
         fail(
           summarizeCodexError(stderr, text.trim() || `codex exec 退出异常${code !== null ? `（code ${code}）` : signal ? `（signal ${signal}）` : ""}`),
@@ -711,12 +811,136 @@ module.exports = function initAnalyticsAI(ctx) {
     };
   }
 
+  // ── Model + pricing detection ──
+  //
+  // Pricing table (USD per 1M tokens). Update as needed.
+  // Prefer "alias" keys (haiku/sonnet/opus/gpt-5/etc) so user-config aliases work.
+  // Each entry: { input, cachedInput (cache_read), cacheWrite (cache_creation), output }
+  // cacheWrite defaults to 1.25× input (Anthropic 5-min cache); cachedInput defaults to 0.1× input.
+  const MODEL_PRICING = {
+    // Claude — official Anthropic prices per 1M tokens
+    "claude-haiku-4-5":      { input: 1.00, cachedInput: 0.10, cacheWrite: 1.25, output: 5.00 },
+    "claude-sonnet-4-5":     { input: 3.00, cachedInput: 0.30, cacheWrite: 3.75, output: 15.00 },
+    "claude-opus-4-6":       { input: 15.00, cachedInput: 1.50, cacheWrite: 18.75, output: 75.00 },
+    "haiku":                 { input: 1.00, cachedInput: 0.10, cacheWrite: 1.25, output: 5.00 },
+    "sonnet":                { input: 3.00, cachedInput: 0.30, cacheWrite: 3.75, output: 15.00 },
+    "opus":                  { input: 15.00, cachedInput: 1.50, cacheWrite: 18.75, output: 75.00 },
+    // OpenAI — GPT-5 family per 1M tokens
+    "gpt-5":                 { input: 1.25, cachedInput: 0.13, cacheWrite: 1.25, output: 10.00 },
+    "gpt-5-mini":            { input: 0.25, cachedInput: 0.025, cacheWrite: 0.25, output: 2.00 },
+    "gpt-5.4":               { input: 1.25, cachedInput: 0.13, cacheWrite: 1.25, output: 10.00 },
+    "gpt-4o":                { input: 2.50, cachedInput: 1.25, cacheWrite: 2.50, output: 10.00 },
+    "gpt-4o-mini":           { input: 0.15, cachedInput: 0.075, cacheWrite: 0.15, output: 0.60 },
+  };
+
+  // Resolve a model id (e.g. "claude-haiku-4-5-20251001", "gpt-5.4", "haiku")
+  // to a canonical pricing key. Falls back to broad family match.
+  function resolvePricingKey(modelId) {
+    if (!modelId) return null;
+    const m = String(modelId).toLowerCase();
+    if (MODEL_PRICING[m]) return m;
+    // Strip date suffix on Anthropic models (e.g. claude-haiku-4-5-20251001 → claude-haiku-4-5)
+    const stripped = m.replace(/-\d{8}$/, "");
+    if (MODEL_PRICING[stripped]) return stripped;
+    // Family match
+    if (m.includes("haiku")) return "haiku";
+    if (m.includes("sonnet")) return "sonnet";
+    if (m.includes("opus")) return "opus";
+    if (m.includes("gpt-5-mini") || m.includes("gpt-5.4-mini")) return "gpt-5-mini";
+    if (m.includes("gpt-5")) return "gpt-5";
+    if (m.includes("gpt-4o-mini")) return "gpt-4o-mini";
+    if (m.includes("gpt-4o")) return "gpt-4o";
+    return null;
+  }
+
+  // Compute USD cost from a usage object. Handles both Claude and Codex shapes.
+  // usage shape (normalized): { input_tokens, output_tokens, cache_read_input_tokens?, cache_creation_input_tokens?, cached_input_tokens? }
+  function estimateCost(usage, modelId) {
+    if (!usage) return null;
+    const key = resolvePricingKey(modelId);
+    if (!key) return null;
+    const p = MODEL_PRICING[key];
+    const fresh = usage.input_tokens || 0;
+    const out = usage.output_tokens || 0;
+    const cacheRead = usage.cache_read_input_tokens || usage.cached_input_tokens || 0;
+    const cacheWrite = usage.cache_creation_input_tokens || 0;
+    const cost =
+      (fresh * p.input
+        + cacheRead * p.cachedInput
+        + cacheWrite * p.cacheWrite
+        + out * p.output) / 1_000_000;
+    return { usd: cost, pricingKey: key };
+  }
+
+  // Get CLI version (cached). `claude --version` / `codex --version`.
+  const cliVersionCache = new Map();
+  function getCliVersion(binPath) {
+    if (!binPath) return null;
+    if (cliVersionCache.has(binPath)) return cliVersionCache.get(binPath);
+    let version = null;
+    try {
+      const out = execFileSync(binPath, ["--version"], { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "pipe"] });
+      const m = out.match(/(\d+\.\d+\.\d+(?:[-+][\w.]+)?)/);
+      version = m ? m[1] : out.trim().split("\n")[0].slice(0, 50);
+    } catch { /* ignore */ }
+    cliVersionCache.set(binPath, version);
+    return version;
+  }
+
+  // Read default model from local CLI config files.
+  function getClaudeDefaultModel() {
+    try {
+      const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
+      const text = fs.readFileSync(settingsPath, "utf8");
+      const cfg = JSON.parse(text);
+      if (cfg && typeof cfg.model === "string") return cfg.model;
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  function getCodexDefaultModel() {
+    try {
+      const cfgPath = path.join(os.homedir(), ".codex", "config.toml");
+      const text = fs.readFileSync(cfgPath, "utf8");
+      // Cheap TOML scrape: first top-level `model = "..."` line
+      const m = text.match(/^model\s*=\s*"([^"]+)"/m);
+      if (m) return m[1];
+    } catch { /* ignore */ }
+    return null;
+  }
+
   function getAvailableAnalysisProviders() {
     const options = [];
     const claudePath = findClaudeBinary();
-    if (claudePath && !getProviderCooldown("claude-code")) options.push({ id: "claude-code", type: "claude-cli", label: "Claude Code", path: claudePath });
+    if (claudePath && !getProviderCooldown("claude-code")) {
+      const version = getCliVersion(claudePath);
+      const model = getClaudeDefaultModel();
+      const pricingKey = resolvePricingKey(model);
+      options.push({
+        id: "claude-code",
+        type: "claude-cli",
+        label: "Claude Code",
+        path: claudePath,
+        version,
+        model,
+        pricingKey,
+      });
+    }
     const codexPath = findCodexBinary();
-    if (codexPath && !getProviderCooldown("codex")) options.push({ id: "codex", type: "codex-cli", label: "Codex", path: codexPath });
+    if (codexPath && !getProviderCooldown("codex")) {
+      const version = getCliVersion(codexPath);
+      const model = getCodexDefaultModel();
+      const pricingKey = resolvePricingKey(model);
+      options.push({
+        id: "codex",
+        type: "codex-cli",
+        label: "Codex",
+        path: codexPath,
+        version,
+        model,
+        pricingKey,
+      });
+    }
     const apiOption = getConfiguredApiProviderOption();
     if (apiOption) options.push(apiOption);
     return options;
@@ -789,16 +1013,48 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "\n请返回 JSON（不要 markdown code block），格式：\n";
     p += '{"summary":"2-3 句话概括用户在这段对话中做了什么、获得了什么成果"';
     p += ',"keyTopics":["话题1","话题2","话题3"]';
-    p += ',"outcomes":["一句话成果描述——展开说明用户从中学到的关键知识点、新思路或具体细节，帮助用户回忆起当时获得的核心认知"]';
+    p += ',"outcomes":[{"headline":"极简核心成果（6-14 字）","detail":"展开说明用户学到的关键知识点、新思路或具体细节，帮助用户回忆起当时获得的核心认知"}]';
     p += ',"timeBreakdown":[{"activity":"用户视角的活动描述","percent":百分比}]';
     p += ',"suggestions":["建议1"]}\n';
-    p += "所有字段用中文。keyTopics 提取 3-5 个关键话题。outcomes 要具体且有信息量：不要只说'获得了阅读建议'，而要说'了解到该论文提出了X方法解决Y问题——核心思路是Z，与用户项目的关联在于W'。每条 outcome 用破折号分隔概述和展开，让用户看到就能回忆起关键认知。timeBreakdown 从用户视角描述时间分配（如'讨论架构设计'而非'调用Read工具'）。";
+    p += "所有字段用中文。keyTopics 提取 3-5 个关键话题。\n";
+    p += "outcomes 每条是 {headline, detail} 对象：\n";
+    p += "  - headline：6-14 字的极简中文短语，高度概括这一条成果的核心。不要用完整句子，不要加标点。示例：'掌握 3 阶段 T2V 流水线'、'明确 cache 项目关联度低'、'定位论文到飞书分类'。\n";
+    p += "  - detail：一句话展开具体内容，要具体且有信息量。不要只说'获得了阅读建议'，而要说'了解到该论文提出了X方法解决Y问题——核心思路是Z，与用户项目的关联在于W'。让用户看到就能回忆起关键认知。\n";
+    p += "timeBreakdown 从用户视角描述时间分配（如'讨论架构设计'而非'调用Read工具'）。";
     return p;
   }
 
+  // Append-mode system prompt that nudges Claude Code into pure-analysis mode
+  // WITHOUT replacing the default system prompt entirely (which would kill the
+  // ~6K cache_read benefit). Combined with --tools "" + --disable-slash-commands,
+  // this is the winning Phase 0 configuration.
+  //
+  // Real benchmark vs default `-p` (haiku-4-5, identical user prompt, warm cache):
+  //   baseline:   $0.01076 / 14.2s / 1513 out / 31,879 cache_read
+  //   optimized:  $0.00640 / 12.2s / 1146 out /  6,622 cache_read
+  //   savings:    -40% cost, -14% duration, -24% output tokens
+  //
+  // Why each flag matters:
+  //   --append-system-prompt → tells the model "no tools, JSON only" while
+  //                            keeping the default system prompt cacheable
+  //   --tools ""             → drops 25K of tool definitions from the prompt
+  //   --disable-slash-commands → drops the skill registry (lark-* etc)
+  const ANALYSIS_APPEND_SYSTEM_PROMPT =
+    "IMPORTANT: For this conversation only — you are operating in pure analysis mode. " +
+    "Do NOT use any tool, do NOT investigate, do NOT search files. " +
+    "The user message contains all the data you need. " +
+    "Respond with ONLY the requested JSON object, no markdown fences, no preamble.";
+
   function callClaudeCLI(claudePath, prompt) {
     return new Promise((resolve, reject) => {
-      const child = spawnCli(claudePath, ["-p", prompt, "--output-format", "stream-json"], {
+      const args = [
+        "-p", prompt,
+        "--output-format", "stream-json",
+        "--tools", "",                                          // disable all built-in tools (-25K tokens)
+        "--disable-slash-commands",                             // skip skill loading
+        "--append-system-prompt", ANALYSIS_APPEND_SYSTEM_PROMPT, // nudge to JSON-only mode
+      ];
+      const child = spawnCli(claudePath, args, {
         env: buildCliEnv({ CLAUDE_CODE_ENTRYPOINT: "cli" }),
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -853,6 +1109,8 @@ module.exports = function initAnalyticsAI(ctx) {
         // The last "result" message contains the text and usage
         let text = "";
         let usage = null;
+        let model = null;
+        let costUsd = null;
         try {
           const lines = stdout.split("\n").filter(Boolean);
           for (const line of lines) {
@@ -860,8 +1118,8 @@ module.exports = function initAnalyticsAI(ctx) {
               const obj = JSON.parse(line);
               if (obj.type === "result") {
                 text = obj.result || "";
-                if (obj.total_cost_usd) usage = { cost_usd: obj.total_cost_usd };
-                if (obj.usage) usage = { ...usage, ...obj.usage };
+                if (typeof obj.total_cost_usd === "number") costUsd = obj.total_cost_usd;
+                if (obj.usage) usage = { ...(usage || {}), ...obj.usage };
               } else if (obj.type === "assistant" && obj.message) {
                 const content = obj.message.content;
                 if (Array.isArray(content)) {
@@ -869,6 +1127,7 @@ module.exports = function initAnalyticsAI(ctx) {
                     if (c.type === "text") text = c.text;
                   }
                 }
+                if (obj.message.model) model = obj.message.model;
                 if (obj.message.usage) usage = obj.message.usage;
               }
             } catch { /* skip unparseable lines */ }
@@ -878,7 +1137,7 @@ module.exports = function initAnalyticsAI(ctx) {
         }
         if (!text) text = stdout;
         settled = true;
-        resolve({ text, usage });
+        resolve({ text, usage, model, costUsd });
       });
     });
   }
@@ -898,7 +1157,7 @@ module.exports = function initAnalyticsAI(ctx) {
         return cached;
       }
       // Content changed — re-analyze
-      console.log(`Clawd analytics: session ${cacheKey} grew (${cached._msgCount} → ${(detail.userMessages||[]).length} msgs), re-analyzing`);
+      console.log(`Clawd analytics: session ${cacheKey} grew (${cached._msgCount} → ${(detail.userMessages || []).length} msgs), re-analyzing`);
       sessionAnalysisCache.delete(cacheKey);
     }
 
@@ -972,21 +1231,41 @@ module.exports = function initAnalyticsAI(ctx) {
         const cliResult = await callFn(cliPath, prompt, { cwd: detail.cwd });
         const text = cliResult.text;
         const usage = cliResult.usage;
+        // Resolve model: prefer runtime (from jsonl events), fall back to
+        // configured default (~/.claude/settings.json or ~/.codex/config.toml).
+        // Without this fallback, codex 0.117 and earlier (no turn_context.model)
+        // would lose cost display entirely.
+        let runtimeModel = cliResult.model || null;
+        if (!runtimeModel) {
+          if (cliProviderId === "codex") runtimeModel = getCodexDefaultModel();
+          else if (cliProviderId === "claude-code") runtimeModel = getClaudeDefaultModel();
+        }
+        const runtimeCostUsd = typeof cliResult.costUsd === "number" ? cliResult.costUsd : null;
+        // Compute estimated cost: prefer CLI-provided cost, else use pricing table
+        let estCost = null;
+        if (runtimeCostUsd !== null) {
+          estCost = { usd: runtimeCostUsd, source: "cli" };
+        } else if (usage) {
+          const c = estimateCost(usage, runtimeModel);
+          if (c) estCost = { usd: c.usd, source: "estimate", pricingKey: c.pricingKey };
+        }
+
+        const attachMeta = (obj) => {
+          if (usage) obj._usage = usage;
+          if (runtimeModel) obj._model = runtimeModel;
+          if (estCost) obj._cost = estCost;
+          obj._provider = cliName;
+          obj._msgCount = (detail.userMessages || []).length;
+          obj._analysisMs = Date.now() - startTime;
+          return obj;
+        };
         if (text) {
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
-            const result = JSON.parse(jsonMatch[0]);
-            if (usage) result._usage = usage;
-            result._provider = cliName;
-            result._msgCount = (detail.userMessages || []).length;
-            result._analysisMs = Date.now() - startTime;
+            const result = attachMeta(JSON.parse(jsonMatch[0]));
             return maybeCacheAnalysisResult(cacheKey, result);
           }
-          const fallback = { summary: text.trim().slice(0, 300), keyTopics: [], outcomes: [], timeBreakdown: [], suggestions: [] };
-          if (usage) fallback._usage = usage;
-          fallback._provider = cliName;
-          fallback._msgCount = (detail.userMessages || []).length;
-          fallback._analysisMs = Date.now() - startTime;
+          const fallback = attachMeta({ summary: text.trim().slice(0, 300), keyTopics: [], outcomes: [], timeBreakdown: [], suggestions: [] });
           return maybeCacheAnalysisResult(cacheKey, fallback);
         }
       } catch (err) {
@@ -1010,10 +1289,10 @@ module.exports = function initAnalyticsAI(ctx) {
       const msg = forcedApiProvider
         ? `${providerDef.label} 未配置 API Key。请先在设置中配置后再分析。`
         : cliPath
-        ? `${cliName} 执行失败: ${cliError || "unknown error"}。可配置 API Key 作为备选。`
-        : cliError
-        ? `${cliError} 可配置 API Key 作为备选。`
-        : "未找到本地 CLI，且未配置 API Key。请安装 Claude Code 或配置 API Key。";
+          ? `${cliName} 执行失败: ${cliError || "unknown error"}。可配置 API Key 作为备选。`
+          : cliError
+            ? `${cliError} 可配置 API Key 作为备选。`
+            : "未找到本地 CLI，且未配置 API Key。请安装 Claude Code 或配置 API Key。";
       return maybeCacheAnalysisResult(cacheKey, { summary: msg, keyTopics: [], outcomes: [], timeBreakdown: [], suggestions: [], _provider: cliName || provider });
     }
 
@@ -1032,7 +1311,7 @@ module.exports = function initAnalyticsAI(ctx) {
       if (!text) return null;
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        const result = { summary: text.slice(0, 300), timeBreakdown: [], insights: [], suggestions: [], _msgCount: (detail.userMessages||[]).length, _analysisMs: Date.now()-startTime };
+        const result = { summary: text.slice(0, 300), timeBreakdown: [], insights: [], suggestions: [], _msgCount: (detail.userMessages || []).length, _analysisMs: Date.now() - startTime };
         return maybeCacheAnalysisResult(cacheKey, result);
       }
       const result = JSON.parse(jsonMatch[0]);
