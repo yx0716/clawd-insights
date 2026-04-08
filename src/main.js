@@ -244,6 +244,9 @@ function reapplyMacVisibility() {
         const opts = { visibleOnFullScreen: true };
         if (!showDock) opts.skipTransformProcessType = true;
         w.setVisibleOnAllWorkspaces(true, opts);
+        // First, try the native flicker-free path.
+        // If the native path fails, use Electron's cross-space API as a fallback.
+        // After using Electron as a fallback, try the native enhancement again to avoid Electron resetting the window behavior we want.
         applyStationaryCollectionBehavior(w);
       }
     }
