@@ -60,12 +60,13 @@ const REQUIRED_STATES = ["idle", "working", "thinking", "sleeping", "waking"];
 
 // ── SVG sanitization config ──
 const DANGEROUS_TAGS = new Set([
-  "script", "style", "foreignobject", "iframe", "embed", "object", "applet",
+  "script", "foreignobject", "iframe", "embed", "object", "applet",
   "meta", "link", "base", "form", "input", "textarea", "button",
 ]);
 const DANGEROUS_ATTR_RE = /^on/i;
 const DANGEROUS_HREF_RE = /^\s*javascript\s*:/i;
 const EXTERNAL_RESOURCE_RE = /^\s*(https?|data|file|ftp)\s*:/i;
+const PATH_TRAVERSAL_RE = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 const HREF_ATTRS = new Set(["href", "xlink:href", "src", "action", "formaction"]);
 
 // ── State ──
@@ -319,6 +320,20 @@ function _sanitizeNode(node) {
       }
     }
 
+    // Sanitize <style> CSS content: strip @import and url() to block external loads
+    // while preserving @keyframes and other animation CSS that themes need
+    if (child.type === "style" || (child.type === "tag" && (child.name || "").toLowerCase() === "style")) {
+      if (child.children) {
+        for (const textNode of child.children) {
+          if (textNode.type === "text" && textNode.data) {
+            textNode.data = textNode.data
+              .replace(/@import\b[^;]*/gi, "/* sanitized */")
+              .replace(/url\s*\([^)]*\)/gi, "url()");
+          }
+        }
+      }
+    }
+
     // Clean attributes on element nodes
     if (child.attribs) {
       const keys = Object.keys(child.attribs);
@@ -328,10 +343,10 @@ function _sanitizeNode(node) {
           delete child.attribs[key];
           continue;
         }
-        // Remove javascript: URLs and external resource references
+        // Remove javascript: URLs, external protocols, and path traversal
         if (HREF_ATTRS.has(key.toLowerCase())) {
           const val = child.attribs[key];
-          if (DANGEROUS_HREF_RE.test(val) || EXTERNAL_RESOURCE_RE.test(val)) {
+          if (DANGEROUS_HREF_RE.test(val) || EXTERNAL_RESOURCE_RE.test(val) || PATH_TRAVERSAL_RE.test(val)) {
             delete child.attribs[key];
           }
         }
@@ -633,6 +648,40 @@ function mergeDefaults(raw, themeId, isBuiltin) {
 
   // idleAnimations
   theme.idleAnimations = raw.idleAnimations || [];
+
+  // ── Filename sanitization: basename all file references to prevent path traversal ──
+  const bn = (f) => typeof f === "string" ? path.basename(f) : f;
+  for (const [s, files] of Object.entries(theme.states || {})) {
+    if (Array.isArray(files)) theme.states[s] = files.map(bn);
+  }
+  if (theme.miniMode && theme.miniMode.states) {
+    for (const [s, files] of Object.entries(theme.miniMode.states)) {
+      if (Array.isArray(files)) theme.miniMode.states[s] = files.map(bn);
+    }
+  }
+  if (theme.reactions) {
+    for (const r of Object.values(theme.reactions)) {
+      if (r && r.file) r.file = bn(r.file);
+      if (r && Array.isArray(r.files)) r.files = r.files.map(bn);
+    }
+  }
+  if (theme.sounds) {
+    for (const [k, v] of Object.entries(theme.sounds)) theme.sounds[k] = bn(v);
+  }
+  if (theme.displayHintMap) {
+    for (const [k, v] of Object.entries(theme.displayHintMap)) theme.displayHintMap[k] = bn(v);
+  }
+  if (theme.workingTiers) {
+    for (const t of theme.workingTiers) { if (t.file) t.file = bn(t.file); }
+  }
+  if (theme.jugglingTiers) {
+    for (const t of theme.jugglingTiers) { if (t.file) t.file = bn(t.file); }
+  }
+  if (Array.isArray(theme.idleAnimations)) {
+    for (const a of theme.idleAnimations) { if (a && a.file) a.file = bn(a.file); }
+  }
+  if (Array.isArray(theme.wideHitboxFiles)) theme.wideHitboxFiles = theme.wideHitboxFiles.map(bn);
+  if (Array.isArray(theme.sleepingHitboxFiles)) theme.sleepingHitboxFiles = theme.sleepingHitboxFiles.map(bn);
 
   return theme;
 }
