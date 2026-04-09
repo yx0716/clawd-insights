@@ -435,6 +435,7 @@ let analysisOptions = [];
 let projectColorMap = {};
 const batchCache = {}; // `${provider}:${sessionId}` → analysis result
 const analyzingSessionIds = new Set(); // sessionIds currently being analyzed (cross-tab persistent)
+let currentAnalysisMode = "brief";
 
 function markAnalyzing(sid) {
   analyzingSessionIds.add(sid);
@@ -448,6 +449,55 @@ function unmarkAnalyzing(sid) {
 }
 
 function analysisCacheKey(sessionId, provider = selectedAnalysisAgent, mode) { return `${provider||"claude-code"}:${sessionId}${mode?":"+mode:""}`; }
+
+function getAnalysisOptionById(providerId) {
+  const opts = analysisOptions && analysisOptions.length
+    ? analysisOptions
+    : (analysisProvider ? [analysisProvider] : []);
+  return opts.find(opt => (opt.id || opt.provider) === providerId) || null;
+}
+
+function formatAnalysisProviderShort(input) {
+  const opt = typeof input === "string" ? getAnalysisOptionById(input) : input;
+  const providerId = typeof input === "string" ? input : (opt && (opt.id || opt.provider));
+  if (opt) {
+    if (opt.type === "claude-cli" || opt.id === "claude-code") return "Claude Code";
+    if (opt.type === "codex-cli" || opt.id === "codex") return "Codex";
+    if (opt.type === "api") {
+      if (opt.provider === "claude") return "Claude API";
+      if (opt.provider === "openai") return "OpenAI API";
+      if (opt.provider === "ollama") return "Ollama";
+      return opt.label || "API";
+    }
+    return opt.label || providerId || "AI";
+  }
+  if (providerId === "claude-code") return "Claude Code";
+  if (providerId === "codex") return "Codex";
+  if (providerId === "api:claude") return "Claude API";
+  if (providerId === "api:openai") return "OpenAI API";
+  if (providerId === "api:ollama") return "Ollama";
+  return providerId || "AI";
+}
+
+function formatAnalysisModeShort(mode) {
+  return mode === "detail" ? "深入" : "简报";
+}
+
+function getSessionFrontendMsgCount(sessionId) {
+  const sess = (currentData && currentData.sessions || []).find(s => s.id === sessionId);
+  return sess ? sess.messages : null;
+}
+
+function isFrontendCacheFresh(result, sessionId) {
+  const msgCount = getSessionFrontendMsgCount(sessionId);
+  return !(msgCount !== null && result && result._frontendMsgCount && msgCount !== result._frontendMsgCount);
+}
+
+function stampAnalysisProvider(result, provider) {
+  if (!result || !provider) return result;
+  if (!result._selectedProvider) result._selectedProvider = provider;
+  return result;
+}
 
 // localStorage persistence so analysis results survive window close.
 const LS_CACHE_KEY = "clawd-analysis-cache-v1";
@@ -488,28 +538,38 @@ function getCachedAnalysis(sessionId, provider = selectedAnalysisAgent, mode) {
   // If mode specified, look for exact match first
   if (mode) {
     const exact = batchCache[analysisCacheKey(sessionId, provider, mode)];
-    if (exact) {
-      const sess = (currentData && currentData.sessions || []).find(s => s.id === sessionId);
-      if (sess && exact._frontendMsgCount && sess.messages !== exact._frontendMsgCount) return null;
-      return exact;
-    }
+    if (exact && isFrontendCacheFresh(exact, sessionId)) return stampAnalysisProvider(exact, provider);
+    // Fallback 2: legacy key without explicit mode for the current provider.
+    const legacy = batchCache[analysisCacheKey(sessionId, provider)];
+    if (legacy && isFrontendCacheFresh(legacy, sessionId)) return stampAnalysisProvider(legacy, provider);
     return null;
   }
   // No mode specified: try mode-specific keys first (prefer brief), then legacy key without mode
   let cached = batchCache[analysisCacheKey(sessionId, provider, "brief")]
             || batchCache[analysisCacheKey(sessionId, provider, "detail")]
             || batchCache[analysisCacheKey(sessionId, provider)];
-  // Fallback: any other provider that's analyzed this session before
-  if (!cached) {
-    const suffix = `:${sessionId}`;
-    for (const k of Object.keys(batchCache)) {
-      if (k.includes(suffix)) { cached = batchCache[k]; break; }
+  if (!cached) return null;
+  if (!isFrontendCacheFresh(cached, sessionId)) return null;
+  return stampAnalysisProvider(cached, provider);
+}
+
+function findAlternateCachedAnalysis(sessionId, mode, excludeProvider = selectedAnalysisAgent) {
+  const suffixes = mode
+    ? [`:${sessionId}:${mode}`, `:${sessionId}`]
+    : [`:${sessionId}:brief`, `:${sessionId}:detail`, `:${sessionId}`];
+  for (const suffix of suffixes) {
+    for (const [key, candidate] of Object.entries(batchCache)) {
+      if (!key.endsWith(suffix)) continue;
+      const providerId = key.slice(0, key.length - suffix.length);
+      if (!providerId || providerId === excludeProvider) continue;
+      if (!isFrontendCacheFresh(candidate, sessionId)) continue;
+      return {
+        providerId,
+        result: stampAnalysisProvider(candidate, providerId),
+      };
     }
   }
-  if (!cached) return null;
-  const sess = (currentData && currentData.sessions || []).find(s => s.id === sessionId);
-  if (sess && cached._frontendMsgCount && sess.messages !== cached._frontendMsgCount) return null;
-  return cached;
+  return null;
 }
 function setCachedAnalysis(sessionId, provider, result) {
   const mode = result && result._mode ? result._mode : null;
@@ -517,6 +577,7 @@ function setCachedAnalysis(sessionId, provider, result) {
   if (result && result._cacheable !== false) {
     const sess = (currentData && currentData.sessions || []).find(s => s.id === sessionId);
     if (sess) result._frontendMsgCount = sess.messages;
+    result._selectedProvider = provider;
     result._ts = Date.now();
     batchCache[key] = result;
     persistCacheToStorage();
@@ -553,7 +614,53 @@ function formatCost(usd) {
   return "$" + usd.toFixed(2);
 }
 function getSelectedAnalysisOption() {
-  return analysisOptions.find(opt => opt.id === selectedAnalysisAgent) || analysisOptions[0] || null;
+  return getAnalysisOptionById(selectedAnalysisAgent) || analysisOptions[0] || null;
+}
+
+async function openAnalysisProviderPicker(currentProviderId) {
+  const opts = analysisOptions && analysisOptions.length
+    ? analysisOptions
+    : (analysisProvider ? [analysisProvider] : []);
+  if (!opts || opts.length <= 1) return null;
+  return new Promise(resolve => {
+    const o = document.createElement("div");
+    o.className = "confirm-overlay";
+    const optionsHtml = opts.map(opt => {
+      const id = opt.id || opt.provider;
+      const active = id === currentProviderId;
+      return `<button data-provider-id="${escapeHtml(id)}" style="padding:8px 10px;border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${active ? 'var(--accent-light)' : 'var(--bg-card)'};color:${active ? 'var(--accent)' : 'var(--text)'};cursor:pointer;text-align:left;font-size:12px">${escapeHtml(formatAnalysisProviderShort(opt))}</button>`;
+    }).join("");
+    o.innerHTML = `<div class="confirm-dialog" style="max-width:320px;text-align:left">
+      <p style="margin-bottom:10px">选择分析器</p>
+      <div style="display:flex;flex-direction:column;gap:8px">${optionsHtml}</div>
+      <div class="confirm-btns" style="margin-top:12px"><button class="btn-cancel">取消</button></div>
+    </div>`;
+    document.body.appendChild(o);
+    o.querySelectorAll("[data-provider-id]").forEach(btn => {
+      btn.onclick = () => {
+        const providerId = btn.getAttribute("data-provider-id");
+        o.remove();
+        resolve(providerId);
+      };
+    });
+    o.querySelector(".btn-cancel").onclick = () => { o.remove(); resolve(null); };
+  });
+}
+
+function renderAnalysisHeader(providerId, mode, targetProviderId = selectedAnalysisAgent) {
+  const providerLabel = formatAnalysisProviderShort(providerId);
+  const detailActive = mode === "detail";
+  const showProviderSwitch = (analysisOptions && analysisOptions.length > 1) || false;
+  const regenLabel = targetProviderId && targetProviderId !== providerId ? `改用 ${formatAnalysisProviderShort(targetProviderId)}` : "";
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+    <div style="display:flex;gap:4px;padding:2px;background:var(--border);border-radius:999px">
+      <button data-analysis-mode="brief" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'transparent' : 'var(--bg-card)'};color:${detailActive ? 'var(--text-secondary)' : 'var(--accent)'};font-size:11px;font-weight:700;cursor:pointer">速览</button>
+      <button data-analysis-mode="detail" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'var(--bg-card)' : 'transparent'};color:${detailActive ? 'var(--accent)' : 'var(--text-secondary)'};font-size:11px;font-weight:700;cursor:pointer">深入</button>
+    </div>
+    <span style="font-size:10px;padding:3px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border-light);color:var(--text);font-weight:700">${escapeHtml(providerLabel)}</span>
+    ${showProviderSwitch ? `<button id="analysisProviderSwitchBtn" style="margin-left:auto;border:none;background:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0">换分析器</button>` : '<span style="margin-left:auto"></span>'}
+    ${regenLabel ? `<button id="analysisRegenerateBtn" style="border:none;background:none;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;padding:2px 0">${escapeHtml(regenLabel)}</button>` : ""}
+  </div>`;
 }
 
 function fmtDur(ms) { if(!ms||ms<=0)return"0m"; const h=Math.floor(ms/3600000),m=Math.round((ms%3600000)/60000); return h>0?`${h}h${m>0?m+"m":""}`:m+"m"; }
@@ -1081,45 +1188,108 @@ function showAnalysisContent(){
   const ph=document.getElementById("analysisPlaceholder"),ld=document.getElementById("analysisLoading"),ct=document.getElementById("analysisContent");
   ph.style.display="none";ld.style.display="none";ct.style.display="block";
 }
+
+function getSessionAgent(sessionId) {
+  const sess = currentData && currentData.sessions ? currentData.sessions.find(s => s.id === sessionId) : null;
+  return sess ? sess.agent : "claude-code";
+}
+
+async function ensureAnalysisConsent(providerId) {
+  if (analysisConsented) return true;
+  if (!analysisOptions.length) try { analysisOptions = await window.analyticsAPI.getAnalysisOptions(); } catch {}
+  if (!analysisProvider) try { analysisProvider = await window.analyticsAPI.getAnalysisProvider(); } catch {}
+  const selectedOption = getAnalysisOptionById(providerId) || getSelectedAnalysisOption() || analysisProvider;
+  if (!selectedOption) {
+    showAnalysisContent();
+    const ct = document.getElementById("analysisContent");
+    ct.innerHTML = renderNoProviderError();
+    bindAnalysisErrorLinks(ct);
+    return null;
+  }
+  if (selectedOption.id) selectedAnalysisAgent = selectedOption.id;
+  const ok = await showConfirm(selectedOption);
+  if (!ok) return false;
+  analysisConsented = true;
+  return true;
+}
+
+async function requestSessionAnalysis(sessionId, agent, providerId, mode) {
+  markAnalyzing(sessionId);
+  try {
+    let result = await window.analyticsAPI.analyzeSession(sessionId, agent, providerId, mode);
+    if (mode === "detail" && result && !result.keyTopics && !result.outcomes) {
+      console.warn("Detail analysis returned unstructured fallback, retrying as brief");
+      result = await window.analyticsAPI.analyzeSession(sessionId, agent, providerId, "brief");
+    }
+    if (result) setCachedAnalysis(sessionId, providerId, result);
+    return result;
+  } finally {
+    unmarkAnalyzing(sessionId);
+  }
+}
+
+function attachFallbackNotice(result, targetProviderId, requestedMode) {
+  if (!result) return result;
+  return {
+    ...result,
+    _targetProvider: targetProviderId,
+    _requestedMode: requestedMode || result._mode || "brief",
+    _fallbackNotice: targetProviderId && targetProviderId !== result._selectedProvider
+      ? `当前显示的是 ${formatAnalysisProviderShort(result._selectedProvider)} 的缓存`
+      : "",
+  };
+}
+
+async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
+  const targetMode = mode || "brief";
+  currentAnalysisMode = targetMode;
+  const ct = document.getElementById("analysisContent");
+  const cached = getCachedAnalysis(sessionId, selectedAnalysisAgent, targetMode);
+  if (cached) {
+    showAnalysisContent();
+    renderAnalysis(cached);
+    bindAnalysisErrorLinks(ct);
+    return;
+  }
+  const alternate = findAlternateCachedAnalysis(sessionId, targetMode, selectedAnalysisAgent);
+  if (alternate) {
+    showAnalysisContent();
+    renderAnalysis(attachFallbackNotice(alternate.result, selectedAnalysisAgent, targetMode));
+    return;
+  }
+  const consent = await ensureAnalysisConsent(selectedAnalysisAgent);
+  if (!consent) {
+    if (consent === false && selectedSessionId === sessionId) {
+      selectedSessionId = null;
+      showAnalysisPlaceholder();
+      refreshSel();
+    }
+    return;
+  }
+  showAnalysisLoading();
+  try {
+    const result = await requestSessionAnalysis(sessionId, agent, selectedAnalysisAgent, targetMode);
+    if (selectedSessionId !== sessionId) return;
+    showAnalysisContent();
+    if (!result) {
+      ct.innerHTML = '<div style="color:var(--text-secondary)">Could not analyze</div>';
+      return;
+    }
+    currentAnalysisMode = result._mode || targetMode;
+    renderAnalysis(result);
+    bindAnalysisErrorLinks(ct);
+    if (currentData) renderEvents(currentData);
+  } catch (err) {
+    showAnalysisContent();
+    ct.innerHTML = renderAnalysisErrorMessage(err && (err.message || String(err)));
+    bindAnalysisErrorLinks(ct);
+  }
+}
+
 async function selectSession(sid,agent){
   if(selectedSessionId===sid){selectedSessionId=null;showAnalysisPlaceholder();refreshSel();return;}
   selectedSessionId=sid;refreshSel();
-  showAnalysisLoading();
-  const ct=document.getElementById("analysisContent");
-  const cached=getCachedAnalysis(sid);
-  // Use cached batch result if available
-  if(cached){
-    showAnalysisContent();
-    renderAnalysis(cached);return;
-  }
-  if(!analysisConsented){
-    if(!analysisOptions.length)try{analysisOptions=await window.analyticsAPI.getAnalysisOptions();}catch{}
-    if(!analysisProvider)try{analysisProvider=await window.analyticsAPI.getAnalysisProvider();}catch{}
-    const selectedOption=getSelectedAnalysisOption()||analysisProvider;
-    if(!selectedOption){showAnalysisContent();ct.innerHTML=renderNoProviderError();bindAnalysisErrorLinks(ct);return;}
-    if(selectedOption.id)selectedAnalysisAgent=selectedOption.id;
-    const ok=await showConfirm(selectedOption);
-    if(!ok){selectedSessionId=null;showAnalysisPlaceholder();refreshSel();return;}
-    analysisConsented=true;
-  }
-  markAnalyzing(sid);
-  try{
-    const r=await window.analyticsAPI.analyzeSession(sid,agent,selectedAnalysisAgent,"brief");
-    unmarkAnalyzing(sid);
-    // Guard: if user switched to a different session while we were waiting, cache result silently
-    if(selectedSessionId!==sid){if(r)setCachedAnalysis(sid,selectedAnalysisAgent,r);return;}
-    showAnalysisContent();
-    if(!r){ct.innerHTML='<div style="color:var(--text-secondary)">Could not analyze</div>';return;}
-    setCachedAnalysis(sid,selectedAnalysisAgent,r);
-    renderAnalysis(r);
-    bindAnalysisErrorLinks(ct);
-    if(currentData)renderEvents(currentData);
-  }catch(err){
-    unmarkAnalyzing(sid);
-    showAnalysisContent();
-    ct.innerHTML=renderAnalysisErrorMessage(err && (err.message||String(err)));
-    bindAnalysisErrorLinks(ct);
-  }
+  await loadAnalysisForSession(sid,agent,"brief");
 }
 
 // Detect "fixable" analyzer errors and append an Open Settings link.
@@ -1173,6 +1343,15 @@ function showConfirm(p){return new Promise(res=>{const o=document.createElement(
 function renderAnalysis(r){
   r=sanitizeAnalysis(r);
   const ct=document.getElementById("analysisContent");let h="";
+  const providerId = r._selectedProvider || selectedAnalysisAgent;
+  const mode = r._mode || "brief";
+  const targetProviderId = r._targetProvider || selectedAnalysisAgent;
+  currentAnalysisMode = mode;
+
+  h += renderAnalysisHeader(providerId, mode, targetProviderId);
+  if (r._fallbackNotice) {
+    h += `<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border-light);font-size:11px;color:var(--text-secondary)">${escapeHtml(r._fallbackNotice)}</div>`;
+  }
 
   // Summary + topics
   if(r.summary)h+=`<div class="analysis-summary">${escapeHtml(r.summary)}</div>`;
@@ -1255,50 +1434,51 @@ function renderAnalysis(r){
   if (r.summary && isFixableAnalysisError(r.summary)) {
     h += `<div style="margin-top:8px;font-size:11px"><a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API provider as a fallback.</div>`;
   }
-  // Show "深入分析" button if this was a brief result, or "简报" if detailed
-  if (r._mode === "brief" || !r._mode) {
-    h += `<div style="margin-top:12px;text-align:right"><button class="detail-analysis-btn" style="font-size:11px;padding:4px 12px;border:1px solid var(--accent);border-radius:6px;background:none;color:var(--accent);cursor:pointer;transition:background .15s,color .15s" onmouseover="this.style.background='var(--accent)';this.style.color='#fff'" onmouseout="this.style.background='none';this.style.color='var(--accent)'">深入分析 →</button></div>`;
-  } else if (r._mode === "detail") {
-    h += `<div style="margin-top:12px;text-align:right"><button class="brief-analysis-btn" style="font-size:11px;padding:4px 12px;border:1px solid var(--text-muted);border-radius:6px;background:none;color:var(--text-muted);cursor:pointer;transition:background .15s" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='none'">← 简报</button></div>`;
-  }
   ct.innerHTML=h;
   bindAnalysisErrorLinks(ct);
-  // Bind mode-switch buttons
-  const detailBtn = ct.querySelector(".detail-analysis-btn");
-  if (detailBtn) detailBtn.addEventListener("click", () => runAnalysisMode("detail"));
-  const briefBtn = ct.querySelector(".brief-analysis-btn");
-  if (briefBtn) briefBtn.addEventListener("click", () => runAnalysisMode("brief"));
+  ct.querySelectorAll("[data-analysis-mode]").forEach(btn => {
+    btn.addEventListener("click", () => runAnalysisMode(btn.getAttribute("data-analysis-mode")));
+  });
+  const providerSwitchBtn = ct.querySelector("#analysisProviderSwitchBtn");
+  if (providerSwitchBtn) {
+    providerSwitchBtn.addEventListener("click", async () => {
+      const nextProvider = await openAnalysisProviderPicker(targetProviderId);
+      if (!nextProvider || nextProvider === selectedAnalysisAgent) return;
+      selectedAnalysisAgent = nextProvider;
+      if (currentData) renderEvents(currentData);
+      if (!selectedSessionId) return;
+      await loadAnalysisForSession(selectedSessionId, getSessionAgent(selectedSessionId), currentAnalysisMode);
+    });
+  }
+  const regenerateBtn = ct.querySelector("#analysisRegenerateBtn");
+  if (regenerateBtn) {
+    regenerateBtn.addEventListener("click", async () => {
+      if (!selectedSessionId) return;
+      const agent = getSessionAgent(selectedSessionId);
+      if (!(await ensureAnalysisConsent(targetProviderId))) return;
+      showAnalysisLoading();
+      try {
+        const result = await requestSessionAnalysis(selectedSessionId, agent, targetProviderId, currentAnalysisMode);
+        if (selectedSessionId == null) return;
+        showAnalysisContent();
+        if (!result) {
+          ct.innerHTML = '<div style="color:var(--text-secondary)">Could not analyze</div>';
+          return;
+        }
+        renderAnalysis(result);
+        if (currentData) renderEvents(currentData);
+      } catch (err) {
+        showAnalysisContent();
+        ct.innerHTML = renderAnalysisErrorMessage(err && (err.message || String(err)));
+        bindAnalysisErrorLinks(ct);
+      }
+    });
+  }
 }
 
 async function runAnalysisMode(mode) {
   if (!selectedSessionId) return;
-  const targetSid = selectedSessionId; // capture at call time
-  const ct = document.getElementById("analysisContent");
-  // Check frontend cache first — instant switch if already analyzed in this mode
-  const cached = getCachedAnalysis(targetSid, selectedAnalysisAgent, mode);
-  if (cached) { showAnalysisContent(); renderAnalysis(cached); bindAnalysisErrorLinks(ct); return; }
-  showAnalysisLoading();
-  try {
-    const sess = currentData && currentData.sessions ? currentData.sessions.find(s => s.id === targetSid) : null;
-    const agent = sess ? sess.agent : "claude-code";
-    let r = await window.analyticsAPI.analyzeSession(targetSid, agent, selectedAnalysisAgent, mode);
-    // If detail mode returned a fallback (no structured data), retry with brief
-    if (mode === "detail" && r && !r.keyTopics && !r.outcomes) {
-      console.warn("Detail analysis returned unstructured fallback, retrying as brief");
-      r = await window.analyticsAPI.analyzeSession(targetSid, agent, selectedAnalysisAgent, "brief");
-    }
-    // Guard: if user switched session while we were waiting, cache silently
-    if (selectedSessionId !== targetSid) { if (r) setCachedAnalysis(targetSid, selectedAnalysisAgent, r); return; }
-    showAnalysisContent();
-    if (!r) { ct.innerHTML = '<div style="color:var(--text-secondary)">Could not analyze</div>'; return; }
-    setCachedAnalysis(targetSid, selectedAnalysisAgent, r);
-    renderAnalysis(r);
-    bindAnalysisErrorLinks(ct);
-  } catch (err) {
-    showAnalysisContent();
-    ct.innerHTML = renderAnalysisErrorMessage(err && (err.message || String(err)));
-    bindAnalysisErrorLinks(ct);
-  }
+  await loadAnalysisForSession(selectedSessionId, getSessionAgent(selectedSessionId), mode);
 }
 
 function refreshSel(){document.querySelectorAll(".time-block,.evt-card").forEach(el=>{el.classList.toggle("selected",el.dataset.sid===selectedSessionId);});}
@@ -1310,6 +1490,7 @@ document.querySelectorAll(".tab").forEach(tab => {
     tab.classList.add("active");
     currentRange = tab.dataset.range;
     selectedSessionId = null;
+    userOverrideRange = false; // reset zoom so autoDetectRange covers all sessions
     showAnalysisPlaceholder();
     const picker = document.getElementById("monthPicker");
     const dateLabel = document.getElementById("dateLabel");
@@ -1883,11 +2064,11 @@ async function offerBatchAnalysis() {
     sessionsToAnalyze = allSessions;
   }
 
-  // Skip sessions that are already analyzed by ANY provider — getCachedAnalysis
-  // does cross-provider lookup so this respects the user's previous work and
-  // avoids paying for re-analysis just because they switched provider.
+  // Skip sessions that are already analyzed by the currently selected
+  // provider. Results are now provider-scoped in the UI, so switching
+  // analyzers means opting into a new set of cached outputs.
   const totalRequested = sessionsToAnalyze.length;
-  sessionsToAnalyze = sessionsToAnalyze.filter(s => !getCachedAnalysis(s.id));
+  sessionsToAnalyze = sessionsToAnalyze.filter(s => !getCachedAnalysis(s.id, selectedAnalysisAgent));
   const skipped = totalRequested - sessionsToAnalyze.length;
   if (skipped > 0) {
     console.log(`[batch] skipping ${skipped} already-analyzed sessions, running ${sessionsToAnalyze.length} new`);

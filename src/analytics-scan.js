@@ -215,6 +215,17 @@ module.exports = function initAnalyticsScan(ctx) {
     return body;
   }
 
+  function cleanAssistantMessageForAnalysis(raw) {
+    if (!raw) return null;
+    let text = String(raw)
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return null;
+    if (text.length > DETAIL_MSG_MAX) text = text.slice(0, DETAIL_MSG_MAX) + "…";
+    return text;
+  }
+
   const GAP_THRESHOLD = 30 * 60 * 1000; // 30 minutes — split blocks at this gap
 
   function splitIntoBlocks(timestamps) {
@@ -676,6 +687,7 @@ module.exports = function initAnalyticsScan(ctx) {
 
     const detail = {
       sessionId, agent,
+      conversation: [],   // { ts, role, text } — chronological dialogue for AI analysis
       userMessages: [],    // { ts, text } — cleaned/peeled for AI analysis
       toolCalls: [],       // { ts, name, inputSnippet }
       timestamps: [],      // all message timestamps
@@ -714,13 +726,18 @@ module.exports = function initAnalyticsScan(ctx) {
               }
             }
             const cleaned = cleanUserMessageForAnalysis(text);
-            if (cleaned) detail.userMessages.push({ ts, text: cleaned });
+            if (cleaned) {
+              detail.userMessages.push({ ts, text: cleaned });
+              detail.conversation.push({ ts, role: "user", text: cleaned });
+            }
           }
 
           if (d.type === "assistant") {
             const msg = d.message || {};
             if (Array.isArray(msg.content)) {
+              let assistantText = "";
               for (const c of msg.content) {
+                if (c && c.type === "text" && c.text) assistantText += c.text + " ";
                 if (c && c.type === "tool_use" && c.name) {
                   let inputSnippet = "";
                   if (c.input) {
@@ -730,6 +747,8 @@ module.exports = function initAnalyticsScan(ctx) {
                   detail.toolCalls.push({ ts, name: c.name, inputSnippet });
                 }
               }
+              const cleaned = cleanAssistantMessageForAnalysis(assistantText);
+              if (cleaned) detail.conversation.push({ ts, role: "assistant", text: cleaned });
             }
           }
         } else if (agent === "codex") {
@@ -748,7 +767,20 @@ module.exports = function initAnalyticsScan(ctx) {
                 }
               }
               const cleaned = cleanUserMessageForAnalysis(text);
-              if (cleaned) detail.userMessages.push({ ts, text: cleaned });
+              if (cleaned) {
+                detail.userMessages.push({ ts, text: cleaned });
+                detail.conversation.push({ ts, role: "user", text: cleaned });
+              }
+            }
+            if (p.type === "message" && p.role === "assistant") {
+              let text = "";
+              if (Array.isArray(p.content)) {
+                for (const c of p.content) {
+                  if (c && c.type === "output_text" && c.text) text += c.text + " ";
+                }
+              }
+              const cleaned = cleanAssistantMessageForAnalysis(text);
+              if (cleaned) detail.conversation.push({ ts, role: "assistant", text: cleaned });
             }
             if (p.type === "function_call" && p.name) {
               detail.toolCalls.push({ ts, name: p.name, inputSnippet: (p.arguments || "").slice(0, 100) });
@@ -765,16 +797,23 @@ module.exports = function initAnalyticsScan(ctx) {
               }
             }
             const cleaned = cleanUserMessageForAnalysis(text);
-            if (cleaned) detail.userMessages.push({ ts: null, text: cleaned });
+            if (cleaned) {
+              detail.userMessages.push({ ts: null, text: cleaned });
+              detail.conversation.push({ ts: null, role: "user", text: cleaned });
+            }
           }
           if (d.role === "assistant") {
             const msg = d.message || {};
             if (Array.isArray(msg.content)) {
+              let assistantText = "";
               for (const c of msg.content) {
+                if (c && c.type === "text" && c.text) assistantText += c.text + " ";
                 if (c && c.type === "tool_use" && c.name) {
                   detail.toolCalls.push({ ts: null, name: c.name, inputSnippet: "" });
                 }
               }
+              const cleaned = cleanAssistantMessageForAnalysis(assistantText);
+              if (cleaned) detail.conversation.push({ ts: null, role: "assistant", text: cleaned });
             }
           }
         }
