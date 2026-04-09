@@ -141,6 +141,7 @@
     "widthRatio":  0.58,
     "heightRatio": 0.44,
     "imgWidthRatio": 0.6,
+    "objBottom":   0.05,
     "imgBottom":   0.05,
     "offsetX":     0.21,
     "offsetY":     0.28,
@@ -165,6 +166,7 @@
       "calico-react-drag.apng": 1.1
     },
     "fileOffsets": {
+      "calico-idle-follow.svg": { "x": 0, "y": 65 },
       "calico-idle.apng": { "x": 10, "y": 65 },
       "calico-thinking.apng": { "x": 0, "y": 78 },
       "calico-working-typing.apng": { "x": -3, "y": 60 },

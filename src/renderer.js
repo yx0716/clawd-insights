@@ -34,7 +34,9 @@ function initWithConfig(cfg) {
     height: `${os.heightRatio * 100}%`,
     imgWidthBase: (os.imgWidthRatio || os.widthRatio) * 100,
     left:   `${os.offsetX * 100}%`,
-    top:    `${os.offsetY * 100}%`,
+    // Unified bottom-anchored positioning for both <object> and <img>
+    // Theme can override objBottom directly; otherwise derive from offsetY + heightRatio
+    objBottom: `${(os.objBottom != null ? os.objBottom : (1 - os.offsetY - os.heightRatio)) * 100}%`,
     imgBottom: `${(os.imgBottom != null ? os.imgBottom : 0.05) * 100}%`,
   };
   _fileScales = os.fileScales || {};
@@ -50,19 +52,20 @@ function applyObjectScaleStyle(el, file) {
   const ox = fo ? fo.x : 0;
   const oy = fo ? fo.y : 0;
 
+  // Unified bottom-anchored positioning: both <object> and <img> use bottom + oy
   if (el.tagName === "IMG") {
     const scale = (file && _fileScales[file]) || 1.0;
     el.style.width = `${_objectScaleCSS.imgWidthBase * scale}%`;
     el.style.height = "auto";
     el.style.left = `calc(${_objectScaleCSS.left} + ${ox}px)`;
-    // Anchor from bottom so all cats stand at the same level regardless of scale
     el.style.top = "auto";
     el.style.bottom = `calc(${_objectScaleCSS.imgBottom || "5%"} + ${oy}px)`;
   } else {
     el.style.width = _objectScaleCSS.width;
     el.style.height = _objectScaleCSS.height;
     el.style.left = `calc(${_objectScaleCSS.left} + ${ox}px)`;
-    el.style.top = _objectScaleCSS.top;
+    el.style.top = "auto";
+    el.style.bottom = `calc(${_objectScaleCSS.objBottom} + ${oy}px)`;
   }
 }
 
