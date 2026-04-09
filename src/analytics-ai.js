@@ -1675,8 +1675,10 @@ module.exports = function initAnalyticsAI(ctx) {
           // Parse failed (or model returned no JSON at all). Log a clear,
           // non-misleading warning and fall back to a text-summary so the user
           // still sees *something* in the dashboard.
-          console.warn(`Clawd analytics: ${cliName} returned unparseable JSON, falling back to text summary`);
-          const fallback = attachMeta({ summary: text.trim().slice(0, 300), keyTopics: [], outcomes: [], timeBreakdown: [], suggestions: [] });
+          console.warn(`Clawd analytics: ${cliName} returned unparseable JSON (${text.length} chars), falling back to text summary`);
+          const trimmed = text.trim().slice(0, 300);
+          const summary = trimmed || `${cliName} 返回了非结构化内容，无法解析为分析结果。请重试或切换到 API provider。`;
+          const fallback = attachMeta({ summary, keyTopics: [], outcomes: [], timeBreakdown: [], suggestions: [] });
           return maybeCacheAnalysisResult(cacheKey, fallback);
         }
       } catch (err) {
