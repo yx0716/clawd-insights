@@ -32,20 +32,38 @@ function initWithConfig(cfg) {
   _objectScaleCSS = {
     width:  `${os.widthRatio * 100}%`,
     height: `${os.heightRatio * 100}%`,
+    imgWidthBase: (os.imgWidthRatio || os.widthRatio) * 100,
     left:   `${os.offsetX * 100}%`,
     top:    `${os.offsetY * 100}%`,
+    imgBottom: `${(os.imgBottom != null ? os.imgBottom : 0.05) * 100}%`,
   };
+  _fileScales = os.fileScales || {};
+  _fileOffsets = os.fileOffsets || {};
 
   applyObjectScaleStyle(clawdEl);
   applyObjectScaleStyle(pendingNext);
 }
 
-function applyObjectScaleStyle(el) {
+function applyObjectScaleStyle(el, file) {
   if (!el || !_objectScaleCSS) return;
-  el.style.width = _objectScaleCSS.width;
-  el.style.height = _objectScaleCSS.height;
-  el.style.left = _objectScaleCSS.left;
-  el.style.top = _objectScaleCSS.top;
+  const fo = (file && _fileOffsets[file]) || null;
+  const ox = fo ? fo.x : 0;
+  const oy = fo ? fo.y : 0;
+
+  if (el.tagName === "IMG") {
+    const scale = (file && _fileScales[file]) || 1.0;
+    el.style.width = `${_objectScaleCSS.imgWidthBase * scale}%`;
+    el.style.height = "auto";
+    el.style.left = `calc(${_objectScaleCSS.left} + ${ox}px)`;
+    // Anchor from bottom so all cats stand at the same level regardless of scale
+    el.style.top = "auto";
+    el.style.bottom = `calc(${_objectScaleCSS.imgBottom || "5%"} + ${oy}px)`;
+  } else {
+    el.style.width = _objectScaleCSS.width;
+    el.style.height = _objectScaleCSS.height;
+    el.style.left = `calc(${_objectScaleCSS.left} + ${ox}px)`;
+    el.style.top = _objectScaleCSS.top;
+  }
 }
 
 let _assetsPath;
@@ -59,6 +77,8 @@ let _dragSvg;
 let _idleFollowSvg;
 let _glyphFlipDefs;
 let _objectScaleCSS;
+let _fileScales = {};
+let _fileOffsets = {};
 
 // ── Layered tracking state (multi-layer eye/head/body tracking) ──
 let _useLayeredTracking = false;
@@ -261,7 +281,7 @@ function swapToFile(file, state, useObjectChannel) {
     next.type = "image/svg+xml";
     next.id = "clawd";
     next.style.opacity = "0";
-    applyObjectScaleStyle(next);
+    applyObjectScaleStyle(next, file);
 
     const swap = () => {
       if (pendingNext !== next) return;
@@ -299,7 +319,7 @@ function swapToFile(file, state, useObjectChannel) {
     next.className = "clawd-img";
     next.id = "clawd";
     next.style.opacity = "0";
-    applyObjectScaleStyle(next);
+    applyObjectScaleStyle(next, file);
 
     const swap = () => {
       if (pendingNext !== next) return;
