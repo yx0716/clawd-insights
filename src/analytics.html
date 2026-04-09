@@ -17,10 +17,11 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); font-size:13px; line-height:1.5; overflow-y:auto; -webkit-app-region:drag; }
 body * { -webkit-app-region:no-drag; }
-.container { max-width:880px; margin:0 auto; padding:20px; }
+.container { max-width:1200px; margin:0 auto; padding:20px; display:grid; grid-template-columns:45fr 55fr; grid-template-areas:"header header" "tabs tabs" "timeline timeline" "sessions analysis" "charts charts"; gap:16px 16px; }
+.container>* { min-width:0; } /* prevent grid blowout */
 
 /* ── Header ── */
-.header-block { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:24px; }
+.header-block { grid-area:header; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; box-shadow:var(--shadow); display:flex; align-items:center; gap:24px; }
 .header-title { flex:1; }
 .header-title .sub { font-size:11px; color:var(--text-muted); letter-spacing:1px; }
 .header-title h1 { font-size:28px; font-weight:800; color:var(--text); line-height:1.2; }
@@ -31,7 +32,7 @@ body * { -webkit-app-region:no-drag; }
 .hstat .hv { font-size:15px; font-weight:700; color:var(--text); margin-top:1px; }
 
 /* ── Tabs ── */
-.tabs-row { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+.tabs-row { grid-area:tabs; display:flex; align-items:center; gap:8px; }
 .tabs { display:flex; gap:2px; background:var(--border); border-radius:8px; padding:2px; }
 .tab { padding:5px 16px; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600; color:var(--text-secondary); border:none; background:transparent; }
 .tab.active { background:var(--bg-card); color:var(--accent); box-shadow:var(--shadow); }
@@ -44,7 +45,7 @@ body * { -webkit-app-region:no-drag; }
 .agent-legend-dot { width:10px; height:10px; border-radius:3px; }
 
 /* ── Timeline ── */
-.timeline-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:16px; box-shadow:var(--shadow); }
+.timeline-card { grid-area:timeline; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); }
 .time-axis { display:flex; align-items:stretch; margin-bottom:6px; }
 .time-axis-spacer { width:72px; flex-shrink:0; }
 .time-axis-track { flex:1; position:relative; height:14px; font-size:9px; color:var(--text-muted); }
@@ -72,7 +73,7 @@ body * { -webkit-app-region:no-drag; }
 .time-block.selected { outline:2px solid var(--text); outline-offset:1px; }
 
 /* ── Three-panel row ── */
-.panels-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px; align-items:stretch; }
+.panels-row { grid-area:charts; display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:stretch; }
 .panel { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow); }
 .panel-header { display:flex; align-items:center; gap:6px; margin-bottom:12px; }
 .panel-title { font-size:14px; font-weight:700; color:var(--text); }
@@ -103,7 +104,7 @@ body * { -webkit-app-region:no-drag; }
 .bar-col .bar-value { font-size:8px; color:var(--accent); font-weight:700; }
 
 /* ── Event cards ── */
-.events-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-bottom:16px; box-shadow:var(--shadow); }
+.events-card { grid-area:sessions; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow); max-height:70vh; overflow-y:auto; align-self:start; }
 .events-header { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
 .events-grid { display:flex; flex-direction:column; gap:12px; }
 .evt-card {
@@ -141,8 +142,8 @@ body * { -webkit-app-region:no-drag; }
 .evt-desc.loading { color:var(--text-muted); font-style:italic; }
 
 /* ── Analysis panel ── */
-.analysis-panel { background:var(--accent-light); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:16px; display:none; }
-.analysis-panel.visible { display:block; }
+.analysis-panel { grid-area:analysis; background:var(--accent-light); border:1px solid var(--border); border-radius:var(--radius); padding:14px; max-height:70vh; overflow-y:auto; align-self:start; }
+.analysis-panel .placeholder { color:var(--text-muted); text-align:center; padding:40px 16px; font-size:12px; line-height:1.8; }
 .analysis-panel .loading { text-align:center; color:var(--text-secondary); padding:20px; }
 .analysis-panel .spinner { display:inline-block; width:20px; height:20px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg); } }
@@ -244,6 +245,10 @@ body * { -webkit-app-region:no-drag; }
 .evt-day-count { font-size:10px; font-weight:500; color:var(--text-muted); }
 .evt-day-grid { display:flex; flex-direction:column; gap:8px; margin-bottom:4px; }
 
+@media (max-width: 900px) {
+  .container { grid-template-columns:1fr; grid-template-areas:"header" "tabs" "timeline" "charts" "sessions" "analysis"; max-width:880px; }
+  .events-card, .analysis-panel { max-height:none; overflow-y:visible; }
+}
 @media (max-width: 760px) {
   .evt-card { grid-template-columns:1fr 1fr; gap:10px; }
   .evt-main { grid-column:1 / -1; }
@@ -303,7 +308,8 @@ body * { -webkit-app-region:no-drag; }
 
   <!-- Analysis panel (right after timeline) -->
   <div class="analysis-panel" id="analysisPanel">
-    <div class="loading" id="analysisLoading"><div class="spinner"></div><div style="margin-top:8px">Analyzing...</div></div>
+    <div class="placeholder" id="analysisPlaceholder">← 点击左侧 Session 查看 AI 分析</div>
+    <div class="loading" id="analysisLoading" style="display:none"><div class="spinner"></div><div style="margin-top:8px">Analyzing...</div></div>
     <div id="analysisContent" style="display:none"></div>
   </div>
 
@@ -961,43 +967,52 @@ document.addEventListener("mousemove",e=>{const t=document.getElementById("toolt
 function onBlockClick(e){selectSession(e.currentTarget.dataset.sid,e.currentTarget.dataset.agent);}
 function onCardClick(e){const c=e.currentTarget;selectSession(c.dataset.sid,c.dataset.agent);}
 
+function showAnalysisPlaceholder(){
+  const ph=document.getElementById("analysisPlaceholder"),ld=document.getElementById("analysisLoading"),ct=document.getElementById("analysisContent");
+  ph.style.display="block";ld.style.display="none";ct.style.display="none";
+}
+function showAnalysisLoading(){
+  const ph=document.getElementById("analysisPlaceholder"),ld=document.getElementById("analysisLoading"),ct=document.getElementById("analysisContent");
+  ph.style.display="none";ld.style.display="block";ct.style.display="none";
+}
+function showAnalysisContent(){
+  const ph=document.getElementById("analysisPlaceholder"),ld=document.getElementById("analysisLoading"),ct=document.getElementById("analysisContent");
+  ph.style.display="none";ld.style.display="none";ct.style.display="block";
+}
 async function selectSession(sid,agent){
-  if(selectedSessionId===sid){selectedSessionId=null;document.getElementById("analysisPanel").classList.remove("visible");refreshSel();return;}
+  if(selectedSessionId===sid){selectedSessionId=null;showAnalysisPlaceholder();refreshSel();return;}
   selectedSessionId=sid;refreshSel();
-  const panel=document.getElementById("analysisPanel"),ld=document.getElementById("analysisLoading"),ct=document.getElementById("analysisContent");
-  panel.classList.add("visible");ld.style.display="block";ct.style.display="none";
+  showAnalysisLoading();
+  const ct=document.getElementById("analysisContent");
   const cached=getCachedAnalysis(sid);
   // Use cached batch result if available
   if(cached){
-    ld.style.display="none";ct.style.display="block";
+    showAnalysisContent();
     renderAnalysis(cached);return;
   }
   if(!analysisConsented){
     if(!analysisOptions.length)try{analysisOptions=await window.analyticsAPI.getAnalysisOptions();}catch{}
     if(!analysisProvider)try{analysisProvider=await window.analyticsAPI.getAnalysisProvider();}catch{}
     const selectedOption=getSelectedAnalysisOption()||analysisProvider;
-    if(!selectedOption){ld.style.display="none";ct.style.display="block";ct.innerHTML=renderNoProviderError();bindAnalysisErrorLinks(ct);return;}
+    if(!selectedOption){showAnalysisContent();ct.innerHTML=renderNoProviderError();bindAnalysisErrorLinks(ct);return;}
     if(selectedOption.id)selectedAnalysisAgent=selectedOption.id;
     const ok=await showConfirm(selectedOption);
-    if(!ok){panel.classList.remove("visible");selectedSessionId=null;refreshSel();return;}
+    if(!ok){selectedSessionId=null;showAnalysisPlaceholder();refreshSel();return;}
     analysisConsented=true;
   }
   markAnalyzing(sid);
   try{
     const r=await window.analyticsAPI.analyzeSession(sid,agent,selectedAnalysisAgent);
     unmarkAnalyzing(sid);
-    ld.style.display="none";ct.style.display="block";
+    showAnalysisContent();
     if(!r){ct.innerHTML='<div style="color:var(--text-secondary)">Could not analyze</div>';return;}
     setCachedAnalysis(sid,selectedAnalysisAgent,r);
     renderAnalysis(r);
-    // The result is cached even when it represents an error (CLI missing /
-    // API key not set / network failure). Wire up the inline "Open Settings"
-    // link so the user can recover without leaving the panel.
     bindAnalysisErrorLinks(ct);
     if(currentData)renderEvents(currentData);
   }catch(err){
     unmarkAnalyzing(sid);
-    ld.style.display="none";ct.style.display="block";
+    showAnalysisContent();
     ct.innerHTML=renderAnalysisErrorMessage(err && (err.message||String(err)));
     bindAnalysisErrorLinks(ct);
   }
@@ -1149,7 +1164,7 @@ document.querySelectorAll(".tab").forEach(tab => {
     tab.classList.add("active");
     currentRange = tab.dataset.range;
     selectedSessionId = null;
-    document.getElementById("analysisPanel").classList.remove("visible");
+    showAnalysisPlaceholder();
     const picker = document.getElementById("monthPicker");
     const dateLabel = document.getElementById("dateLabel");
     if (currentRange === "month") {
