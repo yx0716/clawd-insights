@@ -91,6 +91,8 @@
       "notification": 5200,
       "carrying": 3000
     },
+    "dndSkipYawn": true,
+    "collapseDuration": 5200,
     "yawnDuration": 8000,
     "wakeDuration": 5200,
     "deepSleepTimeout": 600000,
@@ -114,7 +116,8 @@
 
   "miniMode": {
     "supported": true,
-    "offsetRatio": 0.5,
+    "flipAssets": true,
+    "offsetRatio": 0.4,
     "states": {
       "mini-idle":        ["calico-mini-idle.apng"],
       "mini-alert":       ["calico-mini-alert.apng"],
@@ -126,8 +129,8 @@
       "mini-sleep":       ["calico-mini-sleep.apng"]
     },
     "timings": {
-      "minDisplay": { "mini-alert": 4000, "mini-happy": 4000 },
-      "autoReturn": { "mini-alert": 4000, "mini-happy": 4000 }
+      "minDisplay": { "mini-alert": 4000, "mini-happy": 4000, "mini-peek": 1500 },
+      "autoReturn": { "mini-alert": 4000, "mini-happy": 4000, "mini-peek": 1500 }
     },
     "glyphFlips": {}
   },
@@ -136,7 +139,8 @@
     "calico-idle.apng":         { "in": 400, "out": 800 },
     "calico-notification.apng": { "in": 300 },
     "calico-happy.apng":        { "out": 1500 },
-    "calico-waking.apng":       { "out": 300 }
+    "calico-waking.apng":       { "out": 300 },
+    "calico-collapsing.apng":   { "in": 600 }
   },
 
   "sounds": {
@@ -170,7 +174,14 @@
       "calico-sleeping.apng": 1.05,
       "calico-waking.apng": 1.05,
       "calico-react-poke.apng": 1.05,
-      "calico-react-drag.apng": 1.1
+      "calico-react-drag.apng": 1.1,
+      "calico-mini-idle.apng": 1.15,
+      "calico-mini-alert.apng": 1.15,
+      "calico-mini-happy.apng": 1.15,
+      "calico-mini-enter.apng": 1.15,
+      "calico-mini-peek.apng": 1.15,
+      "calico-mini-crabwalk.apng": 1.05,
+      "calico-mini-sleep.apng": 1.15
     },
     "fileOffsets": {
       "calico-idle-follow.svg": { "x": 0, "y": 65 },
@@ -191,7 +202,14 @@
       "calico-sleeping.apng": { "x": 10, "y": 65 },
       "calico-waking.apng": { "x": 10, "y": 65 },
       "calico-react-poke.apng": { "x": 10, "y": 65 },
-      "calico-react-drag.apng": { "x": 0, "y": 55 }
+      "calico-react-drag.apng": { "x": 0, "y": 55 },
+      "calico-mini-idle.apng":     { "x": 0, "y": 65 },
+      "calico-mini-alert.apng":    { "x": 0, "y": 65 },
+      "calico-mini-happy.apng":    { "x": 0, "y": 65 },
+      "calico-mini-enter.apng":    { "x": 0, "y": 65 },
+      "calico-mini-peek.apng":     { "x": 0, "y": 65 },
+      "calico-mini-crabwalk.apng": { "x": 0, "y": 65 },
+      "calico-mini-sleep.apng":    { "x": 0, "y": 65 }
     }
   }
 }

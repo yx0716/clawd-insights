@@ -85,12 +85,13 @@ function startMainTick() {
         } else if (!ctx.mouseOverPet && ctx.currentState === "mini-sleep" && ctx.miniSleepPeeked) {
           ctx.miniPeekOut();
           ctx.miniSleepPeeked = false;
-        } else if (ctx.mouseOverPet && ctx.currentState !== "mini-peek" && ctx.currentState !== "mini-sleep") {
+        } else if (ctx.mouseOverPet && ctx.currentState !== "mini-peek" && ctx.currentState !== "mini-sleep" && !ctx.miniPeeked) {
           ctx.miniPeekIn();
           ctx.applyState("mini-peek");
-        } else if (!ctx.mouseOverPet && ctx.currentState === "mini-peek") {
+        } else if (!ctx.mouseOverPet && (ctx.currentState === "mini-peek" || ctx.miniPeeked)) {
           ctx.miniPeekOut();
-          ctx.applyState("mini-idle");
+          ctx.miniPeeked = false;
+          if (ctx.currentState !== "mini-idle") ctx.applyState("mini-idle");
         }
       }
     }

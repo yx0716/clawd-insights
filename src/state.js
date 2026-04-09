@@ -42,6 +42,8 @@ const AUTO_RETURN_MS = theme.timings.autoReturn;
 const DEEP_SLEEP_TIMEOUT = theme.timings.deepSleepTimeout;
 const YAWN_DURATION = theme.timings.yawnDuration;
 const WAKE_DURATION = theme.timings.wakeDuration;
+const DND_SKIP_YAWN = !!theme.timings.dndSkipYawn;
+const COLLAPSE_DURATION = theme.timings.collapseDuration || 0;
 const SLEEP_SEQUENCE = new Set(["yawning", "dozing", "collapsing", "sleeping", "waking"]);
 
 const STATE_PRIORITY = {
@@ -210,6 +212,11 @@ function applyState(state, svgOverride) {
       autoReturnTimer = null;
       applyState(ctx.doNotDisturb ? "collapsing" : "dozing");
     }, YAWN_DURATION);
+  } else if (state === "collapsing" && COLLAPSE_DURATION > 0) {
+    autoReturnTimer = setTimeout(() => {
+      autoReturnTimer = null;
+      applyState("sleeping");
+    }, COLLAPSE_DURATION);
   } else if (state === "waking") {
     autoReturnTimer = setTimeout(() => {
       autoReturnTimer = null;
@@ -221,8 +228,14 @@ function applyState(state, svgOverride) {
       autoReturnTimer = null;
       if (ctx.miniMode) {
         if (ctx.mouseOverPet && !ctx.doNotDisturb) {
-          ctx.miniPeekIn();
-          applyState("mini-peek");
+          if (state === "mini-peek") {
+            // Peek animation done — stay peeked but show idle (don't re-trigger peek)
+            ctx.miniPeeked = true;
+            applyState("mini-idle");
+          } else {
+            ctx.miniPeekIn();
+            applyState("mini-peek");
+          }
         } else {
           applyState(ctx.doNotDisturb ? "mini-sleep" : "mini-idle");
         }
@@ -631,7 +644,7 @@ function enableDoNotDisturb() {
   if (ctx.miniMode) {
     applyState("mini-sleep");
   } else {
-    applyState("yawning");
+    applyState(DND_SKIP_YAWN ? "collapsing" : "yawning");
   }
   ctx.buildContextMenu();
   ctx.buildTrayMenu();
@@ -644,6 +657,7 @@ function disableDoNotDisturb() {
   ctx.sendToHitWin("hit-state-sync", { dndEnabled: false });
   if (ctx.miniMode) {
     if (ctx.miniSleepPeeked) { ctx.miniPeekOut(); ctx.miniSleepPeeked = false; }
+    ctx.miniPeeked = false;
     applyState("mini-idle");
   } else {
     applyState("waking");

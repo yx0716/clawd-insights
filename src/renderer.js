@@ -42,6 +42,7 @@ function initWithConfig(cfg) {
   _fileScales = os.fileScales || {};
   _fileOffsets = os.fileOffsets || {};
   _transitions = tc.transitions || {};
+  _miniFlipAssets = !!tc.miniFlipAssets;
 
   applyObjectScaleStyle(clawdEl);
   applyObjectScaleStyle(pendingNext);
@@ -84,6 +85,13 @@ let _objectScaleCSS;
 let _fileScales = {};
 let _fileOffsets = {};
 let _transitions = {};  // per-file fade config: { "file.apng": { in: 400, out: 400 } }
+let _miniFlipAssets = false; // theme's mini assets drawn in reverse direction
+let _inMiniMode = false;
+
+function applyMiniFlip(el) {
+  if (!el || el.tagName !== "IMG") return;
+  el.style.transform = (_miniFlipAssets && _inMiniMode) ? "scaleX(-1)" : "";
+}
 
 // ── Layered tracking state (multi-layer eye/head/body tracking) ──
 let _useLayeredTracking = false;
@@ -130,8 +138,10 @@ let miniLeftFlip = false;
 window.electronAPI.onDndChange((enabled) => { dndEnabled = enabled; });
 
 window.electronAPI.onMiniModeChange((enabled, edge) => {
+  _inMiniMode = enabled;
   miniLeftFlip = enabled && edge === "left";
   container.classList.toggle("mini-left", miniLeftFlip);
+  applyMiniFlip(clawdEl);
   if (miniLeftFlip) {
     applyGlyphFlipCompensation(clawdEl);
   } else {
@@ -345,6 +355,7 @@ function swapToFile(file, state, useObjectChannel) {
     next.id = "clawd";
     next.style.opacity = "0";
     applyObjectScaleStyle(next, file);
+    applyMiniFlip(next);
 
     const swap = () => {
       if (pendingNext !== next) return;

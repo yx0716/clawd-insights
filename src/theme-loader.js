@@ -440,6 +440,7 @@ function getRendererConfig() {
     sourceAssetsPath: getRendererSourceAssetsPath(),
     eyeTracking: t.eyeTracking,
     glyphFlips: t.miniMode ? t.miniMode.glyphFlips : {},
+    miniFlipAssets: t.miniMode ? !!t.miniMode.flipAssets : false,
     dragSvg: t.reactions && t.reactions.drag ? t.reactions.drag.file : null,
     idleFollowSvg: t.states.idle[0],
     // renderer needs to know which states need eye tracking (for <object> vs <img> decision)
