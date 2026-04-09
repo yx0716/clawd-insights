@@ -251,6 +251,28 @@ Fine-tune rendered size relative to viewBox. Defaults work for most themes:
 }
 ```
 
+### Layout Normalization
+
+If two themes have very different visible body heights even though the window size is the same, add a `layout` block. This lets Clawd align the character by visible body area and baseline instead of the raw file canvas:
+
+```json
+"layout": {
+  "contentBox": { "x": -4, "y": -3, "width": 23, "height": 20 },
+  "centerX": 7.5,
+  "baselineY": 17,
+  "visibleHeightRatio": 0.58,
+  "baselineBottomRatio": 0.05
+}
+```
+
+- `contentBox` — the visible body area in viewBox units, not the whole exported canvas
+- `centerX` — the horizontal anchor inside the viewBox
+- `baselineY` — the standing baseline inside the viewBox
+- `visibleHeightRatio` — how tall the visible body should be relative to the window height
+- `baselineBottomRatio` — distance from the baseline to the bottom of the window
+
+Mini mode still uses the existing `objectScale` + per-file offsets, so this is mainly for normal mode alignment.
+
 ## Asset Guidelines
 
 ### Supported Formats

@@ -37,6 +37,11 @@ const DEFAULT_OBJECT_SCALE = {
   widthRatio: 1.9, heightRatio: 1.3,
   offsetX: -0.45, offsetY: -0.25,
 };
+const DEFAULT_LAYOUT = {
+  centerXRatio: 0.5,
+  baselineBottomRatio: 0.05,
+  visibleHeightRatio: 0.58,
+};
 
 const DEFAULT_EYE_TRACKING = {
   enabled: false,
@@ -435,6 +440,8 @@ function getRendererConfig() {
   if (!activeTheme) return null;
   const t = activeTheme;
   return {
+    viewBox: t.viewBox,
+    layout: t.layout,
     assetsPath: getRendererAssetsPath(),
     // For external themes: non-SVG assets served from source dir (not cache)
     sourceAssetsPath: getRendererSourceAssetsPath(),
@@ -514,6 +521,13 @@ function validateTheme(cfg) {
     }
   }
 
+  if (cfg.layout) {
+    const cb = cfg.layout.contentBox;
+    if (!cb || cb.x == null || cb.y == null || cb.width == null || cb.height == null) {
+      errors.push("layout.contentBox must include x, y, width, height");
+    }
+  }
+
   return errors;
 }
 
@@ -554,6 +568,20 @@ function mergeDefaults(raw, themeId, isBuiltin) {
       const fittedHeightRatio = aspect > 0 ? (os.imgWidthRatio / aspect) : os.heightRatio;
       os.imgBottom = derivedObjBottom + Math.max(0, (os.heightRatio - fittedHeightRatio) / 2);
     }
+  }
+
+  // layout
+  if (raw.layout && raw.layout.contentBox) {
+    const cb = raw.layout.contentBox;
+    theme.layout = {
+      ...DEFAULT_LAYOUT,
+      ...raw.layout,
+      contentBox: { ...cb },
+    };
+    if (theme.layout.centerX == null) theme.layout.centerX = cb.x + cb.width / 2;
+    if (theme.layout.baselineY == null) theme.layout.baselineY = cb.y + cb.height;
+  } else {
+    theme.layout = null;
   }
 
   // eyeTracking

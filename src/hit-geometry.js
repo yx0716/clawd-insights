@@ -8,6 +8,12 @@ function usesObjectChannel(theme, state, file) {
   return eyeStates.includes(state);
 }
 
+function usesNormalizedLayout(theme, state, file) {
+  if (!theme || !theme.layout || !theme.layout.contentBox) return false;
+  if ((state && state.startsWith("mini-")) || (file && file.startsWith("mini-"))) return false;
+  return true;
+}
+
 function getFileLayout(theme, file) {
   const os = (theme && theme.objectScale) || {};
   const fileOffsets = os.fileOffsets || {};
@@ -22,6 +28,28 @@ function getFileLayout(theme, file) {
     objBottom: os.objBottom != null ? os.objBottom : (1 - (os.offsetY || 0) - (os.heightRatio || 1.3)),
     imgBottom: os.imgBottom != null ? os.imgBottom : 0.05,
     fileScale: fileScales[file] || 1,
+    offsetPxX: offset.x || 0,
+    offsetPxY: offset.y || 0,
+  };
+}
+
+function getNormalizedLayout(theme, file) {
+  if (!theme || !theme.layout || !theme.layout.contentBox) return null;
+  const viewBox = theme.viewBox;
+  const layout = theme.layout;
+  const os = (theme && theme.objectScale) || {};
+  const fileOffsets = os.fileOffsets || {};
+  const fileScales = os.fileScales || {};
+  const offset = fileOffsets[file] || {};
+  const contentBox = layout.contentBox;
+  const fileScale = fileScales[file] || 1;
+  const unitRatio = (layout.visibleHeightRatio * fileScale) / contentBox.height;
+
+  return {
+    leftRatio: layout.centerXRatio - ((layout.centerX - viewBox.x) * unitRatio),
+    bottomRatio: layout.baselineBottomRatio - ((viewBox.y + viewBox.height - layout.baselineY) * unitRatio),
+    widthRatio: viewBox.width * unitRatio,
+    heightRatio: viewBox.height * unitRatio,
     offsetPxX: offset.x || 0,
     offsetPxY: offset.y || 0,
   };
@@ -43,6 +71,20 @@ function getAssetRectScreen(theme, bounds, state, file) {
   if (!theme || !bounds) return null;
 
   const viewBox = theme.viewBox;
+
+  if (usesNormalizedLayout(theme, state, file)) {
+    const normalized = getNormalizedLayout(theme, file);
+    return {
+      x: bounds.x + bounds.width * normalized.leftRatio + normalized.offsetPxX,
+      y: bounds.y + bounds.height
+        - bounds.height * normalized.heightRatio
+        - bounds.height * normalized.bottomRatio
+        - normalized.offsetPxY,
+      w: bounds.width * normalized.widthRatio,
+      h: bounds.height * normalized.heightRatio,
+    };
+  }
+
   const layout = getFileLayout(theme, file);
   const left = bounds.x + bounds.width * layout.offsetX + layout.offsetPxX;
 
@@ -93,4 +135,5 @@ module.exports = {
   getAssetRectScreen,
   getHitRectScreen,
   usesObjectChannel,
+  usesNormalizedLayout,
 };

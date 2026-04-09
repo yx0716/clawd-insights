@@ -11,6 +11,8 @@ let tc = window.themeConfig || {};
 
 function initWithConfig(cfg) {
   tc = cfg || {};
+  _viewBox = tc.viewBox || { x: -15, y: -25, width: 45, height: 45 };
+  _layout = tc.layout || null;
   _assetsPath = tc.assetsPath || "../assets/svg";
   _sourceAssetsPath = tc.sourceAssetsPath || null;
   _eyeIds = (tc.eyeTracking && tc.eyeTracking.ids) || { eyes: "eyes-js", body: "body-js", shadow: "shadow-js", dozeEyes: "eyes-doze" };
@@ -51,6 +53,10 @@ function initWithConfig(cfg) {
 
 function applyObjectScaleStyle(el, file) {
   if (!el || !_objectScaleCSS) return;
+  if (shouldUseNormalizedLayout(file)) {
+    applyNormalizedLayoutStyle(el, file);
+    return;
+  }
   const fo = (file && _fileOffsets[file]) || null;
   const ox = fo ? fo.x : 0;
   const oy = fo ? fo.y : 0;
@@ -72,8 +78,48 @@ function applyObjectScaleStyle(el, file) {
   }
 }
 
+function shouldUseNormalizedLayout(file) {
+  if (!_layout || !_layout.contentBox) return false;
+  if (_inMiniMode || (file && file.startsWith("mini-"))) return false;
+  return true;
+}
+
+function applyNormalizedLayoutStyle(el, file) {
+  if (!el || !_layout || !_layout.contentBox || !_viewBox) return;
+  const fo = (file && _fileOffsets[file]) || null;
+  const ox = fo ? fo.x : 0;
+  const oy = fo ? fo.y : 0;
+  const scale = (file && _fileScales[file]) || 1.0;
+  const cb = _layout.contentBox;
+  const centerX = _layout.centerX != null ? _layout.centerX : (cb.x + cb.width / 2);
+  const baselineY = _layout.baselineY != null ? _layout.baselineY : (cb.y + cb.height);
+  const unitRatio = ((_layout.visibleHeightRatio || 0.58) * scale) / cb.height;
+  const widthRatio = _viewBox.width * unitRatio;
+  const heightRatio = _viewBox.height * unitRatio;
+  const leftRatio = (_layout.centerXRatio != null ? _layout.centerXRatio : 0.5)
+    - ((centerX - _viewBox.x) * unitRatio);
+  const bottomRatio = (_layout.baselineBottomRatio != null ? _layout.baselineBottomRatio : 0.05)
+    - ((_viewBox.y + _viewBox.height - baselineY) * unitRatio);
+
+  if (el.tagName === "IMG") {
+    el.style.width = `${widthRatio * 100}%`;
+    el.style.height = "auto";
+    el.style.left = `calc(${leftRatio * 100}% + ${ox}px)`;
+    el.style.top = "auto";
+    el.style.bottom = `calc(${bottomRatio * 100}% + ${oy}px)`;
+  } else {
+    el.style.width = `${widthRatio * 100}%`;
+    el.style.height = `${heightRatio * 100}%`;
+    el.style.left = `calc(${leftRatio * 100}% + ${ox}px)`;
+    el.style.top = "auto";
+    el.style.bottom = `calc(${bottomRatio * 100}% + ${oy}px)`;
+  }
+}
+
 let _assetsPath;
 let _sourceAssetsPath;
+let _viewBox;
+let _layout;
 let _eyeIds;
 let _bodyScale;
 let _shadowStretch;

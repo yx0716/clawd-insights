@@ -9,6 +9,14 @@
 
   "viewBox": { "x": -15, "y": -25, "width": 45, "height": 45 },
 
+  "layout": {
+    "contentBox": { "x": -4, "y": -3, "width": 23, "height": 20 },
+    "centerX": 7.5,
+    "baselineY": 17,
+    "visibleHeightRatio": 0.58,
+    "baselineBottomRatio": 0.05
+  },
+
   "eyeTracking": {
     "enabled": true,
     "states": ["idle", "dozing", "mini-idle"],

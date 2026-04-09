@@ -16,6 +16,15 @@
     "height": 45
   },
 
+  "layout": {
+    "_comment": "Optional but recommended when your visible character height differs a lot from the raw viewBox. contentBox is the character's visible body area in viewBox units.",
+    "contentBox": { "x": -4, "y": -3, "width": 23, "height": 20 },
+    "centerX": 7.5,
+    "baselineY": 17,
+    "visibleHeightRatio": 0.58,
+    "baselineBottomRatio": 0.05
+  },
+
   "eyeTracking": {
     "_comment": "Set enabled:true if your idle SVG has #eyes-js / #body-js / #shadow-js groups for cursor tracking.",
     "enabled": true,
