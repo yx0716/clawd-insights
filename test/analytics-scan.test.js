@@ -152,4 +152,30 @@ describe("analytics scan", () => {
     assert.strictEqual(data.sessionCount, 1);
     assert.strictEqual(data.sessions[0].project, "cache-revolution");
   });
+
+  it("captures assistant replies in codex session detail conversation", () => {
+    const sessionId = "019d629b-5f09-73f1-b73c-7fd96130fac9";
+    const cwd = "/Users/jyx/Documents/1_explore/project-alpha";
+    writeCodexSession(tempHome, sessionId, cwd);
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const detail = analyticsScan.getSessionDetail(
+      `rollout-2026-04-06T19-44-02-${sessionId}`,
+      "codex"
+    );
+
+    assert.ok(detail);
+    assert.deepStrictEqual(
+      detail.conversation.map(entry => [entry.role, entry.text]),
+      [
+        ["user", "first prompt"],
+        ["assistant", "first reply"],
+        ["user", "second prompt"],
+        ["assistant", "second reply"],
+        ["user", "third prompt"],
+        ["assistant", "third reply"],
+      ]
+    );
+  });
 });

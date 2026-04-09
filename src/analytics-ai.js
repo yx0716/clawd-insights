@@ -33,6 +33,42 @@ const PROVIDERS = {
   },
 };
 
+function getDetailContextEntryCount(detail) {
+  if (detail && Array.isArray(detail.conversation) && detail.conversation.length) {
+    return detail.conversation.length;
+  }
+  return Array.isArray(detail && detail.userMessages) ? detail.userMessages.length : 0;
+}
+
+function buildSessionContext(detail) {
+  let p = "";
+  p += `Agent: ${detail.agent}\n`;
+  if (detail.title) p += `Title: ${detail.title}\n`;
+  if (detail.cwd) p += `Project: ${detail.cwd}\n`;
+  if (detail.timestamps.length >= 2) {
+    const sorted = [...detail.timestamps].sort((a, b) => a - b);
+    const mins = Math.round((sorted[sorted.length - 1] - sorted[0]) / 60000);
+    p += `Duration: ${mins} minutes\n`;
+  }
+
+  const conversation = Array.isArray(detail.conversation) ? detail.conversation : [];
+  if (conversation.length) {
+    p += "\n## Conversation\n";
+    for (const m of conversation.slice(0, 40)) {
+      if (!m || !m.text) continue;
+      const speaker = m.role === "assistant" ? "助手" : "用户";
+      p += `- ${speaker}: ${m.text}\n`;
+    }
+    return p;
+  }
+
+  p += "\n## User Messages\n";
+  for (const m of (detail.userMessages || []).slice(0, 30)) {
+    if (m.text) p += `- ${m.text}\n`;
+  }
+  return p;
+}
+
 module.exports = function initAnalyticsAI(ctx) {
   const isWin = process.platform === "win32";
   let cachedInsights = null;
@@ -1440,34 +1476,6 @@ module.exports = function initAnalyticsAI(ctx) {
     return result;
   }
 
-  // ── Session context builder (shared between brief & detail) ──
-  function buildSessionContext(detail) {
-    let p = "";
-    p += `Agent: ${detail.agent}\n`;
-    if (detail.title) p += `Title: ${detail.title}\n`;
-    if (detail.cwd) p += `Project: ${detail.cwd}\n`;
-    if (detail.timestamps.length >= 2) {
-      const sorted = [...detail.timestamps].sort((a, b) => a - b);
-      const mins = Math.round((sorted[sorted.length - 1] - sorted[0]) / 60000);
-      p += `Duration: ${mins} minutes\n`;
-    }
-    p += "\n## User Messages\n";
-    for (const m of detail.userMessages.slice(0, 30)) {
-      if (m.text) p += `- ${m.text}\n`;
-    }
-    const toolSummary = {};
-    for (const t of detail.toolCalls) {
-      toolSummary[t.name] = (toolSummary[t.name] || 0) + 1;
-    }
-    if (Object.keys(toolSummary).length) {
-      p += "\n## Activity types\n";
-      for (const [name, count] of Object.entries(toolSummary).sort((a, b) => b[1] - a[1]).slice(0, 5)) {
-        p += `- ${name}: ${count}x\n`;
-      }
-    }
-    return p;
-  }
-
   // ── Brief mode prompt (default: concise + emotional value) ──
   function buildSessionBriefPrompt(detail) {
     let p = "你是用户的编程搭档。以下是用户与 AI agent 的对话摘要。\n";
@@ -1663,12 +1671,12 @@ module.exports = function initAnalyticsAI(ctx) {
       const cached = sessionAnalysisCache.get(cacheKey);
       if (
         cached._analysisCacheVersion === ANALYSIS_CACHE_VERSION &&
-        cached._msgCount === (detail.userMessages || []).length
+        cached._msgCount === getDetailContextEntryCount(detail)
       ) {
         return cached;
       }
       // Content changed — re-analyze
-      console.log(`Clawd analytics: session ${cacheKey} grew (${cached._msgCount} → ${(detail.userMessages || []).length} msgs), re-analyzing`);
+      console.log(`Clawd analytics: session ${cacheKey} grew (${cached._msgCount} → ${getDetailContextEntryCount(detail)} entries), re-analyzing`);
       sessionAnalysisCache.delete(cacheKey);
     }
 
@@ -1766,7 +1774,7 @@ module.exports = function initAnalyticsAI(ctx) {
           if (runtimeModel) obj._model = runtimeModel;
           if (estCost) obj._cost = estCost;
           obj._provider = cliName;
-          obj._msgCount = (detail.userMessages || []).length;
+          obj._msgCount = getDetailContextEntryCount(detail);
           obj._analysisMs = Date.now() - startTime;
           obj._mode = analysisMode;
           return obj;
@@ -1837,10 +1845,10 @@ module.exports = function initAnalyticsAI(ctx) {
       // real reason behind a generic "分析失败" message).
       const result = extractFirstJsonObject(text);
       if (!result) {
-        const fallback = { summary: text.slice(0, 300), timeBreakdown: [], insights: [], suggestions: [], _msgCount: (detail.userMessages || []).length, _analysisMs: Date.now() - startTime };
+        const fallback = { summary: text.slice(0, 300), timeBreakdown: [], insights: [], suggestions: [], _msgCount: getDetailContextEntryCount(detail), _analysisMs: Date.now() - startTime };
         return maybeCacheAnalysisResult(cacheKey, fallback);
       }
-      result._msgCount = (detail.userMessages || []).length;
+      result._msgCount = getDetailContextEntryCount(detail);
       result._analysisMs = Date.now() - startTime;
       return maybeCacheAnalysisResult(cacheKey, result);
     } catch (err) {
@@ -1860,7 +1868,11 @@ module.exports = function initAnalyticsAI(ctx) {
     if (!detail) return null;
     if (onelinerCache.has(detail.sessionId)) return onelinerCache.get(detail.sessionId);
 
-    const msgs = (detail.userMessages || []).slice(0, 5).map(m => m.text).filter(Boolean).join("\n");
+    const msgs = ((detail.conversation && detail.conversation.length)
+      ? detail.conversation.slice(0, 6).map(m => (m && m.text ? `${m.role === "assistant" ? "助手" : "用户"}: ${m.text}` : ""))
+      : (detail.userMessages || []).slice(0, 5).map(m => (m && m.text) || ""))
+      .filter(Boolean)
+      .join("\n");
     if (!msgs) return null;
 
     const prompt = `用一句中文（15-25字）概括以下对话的主题，不要加标点符号结尾：\n${msgs}`;
@@ -1895,4 +1907,9 @@ module.exports = function initAnalyticsAI(ctx) {
   }
 
   return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath };
+};
+
+module.exports.__test = {
+  buildSessionContext,
+  getDetailContextEntryCount,
 };
