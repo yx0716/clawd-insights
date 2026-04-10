@@ -1565,6 +1565,18 @@ function showAnalysisContent(){
   ph.style.display="none";ld.style.display="none";ct.style.display="block";
 }
 
+function ensureAnalysisPanelVisible(opts) {
+  const panel = document.getElementById("analysisPanel");
+  if (!panel) return;
+  const force = !!(opts && opts.force);
+  const rect = panel.getBoundingClientRect();
+  const stackedLayout = window.matchMedia("(max-width: 840px)").matches;
+  const belowFold = rect.top > (window.innerHeight - 120);
+  const aboveViewport = rect.bottom < 80;
+  if (!force && !stackedLayout && !belowFold && !aboveViewport) return;
+  panel.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
 function getSessionAgent(sessionId) {
   const sess = currentData && currentData.sessions ? currentData.sessions.find(s => s.id === sessionId) : null;
   return sess ? sess.agent : "claude-code";
@@ -1577,6 +1589,7 @@ async function ensureAnalysisConsent(providerId) {
   const selectedOption = getAnalysisOptionById(providerId) || getSelectedAnalysisOption() || analysisProvider;
   if (!selectedOption) {
     showAnalysisContent();
+    ensureAnalysisPanelVisible();
     const ct = document.getElementById("analysisContent");
     ct.innerHTML = renderNoProviderError();
     bindAnalysisErrorLinks(ct);
@@ -1623,6 +1636,7 @@ async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
   const cached = getCachedAnalysis(sessionId, selectedAnalysisAgent, targetMode);
   if (cached) {
     showAnalysisContent();
+    ensureAnalysisPanelVisible();
     renderAnalysis(cached);
     bindAnalysisErrorLinks(ct);
     return;
@@ -1630,6 +1644,7 @@ async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
   const alternate = findAlternateCachedAnalysis(sessionId, targetMode, selectedAnalysisAgent);
   if (alternate) {
     showAnalysisContent();
+    ensureAnalysisPanelVisible();
     renderAnalysis(attachFallbackNotice(alternate.result, selectedAnalysisAgent, targetMode));
     return;
   }
@@ -1643,10 +1658,12 @@ async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
     return;
   }
   showAnalysisLoading();
+  ensureAnalysisPanelVisible();
   try {
     const result = await requestSessionAnalysis(sessionId, agent, selectedAnalysisAgent, targetMode);
     if (selectedSessionId !== sessionId) return;
     showAnalysisContent();
+    ensureAnalysisPanelVisible();
     if (!result) {
       ct.innerHTML = `<div style="color:var(--text-secondary)">${escapeHtml(t("couldNotAnalyze"))}</div>`;
       return;
@@ -1657,6 +1674,7 @@ async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
     if (currentData) renderEvents(currentData);
   } catch (err) {
     showAnalysisContent();
+    ensureAnalysisPanelVisible();
     ct.innerHTML = renderAnalysisErrorMessage(err && (err.message || String(err)));
     bindAnalysisErrorLinks(ct);
   }
