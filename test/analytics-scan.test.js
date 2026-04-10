@@ -140,6 +140,11 @@ describe("analytics scan", () => {
     );
     writeCodexSession(
       tempHome,
+      "019d629b-5f09-73f1-b73c-7fd96130fac4",
+      "/Users/jyx/Documents/1_explore/clawd-insights"
+    );
+    writeCodexSession(
+      tempHome,
       "019d629b-5f09-73f1-b73c-7fd96130fac3",
       "/Users/jyx/Documents/1_explore/cache-revolution"
     );

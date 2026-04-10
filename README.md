@@ -1,6 +1,6 @@
 <div align="center">
 
-# clawd-on-desk-insights
+# clawd-insights
 ## A local-first analytics dashboard for your AI coding sessions
 
 > "Across all the conversations with your Agent — what's emerging?"
@@ -36,7 +36,7 @@
 </table>
 
 
-**Clawd-on-desk-insights automatically scans the conversations you've already had with Claude Code, Codex CLI, Cursor and other agents, and turns them into a timeline plus AI-generated session summaries.** No more scrolling through endless chat history — it builds the knowledge cards for you.
+**Clawd Insights automatically scans the conversations you've already had with Claude Code, Codex CLI, Cursor and other agents, and turns them into a timeline plus AI-generated session summaries.** No more scrolling through endless chat history — it builds the knowledge cards for you.
 
 Every conversation leaves an **imprint**. No idea you tried, no bug you wrestled with, no decision you made together with the Agent is ever wasted — they all come back into view in the **Analytics Dashboard**.
 
@@ -47,10 +47,7 @@ All data stays on your machine. AI analysis runs through your own local `claude`
 ## Quick Install
 
 ```bash
-git clone https://github.com/yx0716/clawd-on-desk-insights.git
-cd clawd-on-desk-insights
-npm install
-npm start
+git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
 ```
 
 A small crab appears on your desktop — on macOS, right-click it to open the **Analytics Dashboard**. For provider setup and analysis workflows, see [Getting Started](#getting-started) below.
@@ -95,10 +92,7 @@ A small crab appears on your desktop — on macOS, right-click it to open the **
 ### 1. Install and run
 
 ```bash
-git clone https://github.com/yx0716/clawd-on-desk-insights.git
-cd clawd-on-desk-insights
-npm install
-npm start
+git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
 ```
 
 Once it launches, a small crab (the default theme) appears on your desktop — that's the Clawd pet, and **every entry point to the dashboard goes through it**.

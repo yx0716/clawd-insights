@@ -2,7 +2,7 @@
 
 ## v0.6.0 — AI Agent Analytics Dashboard
 
-First release of **clawd-on-desk-insights**, forked from [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk).
+First release of **clawd-insights**, forked from [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk).
 
 ### New: Insights Dashboard
 

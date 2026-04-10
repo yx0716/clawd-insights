@@ -235,8 +235,8 @@ function initUpdater(ctx, deps = {}) {
     return new Promise((resolve, reject) => {
       const req = httpsGet({
         hostname: "api.github.com",
-        path: "/repos/yx0716/clawd-on-desk-insights/releases/latest",
-        headers: { "User-Agent": "Clawd-on-Desk-Insights" },
+        path: "/repos/yx0716/clawd-insights/releases/latest",
+        headers: { "User-Agent": "Clawd-Insights" },
       }, (res) => {
         let data = "";
         res.on("data", (chunk) => { data += chunk; });
@@ -487,7 +487,7 @@ function initUpdater(ctx, deps = {}) {
         version: info.version,
         onPrimary: async () => {
           if (isMac) {
-            shell.openExternal("https://github.com/yx0716/clawd-on-desk-insights/releases/latest");
+            shell.openExternal("https://github.com/yx0716/clawd-insights/releases/latest");
             updateStatus = "idle";
             manualUpdateCheck = false;
             rebuildMenus();

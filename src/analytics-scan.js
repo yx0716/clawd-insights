@@ -82,6 +82,7 @@ module.exports = function initAnalyticsScan(ctx) {
   const HIDDEN_PROJECT_TOKENS = new Set([
     "on-desk",
     "clawd-on-desk",
+    "clawd-insights",
     "clawd-on-desk-insights",
   ]);
 
