@@ -184,6 +184,7 @@ Remote hooks run in `CLAWD_REMOTE` mode which skips PID collection (remote PIDs 
 | **opencode: terminal focus limited to spawning terminal** | The plugin runs in-process with opencode, so `source_pid` points to the terminal that launched opencode. If you use `opencode attach` from a different window, terminal focus jumps to the original launcher. |
 | **macOS/Linux packaged auto-update** | DMG/AppImage/deb installs cannot auto-update — use `git clone` + `npm start` for auto-update via `git pull`, or download new versions manually from GitHub Releases. |
 | **No test framework for Electron** | Unit tests cover agents and log polling, but the Electron main process (state machine, windows, tray) has no automated tests. |
+| **Claude Code: tools rejected when Clawd is offline** | When Clawd's HTTP server isn't running, the `PermissionRequest` hook (registered by Clawd) fails with `ECONNREFUSED`, and Claude Code currently denies the tool call instead of falling through to its built-in prompt — affecting `Edit`, `Write`, `Bash`, etc. This contradicts CC's documented non-blocking behavior for HTTP hook failures — see [anthropics/claude-code#46193](https://github.com/anthropics/claude-code/issues/46193). Workaround: keep Clawd running (recommended), or temporarily rename the `PermissionRequest` key in `~/.claude/settings.json` to disable the hook. |
 
 ## Custom Themes
 
