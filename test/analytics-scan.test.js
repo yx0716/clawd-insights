@@ -5,8 +5,9 @@ const path = require("path");
 const os = require("os");
 
 const ANALYTICS_SCAN_PATH = require.resolve("../src/analytics-scan");
+const INTERNAL_ANALYTICS_SUMMARY_MARKER = "[clawd-analytics-internal-summary-task]";
 
-function writeCodexSession(homeDir, sessionId, cwd) {
+function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "second prompt", "third prompt"]) {
   const dateDir = path.join(homeDir, ".codex", "sessions", "2026", "04", "06");
   fs.mkdirSync(dateDir, { recursive: true });
 
@@ -30,7 +31,7 @@ function writeCodexSession(homeDir, sessionId, cwd) {
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: "first prompt" }],
+        content: [{ type: "input_text", text: prompts[0] }],
       },
     },
     {
@@ -48,7 +49,7 @@ function writeCodexSession(homeDir, sessionId, cwd) {
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: "second prompt" }],
+        content: [{ type: "input_text", text: prompts[1] }],
       },
     },
     {
@@ -66,7 +67,7 @@ function writeCodexSession(homeDir, sessionId, cwd) {
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: "third prompt" }],
+        content: [{ type: "input_text", text: prompts[2] }],
       },
     },
     {
@@ -151,6 +152,33 @@ describe("analytics scan", () => {
 
     assert.strictEqual(data.sessionCount, 1);
     assert.strictEqual(data.sessions[0].project, "cache-revolution");
+  });
+
+  it("filters out internal analytics summary sessions regardless of cwd", () => {
+    writeCodexSession(
+      tempHome,
+      "019d629b-5f09-73f1-b73c-7fd96130fac8",
+      "/Users/jyx/Documents/1_explore/project-alpha",
+      [
+        `${INTERNAL_ANALYTICS_SUMMARY_MARKER}\nIgnore this marker.\nSummarize the session.`,
+        "second prompt",
+        "third prompt",
+      ]
+    );
+    writeCodexSession(
+      tempHome,
+      "019d629b-5f09-73f1-b73c-7fd96130fac7",
+      "/Users/jyx/Documents/1_explore/project-beta"
+    );
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const startTs = new Date("2026-04-06T00:00:00+08:00").getTime();
+    const endTs = new Date("2026-04-07T00:00:00+08:00").getTime();
+    const data = analyticsScan.scanRange(startTs, endTs);
+
+    assert.strictEqual(data.sessionCount, 1);
+    assert.strictEqual(data.sessions[0].project, "project-beta");
   });
 
   it("captures assistant replies in codex session detail conversation", () => {

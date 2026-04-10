@@ -33,6 +33,15 @@ const PROVIDERS = {
   },
 };
 
+const INTERNAL_ANALYTICS_SUMMARY_MARKER = "[clawd-analytics-internal-summary-task]";
+
+function buildInternalCliAnalysisPrompt(prompt) {
+  return `${INTERNAL_ANALYTICS_SUMMARY_MARKER}
+Ignore the marker above. It is only used by Clawd to hide this internal summary session from analytics scans.
+
+${prompt}`;
+}
+
 function getDetailContextEntryCount(detail) {
   if (detail && Array.isArray(detail.conversation) && detail.conversation.length) {
     return detail.conversation.length;
@@ -1090,6 +1099,7 @@ module.exports = function initAnalyticsAI(ctx) {
   async function callCodexCLI(codexPath, prompt, options = {}) {
     const env = await sanitizeCliProxyEnv(buildCliEnv(), "codex");
     return new Promise((resolve, reject) => {
+      const fullPrompt = buildInternalCliAnalysisPrompt(prompt);
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-codex-"));
       const outputFile = path.join(tmpDir, "last-message.txt");
       const schemaFile = path.join(tmpDir, "output-schema.json");
@@ -1232,7 +1242,7 @@ module.exports = function initAnalyticsAI(ctx) {
         );
       });
 
-      child.stdin.end(prompt);
+      child.stdin.end(fullPrompt);
     });
   }
 
@@ -1550,8 +1560,9 @@ module.exports = function initAnalyticsAI(ctx) {
 
   function callClaudeCLI(claudePath, prompt) {
     return new Promise((resolve, reject) => {
+      const fullPrompt = buildInternalCliAnalysisPrompt(prompt);
       const args = [
-        "-p", prompt,
+        "-p", fullPrompt,
         "--output-format", "stream-json",
         "--verbose",                                            // required by Claude CLI 2.2+ with -p + stream-json
         "--tools", "",                                          // disable all built-in tools (-25K tokens)
