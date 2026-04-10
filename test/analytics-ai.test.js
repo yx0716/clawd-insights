@@ -40,4 +40,28 @@ describe("analytics AI session context", () => {
 
     assert.strictEqual(analyticsAI.__test.getDetailContextEntryCount(detail), 3);
   });
+
+  it("prefers the saved default analysis provider when available", () => {
+    const picked = analyticsAI.__test.resolvePreferredAnalysisProvider(
+      [
+        { id: "claude-code", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      { defaultAnalysisProvider: "codex" }
+    );
+
+    assert.strictEqual(picked.id, "codex");
+  });
+
+  it("falls back to the first available analysis provider when the saved one is missing", () => {
+    const picked = analyticsAI.__test.resolvePreferredAnalysisProvider(
+      [
+        { id: "claude-code", label: "Claude Code" },
+        { id: "codex", label: "Codex" },
+      ],
+      { defaultAnalysisProvider: "api:openai" }
+    );
+
+    assert.strictEqual(picked.id, "claude-code");
+  });
 });

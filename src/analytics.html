@@ -29,6 +29,9 @@ body * { -webkit-app-region:no-drag; }
 .header-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .header-report-btn { border:1px solid var(--border); background:var(--bg-card); color:var(--text-secondary); border-radius:999px; padding:6px 12px; font-size:11px; font-weight:700; cursor:pointer; }
 .header-report-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-light); }
+.lang-toggle { display:flex; gap:2px; background:var(--border); border-radius:999px; padding:2px; }
+.lang-btn { border:none; background:transparent; color:var(--text-secondary); border-radius:999px; padding:6px 10px; font-size:11px; font-weight:700; cursor:pointer; }
+.lang-btn.active { background:var(--bg-card); color:var(--accent); box-shadow:var(--shadow); }
 .header-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
 .hstat { background:var(--accent-light); border-radius:var(--radius-sm); padding:8px 14px; min-width:120px; }
 .hstat .hl { font-size:9px; color:var(--accent); font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
@@ -138,6 +141,7 @@ body * { -webkit-app-region:no-drag; }
 .evt-title-input { font:inherit; font-weight:700; flex:1 1 auto; min-width:0; padding:2px 6px; border:1px solid var(--accent); border-radius:4px; background:var(--bg-card); color:var(--text); outline:none; }
 .evt-title-input::placeholder { font-weight:500; color:var(--text-muted); }
 .evt-dur { font-size:12px; font-weight:700; color:var(--accent); }
+.evt-dur-label { font-size:9px; color:var(--text-muted); margin-top:2px; text-transform:uppercase; letter-spacing:0.3px; }
 .evt-agent { display:inline-flex; align-items:center; gap:6px; font-size:10px; font-weight:600; color:var(--text-secondary); padding:4px 8px; border-radius:999px; background:var(--bg-card); border:1px solid var(--border-light); }
 .evt-agent-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .evt-tag { font-size:9px; font-weight:700; color:var(--accent); background:var(--accent-light); border-radius:999px; padding:2px 6px; flex-shrink:0; }
@@ -275,20 +279,24 @@ body * { -webkit-app-region:no-drag; }
   <!-- Header -->
   <div class="header-block">
     <div class="header-title">
-      <div class="sub">Agent Usage</div>
-      <h1><span>Timeline</span></h1>
+      <div class="sub" id="headerSub">Agent Usage</div>
+      <h1 id="headerTitle"><span>Timeline</span></h1>
     </div>
     <div class="header-actions">
       <button class="header-report-btn" id="dailyReportBtn" type="button">日报</button>
       <button class="header-report-btn" id="weeklyReportBtn" type="button">周报</button>
+      <div class="lang-toggle" aria-label="Language switcher">
+        <button class="lang-btn" id="langBtnZh" type="button" data-lang="zh">中</button>
+        <button class="lang-btn" id="langBtnEn" type="button" data-lang="en">EN</button>
+      </div>
     </div>
     <div class="header-stats">
-      <div class="hstat"><div class="hl">Total Duration</div><div class="hv" id="hDur">--</div></div>
-      <div class="hstat"><div class="hl">Sessions</div><div class="hv" id="hSess">--</div></div>
-      <div class="hstat"><div class="hl">Projects</div><div class="hv" id="hProj">--</div></div>
-      <div class="hstat"><div class="hl">Messages</div><div class="hv" id="hMsgs">--</div></div>
-      <div class="hstat"><div class="hl">Tool Calls</div><div class="hv" id="hTools">--</div></div>
-      <div class="hstat"><div class="hl">Agents</div><div class="hv" id="hAgents">--</div></div>
+      <div class="hstat"><div class="hl" id="hDurLabel">Active Span</div><div class="hv" id="hDur">--</div></div>
+      <div class="hstat"><div class="hl" id="hSessLabel">Sessions</div><div class="hv" id="hSess">--</div></div>
+      <div class="hstat"><div class="hl" id="hProjLabel">Projects</div><div class="hv" id="hProj">--</div></div>
+      <div class="hstat"><div class="hl" id="hMsgsLabel">Messages</div><div class="hv" id="hMsgs">--</div></div>
+      <div class="hstat"><div class="hl" id="hToolsLabel">Tool Calls</div><div class="hv" id="hTools">--</div></div>
+      <div class="hstat"><div class="hl" id="hAgentsLabel">Agents</div><div class="hv" id="hAgents">--</div></div>
     </div>
     <button class="settings-btn" id="settingsBtn" title="AI Provider Settings" aria-label="AI Provider Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
@@ -298,10 +306,10 @@ body * { -webkit-app-region:no-drag; }
   <!-- Tabs + Legend -->
   <div class="tabs-row">
     <div class="tabs">
-      <button class="tab" data-range="today">Today</button>
-      <button class="tab" data-range="3days">3 Days</button>
-      <button class="tab active" data-range="week">Week</button>
-      <button class="tab" data-range="month">Month</button>
+      <button class="tab" data-range="today" id="tabToday">Today</button>
+      <button class="tab" data-range="3days" id="tab3days">3 Days</button>
+      <button class="tab active" data-range="week" id="tabWeek">Week</button>
+      <button class="tab" data-range="month" id="tabMonth">Month</button>
     </div>
     <div class="tabs-spacer"></div>
     <div class="date-label" id="dateLabel"></div>
@@ -311,12 +319,12 @@ body * { -webkit-app-region:no-drag; }
   <!-- Timeline -->
   <div class="timeline-card">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span style="font-size:10px;color:var(--text-muted)">Range:</span>
+      <span style="font-size:10px;color:var(--text-muted)" id="rangeLabel">Range:</span>
       <select id="rangeStart" style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--text)"></select>
       <span style="font-size:10px;color:var(--text-muted)">—</span>
       <select id="rangeEnd" style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--text)"></select>
     </div>
-    <div class="timeline-hint">提示：把鼠标放在时间轴上滚轮缩放，快速展开某一块；按 <kbd>←</kbd> / <kbd>→</kbd> 可左右移动。</div>
+    <div class="timeline-hint" id="timelineHint">提示：把鼠标放在时间轴上滚轮缩放，快速展开某一块；按 <kbd>←</kbd> / <kbd>→</kbd> 可左右移动。</div>
     <div class="time-axis">
       <div class="time-axis-spacer"></div>
       <div class="time-axis-track" id="timeAxis"></div>
@@ -327,19 +335,19 @@ body * { -webkit-app-region:no-drag; }
   <!-- Analysis panel (right after timeline) -->
   <div class="analysis-panel" id="analysisPanel">
     <div class="placeholder" id="analysisPlaceholder">← 点击左侧 Session 查看 AI 分析</div>
-    <div class="loading" id="analysisLoading" style="display:none"><div class="spinner"></div><div style="margin-top:8px">Analyzing...</div></div>
+    <div class="loading" id="analysisLoading" style="display:none"><div class="spinner"></div><div style="margin-top:8px" id="analysisLoadingText">Analyzing...</div></div>
     <div id="analysisContent" style="display:none"></div>
   </div>
 
   <!-- Two panels: Distribution + Trend -->
   <div class="panels-row" style="grid-template-columns:1fr 1fr">
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Distribution</span><span class="panel-sub" id="distTotal"></span></div>
-      <div class="pie-wrap"><div class="pie" id="distPie"><div class="pie-hole"><span class="ph-val" id="distCenter">--</span><span class="ph-lbl">total</span></div></div></div>
+      <div class="panel-header"><span class="panel-title" id="distributionTitle">Distribution</span><span class="panel-sub" id="distTotal"></span></div>
+      <div class="pie-wrap"><div class="pie" id="distPie"><div class="pie-hole"><span class="ph-val" id="distCenter">--</span><span class="ph-lbl" id="distCenterLabel">total</span></div></div></div>
       <div class="pie-legend" id="distLegend"></div>
     </div>
     <div class="panel">
-      <div class="panel-header"><span class="panel-title">Trend</span></div>
+      <div class="panel-header"><span class="panel-title" id="trendTitle">Trend</span></div>
       <div class="bar-chart" id="barChart"></div>
     </div>
   </div>
@@ -347,7 +355,7 @@ body * { -webkit-app-region:no-drag; }
   <!-- Event cards -->
   <div class="events-card">
     <div class="events-header">
-      <span class="panel-title">Sessions</span>
+      <span class="panel-title" id="sessionsTitle">Sessions</span>
       <span class="panel-badge" id="evtCount"></span>
     </div>
     <div class="events-grid" id="eventsGrid"></div>
@@ -373,25 +381,25 @@ body * { -webkit-app-region:no-drag; }
 <!-- Settings modal (AI provider config) -->
 <div class="confirm-overlay" id="settingsOverlay" style="display:none">
   <div class="settings-dialog">
-    <h2>AI Provider Settings</h2>
-    <div class="settings-sub">Clawd will prefer locally detected CLI analyzers when available. Pick the default provider here, then use the API section below only as a fallback or override.</div>
+    <h2 id="settingsTitle">AI Provider Settings</h2>
+    <div class="settings-sub" id="settingsSub">Clawd will prefer locally detected CLI analyzers when available. Pick the default provider here, then use the API section below only as a fallback or override.</div>
     <div class="settings-status" id="settingsStatus"></div>
 
     <!-- Section 1: Local CLI Detection + default selection -->
     <div class="settings-section">
-      <h3>Local CLI Detection</h3>
+      <h3 id="localCliTitle">Local CLI Detection</h3>
       <div class="cli-diag" id="cliDiag">
-        <div style="color:var(--text-muted);text-align:center;padding:6px 0">Loading…</div>
+        <div style="color:var(--text-muted);text-align:center;padding:6px 0" id="cliDiagLoading">Loading…</div>
       </div>
       <div class="settings-field">
-        <label for="settingsDefaultAnalysisProvider">Default Analysis Provider</label>
+        <label for="settingsDefaultAnalysisProvider" id="defaultAnalysisProviderLabel">Default Analysis Provider</label>
         <select id="settingsDefaultAnalysisProvider">
           <option value="">(use first available)</option>
         </select>
-        <div class="field-hint">New session analysis and the Pre-analyze modal will use this provider by default. If empty, Clawd picks the first available provider above.</div>
+        <div class="field-hint" id="defaultAnalysisProviderHint">New session analysis and the Pre-analyze modal will use this provider by default. If empty, Clawd picks the first available provider above.</div>
       </div>
       <div class="settings-field">
-        <label for="settingsClaudePath">Claude binary path <span style="color:var(--text-muted);font-weight:400">(optional override)</span></label>
+        <label for="settingsClaudePath" id="settingsClaudePathLabel">Claude binary path <span style="color:var(--text-muted);font-weight:400" id="settingsClaudePathOptional">(optional override)</span></label>
         <div class="cli-path-row">
           <input id="settingsClaudePath" type="text" autocomplete="off" spellcheck="false" placeholder="/path/to/claude">
           <button type="button" data-test-cli="claude">Test</button>
@@ -399,21 +407,21 @@ body * { -webkit-app-region:no-drag; }
         <div class="cli-test-result" id="claudeTestResult"></div>
       </div>
       <div class="settings-field">
-        <label for="settingsCodexPath">Codex binary path <span style="color:var(--text-muted);font-weight:400">(optional override)</span></label>
+        <label for="settingsCodexPath" id="settingsCodexPathLabel">Codex binary path <span style="color:var(--text-muted);font-weight:400" id="settingsCodexPathOptional">(optional override)</span></label>
         <div class="cli-path-row">
           <input id="settingsCodexPath" type="text" autocomplete="off" spellcheck="false" placeholder="/path/to/codex">
           <button type="button" data-test-cli="codex">Test</button>
         </div>
         <div class="cli-test-result" id="codexTestResult"></div>
-        <div class="field-hint">If auto-detection fails (e.g. NVM/fnm/Volta install), run <code>which codex</code> in your terminal and paste the path here.</div>
+        <div class="field-hint" id="settingsCodexPathHint">If auto-detection fails (e.g. NVM/fnm/Volta install), run <code>which codex</code> in your terminal and paste the path here.</div>
       </div>
     </div>
 
     <!-- Section 2: API Provider (fallback) -->
     <div class="settings-section">
-      <h3>API Provider (Fallback)</h3>
+      <h3 id="apiFallbackTitle">API Provider (Fallback)</h3>
       <div class="settings-field">
-        <label for="settingsProvider">Provider</label>
+        <label for="settingsProvider" id="settingsProviderLabel">Provider</label>
         <select id="settingsProvider">
           <option value="claude">Claude (Anthropic)</option>
           <option value="openai">OpenAI-Compatible (Qwen, DeepSeek, OpenRouter, etc.)</option>
@@ -421,17 +429,17 @@ body * { -webkit-app-region:no-drag; }
         </select>
       </div>
       <div class="settings-field" id="settingsApiKeyField">
-        <label for="settingsApiKey">API Key</label>
+        <label for="settingsApiKey" id="settingsApiKeyLabel">API Key</label>
         <input id="settingsApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
         <div class="field-hint" id="settingsApiKeyHint">Stored locally in your prefs file. Leave blank to keep the existing key.</div>
       </div>
       <div class="settings-field">
-        <label for="settingsBaseUrl">Endpoint <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+        <label for="settingsBaseUrl" id="settingsBaseUrlLabel">Endpoint <span style="color:var(--text-muted);font-weight:400" id="settingsBaseUrlOptional">(optional)</span></label>
         <input id="settingsBaseUrl" type="text" autocomplete="off" spellcheck="false" placeholder="">
         <div class="field-hint" id="settingsBaseUrlHint"></div>
       </div>
       <div class="settings-field">
-        <label for="settingsModel">Model <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+        <label for="settingsModel" id="settingsModelLabel">Model <span style="color:var(--text-muted);font-weight:400" id="settingsModelOptional">(optional)</span></label>
         <input id="settingsModel" type="text" autocomplete="off" spellcheck="false" placeholder="">
         <div class="field-hint" id="settingsModelHint"></div>
       </div>
@@ -450,7 +458,257 @@ const AGENT_COLORS = {"claude-code":"#E8734A","codex":"#5B8DEF","cursor-agent":"
 const AGENT_LABELS = {"claude-code":"Claude Code","codex":"Codex","cursor-agent":"Cursor","copilot-cli":"Copilot","gemini-cli":"Gemini"};
 const PROJECT_PALETTE = ["#E8734A","#5B8DEF","#9F7AEA","#48BB78","#F6AD55","#4FD1C5","#FC8181","#B794F4"];
 const WEEKDAYS_ZH = ["日","一","二","三","四","五","六"];
+const WEEKDAYS_EN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const BREAKDOWN_COLORS = ["#E8734A","#5B8DEF","#9F7AEA","#48BB78","#F56565","#ECC94B","#4FD1C5"];
+const LANG_STORAGE_KEY = "clawd-analytics-lang";
+const I18N = {
+  zh: {
+    documentTitle: "Agent 时间轴",
+    headerSub: "Agent 使用情况",
+    headerTitle: "时间轴",
+    reportDay: "日报",
+    reportWeek: "周报",
+    statsActiveSpan: "活跃跨度",
+    statsSessions: "会话数",
+    statsProjects: "项目数",
+    statsMessages: "消息数",
+    statsTools: "工具调用",
+    statsAgents: "Agents",
+    settingsTitle: "AI Provider 设置",
+    settingsSub: "Clawd 会优先使用本地检测到的 CLI 分析器。先在这里选默认 provider，下面的 API 区域只作为 fallback 或 override。",
+    tabToday: "今天",
+    tab3days: "3天",
+    tabWeek: "本周",
+    tabMonth: "月度",
+    rangeLabel: "范围：",
+    timelineHint: "提示：把鼠标放在时间轴上滚轮缩放，快速展开某一块；按 <kbd>←</kbd> / <kbd>→</kbd> 可左右移动。",
+    analysisPlaceholder: "← 点击左侧 Session 查看 AI 分析",
+    analyzing: "分析中...",
+    distribution: "分布",
+    trend: "趋势",
+    total: "总计",
+    sessionsTitle: "Sessions",
+    reportSub: "基于当前 analytics 数据生成，可直接复制。",
+    copy: "复制",
+    close: "关闭",
+    localCliTitle: "本地 CLI 检测",
+    loading: "加载中…",
+    defaultAnalysisProviderLabel: "默认分析器",
+    defaultAnalysisProviderHint: "新 session 分析和 Pre-analyze 弹窗都会默认使用这里选中的 provider。留空时，Clawd 会使用上方第一个可用 provider。",
+    optionalOverride: "（可选覆盖）",
+    claudePathLabel: "Claude 可执行路径 ",
+    codexPathLabel: "Codex 可执行路径 ",
+    test: "测试",
+    codexPathHint: "如果自动检测失败（比如 NVM/fnm/Volta 安装），请在终端运行 <code>which codex</code>，然后把路径贴到这里。",
+    apiFallbackTitle: "API Provider（兜底）",
+    provider: "Provider",
+    apiKey: "API Key",
+    endpoint: "Endpoint ",
+    model: "Model ",
+    optional: "（可选）",
+    clear: "清除",
+    cancel: "取消",
+    save: "保存",
+    noSessions: "没有会话",
+    noData: "暂无数据",
+    daySessionsCount: "{count} 个 sessions",
+    messageCount: "{count} 条消息",
+    toolCount: "{count} 个工具",
+    activeSpan: "活跃跨度",
+    analyzed: "已分析",
+    analyzingTag: "分析中…",
+    renameSession: "重命名会话",
+    renameHintLocal: "本地重命名，点击铅笔编辑",
+    renameHintCustom: "来自 jsonl custom-title",
+    renameHintFirstMsg: "项目 + 首条消息，点击铅笔可自定义标题",
+    renameHintProject: "项目目录名",
+    tooltipDetail: "{agent} · {time} {duration} · {messages} 条消息",
+    couldNotAnalyze: "暂时无法分析",
+    noProviderAvailable: "当前没有可用的 AI provider。",
+    openSettings: "打开设置",
+    configureApiKeyFallback: "配置 API key 作为 fallback。",
+    configureApiProviderFallback: "配置 API provider 作为 fallback。",
+    confirmAnalyze: "使用 <span class=\"provider\">{provider}</span> 进行分析？<br><span style=\"font-size:11px;color:var(--text-muted)\">会消耗少量 tokens</span>",
+    analyze: "开始分析",
+    outcomes: "结果",
+    timeBreakdown: "时间分布",
+    suggestions: "建议",
+    showingCachedFrom: "当前显示的是 {provider} 的缓存",
+    switchAnalyzer: "换分析器",
+    regenerateWith: "改用 {provider}",
+    brief: "速览",
+    detail: "深入",
+    reportGenerating: "生成中...",
+    reportNoData: "暂无可用数据。",
+    reportFailed: "生成失败：{message}",
+    copied: "已复制",
+    copyFailed: "复制失败，请手动复制",
+    clearConfirm: "清除已保存的 API key、provider 配置和自定义 CLI 路径？",
+    saved: "已保存",
+    cleared: "已清除",
+    saveFailed: "保存失败：{message}",
+    clearFailed: "清除失败：{message}",
+    pathEmpty: "路径为空",
+    testing: "测试中…",
+    testFailed: "测试失败",
+    testFailedWithMessage: "测试失败：{message}",
+    diagnosticsUnavailable: "诊断信息不可用",
+    notDetected: "未检测到",
+    customTag: "自定义",
+    cooldownTag: "冷却中",
+    searchedDirectories: "已搜索 {count} 个目录",
+    loginShell: "登录 shell：",
+    bundleLocationsChecked: "已检查 Codex bundle 位置（{count}）",
+    bundleLocationsHint: "包含 Codex.app 以及 Cursor/VS Code OpenAI ChatGPT 扩展。",
+    searchedLaneCount: "{count} 条并行 lane",
+    rangePast3Days: "过去 3 天",
+    rangePast7Days: "过去 7 天",
+    preAnalyzeTitle: "预分析 Sessions",
+    preAnalyzeSub: "选择要预分析的范围。剩余 session 也可以点开后再分析。",
+    scope: "范围：",
+    todaySessions: "今天（{count} 个 sessions）",
+    last3DaysSessions: "最近 3 天（{count} 个 sessions）",
+    last7DaysSessions: "最近 7 天（{count} 个 sessions）",
+    lastNSessions: "最近 N 个 sessions...",
+    numberOfSessions: "Session 数量：",
+    start: "开始",
+    skip: "跳过",
+    batchAnalyzing: "分析中...",
+    batchProgress: "分析 {current}/{total}",
+    useFirstAvailable: "（使用第一个可用 provider）",
+  },
+  en: {
+    documentTitle: "Agent Timeline",
+    headerSub: "Agent Usage",
+    headerTitle: "Timeline",
+    reportDay: "Daily",
+    reportWeek: "Weekly",
+    statsActiveSpan: "Active Span",
+    statsSessions: "Sessions",
+    statsProjects: "Projects",
+    statsMessages: "Messages",
+    statsTools: "Tool Calls",
+    statsAgents: "Agents",
+    settingsTitle: "AI Provider Settings",
+    settingsSub: "Clawd prefers locally detected CLI analyzers when available. Pick the default provider here, then use the API section below only as a fallback or override.",
+    tabToday: "Today",
+    tab3days: "3 Days",
+    tabWeek: "Week",
+    tabMonth: "Month",
+    rangeLabel: "Range:",
+    timelineHint: "Tip: hover the timeline and use the wheel to zoom into a segment; press <kbd>←</kbd> / <kbd>→</kbd> to pan left or right.",
+    analysisPlaceholder: "← Click a session on the left to view AI analysis",
+    analyzing: "Analyzing...",
+    distribution: "Distribution",
+    trend: "Trend",
+    total: "total",
+    sessionsTitle: "Sessions",
+    reportSub: "Generated from current analytics data and ready to copy.",
+    copy: "Copy",
+    close: "Close",
+    localCliTitle: "Local CLI Detection",
+    loading: "Loading…",
+    defaultAnalysisProviderLabel: "Default Analysis Provider",
+    defaultAnalysisProviderHint: "New session analysis and the Pre-analyze modal use this provider by default. If empty, Clawd picks the first available provider above.",
+    optionalOverride: "(optional override)",
+    claudePathLabel: "Claude binary path ",
+    codexPathLabel: "Codex binary path ",
+    test: "Test",
+    codexPathHint: "If auto-detection fails (for example NVM/fnm/Volta installs), run <code>which codex</code> in your terminal and paste the path here.",
+    apiFallbackTitle: "API Provider (Fallback)",
+    provider: "Provider",
+    apiKey: "API Key",
+    endpoint: "Endpoint ",
+    model: "Model ",
+    optional: "(optional)",
+    clear: "Clear",
+    cancel: "Cancel",
+    save: "Save",
+    noSessions: "No sessions",
+    noData: "No data",
+    daySessionsCount: "{count} sessions",
+    messageCount: "{count} msgs",
+    toolCount: "{count} tools",
+    activeSpan: "Active span",
+    analyzed: "Analyzed",
+    analyzingTag: "Analyzing…",
+    renameSession: "Rename session",
+    renameHintLocal: "Local rename; click the pencil to edit",
+    renameHintCustom: "From jsonl custom-title",
+    renameHintFirstMsg: "Project + first message; click the pencil to set a title",
+    renameHintProject: "Project folder",
+    tooltipDetail: "{agent} · {time} {duration} · {messages} msgs",
+    couldNotAnalyze: "Could not analyze",
+    noProviderAvailable: "No AI provider available.",
+    openSettings: "Open Settings",
+    configureApiKeyFallback: "Configure an API key as a fallback.",
+    configureApiProviderFallback: "Configure an API provider as a fallback.",
+    confirmAnalyze: "Use <span class=\"provider\">{provider}</span> to analyze?<br><span style=\"font-size:11px;color:var(--text-muted)\">Consumes a small amount of tokens</span>",
+    analyze: "Analyze",
+    outcomes: "Outcomes",
+    timeBreakdown: "Time Breakdown",
+    suggestions: "Suggestions",
+    showingCachedFrom: "Showing cached analysis from {provider}",
+    switchAnalyzer: "Switch analyzer",
+    regenerateWith: "Use {provider}",
+    brief: "Brief",
+    detail: "Detail",
+    reportGenerating: "Generating...",
+    reportNoData: "No data available.",
+    reportFailed: "Failed to generate: {message}",
+    copied: "Copied",
+    copyFailed: "Copy failed, please copy manually",
+    clearConfirm: "Clear the saved API key, provider config, and custom CLI paths?",
+    saved: "Saved",
+    cleared: "Cleared",
+    saveFailed: "Save failed: {message}",
+    clearFailed: "Clear failed: {message}",
+    pathEmpty: "Path is empty",
+    testing: "Testing…",
+    testFailed: "Test failed",
+    testFailedWithMessage: "Test failed: {message}",
+    diagnosticsUnavailable: "Diagnostics unavailable",
+    notDetected: "not detected",
+    customTag: "custom",
+    cooldownTag: "cooldown",
+    searchedDirectories: "Searched {count} directories",
+    loginShell: "Login shell:",
+    bundleLocationsChecked: "Codex bundle locations checked ({count})",
+    bundleLocationsHint: "Includes Codex.app and Cursor/VS Code OpenAI ChatGPT extensions.",
+    searchedLaneCount: "{count} lanes",
+    rangePast3Days: "Past 3 days",
+    rangePast7Days: "Past 7 days",
+    preAnalyzeTitle: "Pre-analyze Sessions",
+    preAnalyzeSub: "Select a scope to pre-analyze. Remaining sessions can still be analyzed on click.",
+    scope: "Scope:",
+    todaySessions: "Today ({count} sessions)",
+    last3DaysSessions: "Last 3 days ({count} sessions)",
+    last7DaysSessions: "Last 7 days ({count} sessions)",
+    lastNSessions: "Last N sessions...",
+    numberOfSessions: "Number of sessions:",
+    start: "Start",
+    skip: "Skip",
+    batchAnalyzing: "Analyzing...",
+    batchProgress: "Analyzing {current}/{total}",
+    useFirstAvailable: "(use first available)",
+  }
+};
+
+let currentLang = localStorage.getItem(LANG_STORAGE_KEY) || "zh";
+if (!I18N[currentLang]) currentLang = "zh";
+
+function t(key, vars) {
+  const table = I18N[currentLang] || I18N.zh;
+  let text = table[key] ?? I18N.en[key] ?? key;
+  if (vars) {
+    text = text.replace(/\{(\w+)\}/g, (_, name) => vars[name] == null ? "" : String(vars[name]));
+  }
+  return text;
+}
+
+function weekdayLabel(date) {
+  return currentLang === "zh" ? WEEKDAYS_ZH[date.getDay()] : WEEKDAYS_EN[date.getDay()];
+}
 
 let currentRange = "week", currentData = null, selectedSessionId = null;
 let analysisConsented = false, analysisProvider = null, selectedAnalysisAgent = "claude-code";
@@ -463,6 +721,89 @@ let projectColorMap = {};
 const batchCache = {}; // `${provider}:${sessionId}` → analysis result
 const analyzingSessionIds = new Set(); // sessionIds currently being analyzed (cross-tab persistent)
 let currentAnalysisMode = "brief";
+
+function applyLanguage() {
+  document.title = t("documentTitle");
+  document.getElementById("headerSub").textContent = t("headerSub");
+  document.getElementById("headerTitle").innerHTML = `<span>${escapeHtml(t("headerTitle"))}</span>`;
+  document.getElementById("dailyReportBtn").textContent = t("reportDay");
+  document.getElementById("weeklyReportBtn").textContent = t("reportWeek");
+  document.getElementById("hDurLabel").textContent = t("statsActiveSpan");
+  document.getElementById("hSessLabel").textContent = t("statsSessions");
+  document.getElementById("hProjLabel").textContent = t("statsProjects");
+  document.getElementById("hMsgsLabel").textContent = t("statsMessages");
+  document.getElementById("hToolsLabel").textContent = t("statsTools");
+  document.getElementById("hAgentsLabel").textContent = t("statsAgents");
+  document.getElementById("settingsBtn").title = t("settingsTitle");
+  document.getElementById("settingsBtn").setAttribute("aria-label", t("settingsTitle"));
+  document.getElementById("tabToday").textContent = t("tabToday");
+  document.getElementById("tab3days").textContent = t("tab3days");
+  document.getElementById("tabWeek").textContent = t("tabWeek");
+  document.getElementById("tabMonth").textContent = t("tabMonth");
+  document.getElementById("rangeLabel").textContent = t("rangeLabel");
+  document.getElementById("timelineHint").innerHTML = t("timelineHint");
+  document.getElementById("analysisPlaceholder").textContent = t("analysisPlaceholder");
+  document.getElementById("analysisLoadingText").textContent = t("analyzing");
+  document.getElementById("distributionTitle").textContent = t("distribution");
+  document.getElementById("trendTitle").textContent = t("trend");
+  document.getElementById("distCenterLabel").textContent = t("total");
+  document.getElementById("sessionsTitle").textContent = t("sessionsTitle");
+  document.getElementById("reportSub").textContent = t("reportSub");
+  document.getElementById("reportCopyBtn").textContent = t("copy");
+  document.getElementById("reportCloseBtn").textContent = t("close");
+  document.getElementById("settingsTitle").textContent = t("settingsTitle");
+  document.getElementById("settingsSub").textContent = t("settingsSub");
+  document.getElementById("localCliTitle").textContent = t("localCliTitle");
+  document.getElementById("cliDiagLoading").textContent = t("loading");
+  document.getElementById("defaultAnalysisProviderLabel").textContent = t("defaultAnalysisProviderLabel");
+  document.getElementById("defaultAnalysisProviderHint").textContent = t("defaultAnalysisProviderHint");
+  document.getElementById("settingsClaudePathLabel").childNodes[0].textContent = t("claudePathLabel");
+  document.getElementById("settingsClaudePathOptional").textContent = t("optionalOverride");
+  document.getElementById("settingsCodexPathLabel").childNodes[0].textContent = t("codexPathLabel");
+  document.getElementById("settingsCodexPathOptional").textContent = t("optionalOverride");
+  document.getElementById("settingsCodexPathHint").innerHTML = t("codexPathHint");
+  document.getElementById("apiFallbackTitle").textContent = t("apiFallbackTitle");
+  document.getElementById("settingsProviderLabel").textContent = t("provider");
+  document.getElementById("settingsApiKeyLabel").textContent = t("apiKey");
+  document.getElementById("settingsBaseUrlLabel").childNodes[0].textContent = t("endpoint");
+  document.getElementById("settingsBaseUrlOptional").textContent = t("optional");
+  document.getElementById("settingsModelLabel").childNodes[0].textContent = t("model");
+  document.getElementById("settingsModelOptional").textContent = t("optional");
+  document.getElementById("settingsClearBtn").textContent = t("clear");
+  document.getElementById("settingsCancelBtn").textContent = t("cancel");
+  document.getElementById("settingsSaveBtn").textContent = t("save");
+  document.querySelectorAll("[data-test-cli]").forEach(btn => { btn.textContent = t("test"); });
+  const defaultSelect = document.getElementById("settingsDefaultAnalysisProvider");
+  if (defaultSelect && defaultSelect.options.length) defaultSelect.options[0].textContent = t("useFirstAvailable");
+  document.getElementById("langBtnZh").classList.toggle("active", currentLang === "zh");
+  document.getElementById("langBtnEn").classList.toggle("active", currentLang === "en");
+  if (_settingsOpen) {
+    applyProviderDefaults(document.getElementById("settingsProvider").value || "claude");
+  }
+}
+
+function setLanguage(lang) {
+  if (!I18N[lang] || lang === currentLang) return;
+  currentLang = lang;
+  localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+  applyLanguage();
+  if (currentData) {
+    renderStats(currentData);
+    renderTimeAxis();
+    renderTimeline(currentData);
+    renderDistribution(currentData);
+    renderTrend(currentData);
+    renderEvents(currentData);
+  }
+  if (selectedSessionId) {
+    const ct = document.getElementById("analysisContent");
+    if (ct && ct.style.display !== "none") {
+      const cached = getCachedAnalysis(selectedSessionId, selectedAnalysisAgent, currentAnalysisMode)
+        || findAlternateCachedAnalysis(selectedSessionId, currentAnalysisMode, selectedAnalysisAgent)?.result;
+      if (cached) renderAnalysis(cached);
+    }
+  }
+}
 
 function markAnalyzing(sid) {
   analyzingSessionIds.add(sid);
@@ -507,7 +848,7 @@ function formatAnalysisProviderShort(input) {
 }
 
 function formatAnalysisModeShort(mode) {
-  return mode === "detail" ? "深入" : "简报";
+  return mode === "detail" ? t("detail") : t("brief");
 }
 
 function getSessionFrontendMsgCount(sessionId) {
@@ -658,9 +999,9 @@ async function openAnalysisProviderPicker(currentProviderId) {
       return `<button data-provider-id="${escapeHtml(id)}" style="padding:8px 10px;border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${active ? 'var(--accent-light)' : 'var(--bg-card)'};color:${active ? 'var(--accent)' : 'var(--text)'};cursor:pointer;text-align:left;font-size:12px">${escapeHtml(formatAnalysisProviderShort(opt))}</button>`;
     }).join("");
     o.innerHTML = `<div class="confirm-dialog" style="max-width:320px;text-align:left">
-      <p style="margin-bottom:10px">选择分析器</p>
+      <p style="margin-bottom:10px">${escapeHtml(t("switchAnalyzer"))}</p>
       <div style="display:flex;flex-direction:column;gap:8px">${optionsHtml}</div>
-      <div class="confirm-btns" style="margin-top:12px"><button class="btn-cancel">取消</button></div>
+      <div class="confirm-btns" style="margin-top:12px"><button class="btn-cancel">${escapeHtml(t("cancel"))}</button></div>
     </div>`;
     document.body.appendChild(o);
     o.querySelectorAll("[data-provider-id]").forEach(btn => {
@@ -681,12 +1022,12 @@ function renderAnalysisHeader(providerId, mode, targetProviderId = selectedAnaly
   const regenLabel = targetProviderId && targetProviderId !== providerId ? `改用 ${formatAnalysisProviderShort(targetProviderId)}` : "";
   return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px">
     <div style="display:flex;gap:4px;padding:2px;background:var(--border);border-radius:999px">
-      <button data-analysis-mode="brief" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'transparent' : 'var(--bg-card)'};color:${detailActive ? 'var(--text-secondary)' : 'var(--accent)'};font-size:11px;font-weight:700;cursor:pointer">速览</button>
-      <button data-analysis-mode="detail" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'var(--bg-card)' : 'transparent'};color:${detailActive ? 'var(--accent)' : 'var(--text-secondary)'};font-size:11px;font-weight:700;cursor:pointer">深入</button>
+      <button data-analysis-mode="brief" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'transparent' : 'var(--bg-card)'};color:${detailActive ? 'var(--text-secondary)' : 'var(--accent)'};font-size:11px;font-weight:700;cursor:pointer">${escapeHtml(t("brief"))}</button>
+      <button data-analysis-mode="detail" style="padding:4px 10px;border:none;border-radius:999px;background:${detailActive ? 'var(--bg-card)' : 'transparent'};color:${detailActive ? 'var(--accent)' : 'var(--text-secondary)'};font-size:11px;font-weight:700;cursor:pointer">${escapeHtml(t("detail"))}</button>
     </div>
     <span style="font-size:10px;padding:3px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border-light);color:var(--text);font-weight:700">${escapeHtml(providerLabel)}</span>
-    ${showProviderSwitch ? `<button id="analysisProviderSwitchBtn" style="margin-left:auto;border:none;background:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0">换分析器</button>` : '<span style="margin-left:auto"></span>'}
-    ${regenLabel ? `<button id="analysisRegenerateBtn" style="border:none;background:none;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;padding:2px 0">${escapeHtml(regenLabel)}</button>` : ""}
+    ${showProviderSwitch ? `<button id="analysisProviderSwitchBtn" style="margin-left:auto;border:none;background:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0">${escapeHtml(t("switchAnalyzer"))}</button>` : '<span style="margin-left:auto"></span>'}
+    ${regenLabel ? `<button id="analysisRegenerateBtn" style="border:none;background:none;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer;padding:2px 0">${escapeHtml(t("regenerateWith", { provider: formatAnalysisProviderShort(targetProviderId) }))}</button>` : ""}
   </div>`;
 }
 
@@ -923,7 +1264,7 @@ function renderTimeAxis() {
 
 function renderTimeline(data) {
   const c=document.getElementById("timelineContainer"); const ss=data.sessions||[];
-  if(!ss.length){c.innerHTML='<div class="empty-state">No sessions</div>';return;}
+  if(!ss.length){c.innerHTML=`<div class="empty-state">${escapeHtml(t("noSessions"))}</div>`;return;}
 
   // Auto-range (unless user overrode)
   autoDetectRange(ss);
@@ -949,7 +1290,7 @@ function renderTimeline(data) {
     const axisStart=dts+rangeStart, axisEnd=dts+rangeStart+rangeLen;
     const packedLanes=packTimelineLanes(items,axisStart,axisEnd);
     if(!packedLanes.length)continue;
-    const dayMeta=packedLanes.length>1?`<div class="day-meta">${packedLanes.length} lanes</div>`:"";
+    const dayMeta=packedLanes.length>1?`<div class="day-meta">${escapeHtml(t("searchedLaneCount", { count: packedLanes.length }))}</div>`:"";
     const lanes=packedLanes.map(list=>{
       let bhtml="";
       for(const s of list){
@@ -960,14 +1301,14 @@ function renderTimeline(data) {
         const opacity=maxBlockDur>0?0.45+0.55*(blockDur/maxBlockDur):1;
         const safeProj=escapeHtml(proj);
         const tipTitle=escapeHtml(proj);
-        const tipDetail=escapeHtml(`${agentLabel(s.agent)} · ${fmtTime(b.start)}-${fmtTime(b.end)} ${dur} · ${s.messages} msgs`);
+        const tipDetail=escapeHtml(t("tooltipDetail", { agent: agentLabel(s.agent), time: `${fmtTime(b.start)}-${fmtTime(b.end)}`, duration: dur, messages: s.messages }));
         // Always show session name; CSS overflow:hidden + ellipsis handles narrow blocks
         const lbl=wp>10?`${safeProj} · ${escapeHtml(dur)}`:safeProj;
         bhtml+=`<div class="time-block${selectedSessionId===s.id?" selected":""}" style="left:${lp}%;width:${wp}%;background:${projColor(s.project||s.title||'unknown')};opacity:${opacity.toFixed(2)};box-shadow:inset 0 0 0 1px ${agentColor(s.agent)}" data-sid="${s.id}" data-agent="${s.agent}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}">${lbl}</div>`;
       }
       return `<div class="timeline-lane">${bhtml}</div>`;
     }).join("");
-    html+=`<div class="timeline-day"><div class="day-label"><div class="wd">${wd}</div><div class="dt">${fmtDate(dts)}</div>${dayMeta}</div><div class="timeline-tracks">${lanes}</div></div>`;
+    html+=`<div class="timeline-day"><div class="day-label"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div>${dayMeta}</div><div class="timeline-tracks">${lanes}</div></div>`;
   }
   c.innerHTML=html;
   c.querySelectorAll(".time-block").forEach(el=>{el.addEventListener("mouseenter",showTip);el.addEventListener("mouseleave",hideTip);el.addEventListener("click",onBlockClick);});
@@ -1017,7 +1358,7 @@ function renderTrend(data) {
     for(const b of blocks){const dk=new Date(b.start).toISOString().slice(0,10);daily[dk]=(daily[dk]||0)+(b.end-b.start);}
   }
   const days=Object.keys(daily).sort();
-  if(!days.length){el.innerHTML='<div class="empty-state">No data</div>';return;}
+  if(!days.length){el.innerHTML=`<div class="empty-state">${escapeHtml(t("noData"))}</div>`;return;}
   const max=Math.max(...Object.values(daily));
   el.innerHTML=days.map(day=>{
     const dur=daily[day]||0,hp=max>0?(dur/max)*100:0;
@@ -1031,7 +1372,7 @@ function renderTrend(data) {
 function renderEvents(data) {
   const el=document.getElementById("eventsGrid"); const ss=data.sessions||[];
   document.getElementById("evtCount").textContent=ss.length;
-  if(!ss.length){el.innerHTML='<div class="empty-state">No sessions</div>';return;}
+  if(!ss.length){el.innerHTML=`<div class="empty-state">${escapeHtml(t("noSessions"))}</div>`;return;}
 
   // Group by day, sort sessions within each day by start time descending
   const dayMap=new Map();
@@ -1047,9 +1388,9 @@ function renderEvents(data) {
   let html="";
   for(const dk of sortedDays){
     const d=new Date(dk);
-    const dayLabel=`${WEEKDAYS_ZH[d.getDay()]} ${d.getMonth()+1}/${d.getDate()}`;
+    const dayLabel=`${weekdayLabel(d)} ${d.getMonth()+1}/${d.getDate()}`;
     const daySessions=dayMap.get(dk);
-    html+=`<div class="evt-day-header">${dayLabel}<span class="evt-day-count">${daySessions.length} sessions</span></div>`;
+    html+=`<div class="evt-day-header">${dayLabel}<span class="evt-day-count">${escapeHtml(t("daySessionsCount", { count: daySessions.length }))}</span></div>`;
     html+='<div class="evt-day-grid">';
     for(const s of daySessions){
       const dur=sessDur(s);
@@ -1061,21 +1402,29 @@ function renderEvents(data) {
       const cached=getCachedAnalysis(s.id);
       const isAnalyzed=!!cached;
       const isAnalyzing=analyzingSessionIds.has(s.id);
-      const desc=isAnalyzed?(cached.summary||"").slice(0,100):(s.firstUserMsg||`${agentLabel(s.agent)} · ${s.messages} msgs`);
+      const desc=isAnalyzed?(cached.summary||"").slice(0,100):(s.firstUserMsg||`${agentLabel(s.agent)} · ${t("messageCount", { count: s.messages })}`);
       const toolCount=sessionToolCount(s);
+      const metaLine = toolCount
+        ? `${t("messageCount", { count: s.messages })} · ${t("toolCount", { count: toolCount })}`
+        : t("messageCount", { count: s.messages });
+      const renameTitle = titleSource==='local' ? t("renameHintLocal")
+        : titleSource==='custom' ? t("renameHintCustom")
+        : titleSource==='firstMsg' ? t("renameHintFirstMsg")
+        : t("renameHintProject");
       html+=`<div class="evt-card${selectedSessionId===s.id?" selected":""}${isAnalyzed?" analyzed":""}${isAnalyzing?" analyzing":""}" data-sid="${s.id}" data-agent="${s.agent}">
         <div class="evt-col">
           <div class="evt-time">${escapeHtml(timeRange)}</div>
-          <div class="evt-meta">${escapeHtml(`${s.messages} msgs${toolCount?` · ${toolCount} tools`:""}`)}</div>
+          <div class="evt-meta">${escapeHtml(metaLine)}</div>
         </div>
         <div class="evt-col">
           <div class="evt-dur">${escapeHtml(fmtDur(dur))}</div>
+          <div class="evt-dur-label">${escapeHtml(t("activeSpan"))}</div>
         </div>
         <div class="evt-col">
           <div class="evt-agent"><span class="evt-agent-dot" style="background:${agentColor(s.agent)}"></span>${escapeHtml(agentLabel(s.agent))}</div>
         </div>
         <div class="evt-main">
-          <div class="evt-title"><button class="evt-rename-btn" data-rename-sid="${s.id}" title="Rename (local only)" aria-label="Rename session">✎</button><span class="edot" style="background:${projColor(s.project||s.title||'unknown')}"></span><span class="evt-title-text" data-source="${titleSource}" title="${escapeHtml(titleSource==='local'?'Local rename — click pencil to edit':titleSource==='custom'?'From jsonl custom-title':titleSource==='firstMsg'?'Project + first message (click pencil to set a title)':'Project folder')}">${escapeHtml(proj)}</span>${isAnalyzing?'<span class="evt-tag evt-tag-running">Analyzing…</span>':(isAnalyzed?'<span class="evt-tag">Analyzed</span>':"")}</div>
+          <div class="evt-title"><button class="evt-rename-btn" data-rename-sid="${s.id}" title="${escapeHtml(t("renameSession"))}" aria-label="${escapeHtml(t("renameSession"))}">✎</button><span class="edot" style="background:${projColor(s.project||s.title||'unknown')}"></span><span class="evt-title-text" data-source="${titleSource}" title="${escapeHtml(renameTitle)}">${escapeHtml(proj)}</span>${isAnalyzing?`<span class="evt-tag evt-tag-running">${escapeHtml(t("analyzingTag"))}</span>`:(isAnalyzed?`<span class="evt-tag">${escapeHtml(t("analyzed"))}</span>`:"")}</div>
           <div class="evt-desc" id="desc-${s.id}">${escapeHtml(desc)}</div>
         </div>
       </div>`;
@@ -1299,7 +1648,7 @@ async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
     if (selectedSessionId !== sessionId) return;
     showAnalysisContent();
     if (!result) {
-      ct.innerHTML = '<div style="color:var(--text-secondary)">Could not analyze</div>';
+      ct.innerHTML = `<div style="color:var(--text-secondary)">${escapeHtml(t("couldNotAnalyze"))}</div>`;
       return;
     }
     currentAnalysisMode = result._mode || targetMode;
@@ -1340,8 +1689,8 @@ function isFixableAnalysisError(text) {
 
 function renderNoProviderError() {
   return `<div style="text-align:center;color:var(--text-secondary);padding:8px 0">`
-    + `No AI provider available.<br>`
-    + `<a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API key as a fallback.`
+    + `${escapeHtml(t("noProviderAvailable"))}<br>`
+    + `<a class="analysis-error-link" data-action="open-settings">${escapeHtml(t("openSettings"))}</a> ${escapeHtml(t("configureApiKeyFallback"))}`
     + `</div>`;
 }
 
@@ -1350,7 +1699,7 @@ function renderAnalysisErrorMessage(rawText) {
   const safe = escapeHtml(text);
   if (isFixableAnalysisError(text)) {
     return `<div style="color:var(--text-secondary);line-height:1.5">${safe}<br>`
-      + `<a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API provider as a fallback.</div>`;
+      + `<a class="analysis-error-link" data-action="open-settings">${escapeHtml(t("openSettings"))}</a> ${escapeHtml(t("configureApiProviderFallback"))}</div>`;
   }
   return `<div style="color:var(--text-secondary)">${safe}</div>`;
 }
@@ -1365,7 +1714,7 @@ function bindAnalysisErrorLinks(container) {
   });
 }
 
-function showConfirm(p){return new Promise(res=>{const o=document.createElement("div");o.className="confirm-overlay";const pn=formatAnalysisProvider(p);o.innerHTML=`<div class="confirm-dialog"><p>Use <span class="provider">${pn}</span> to analyze?<br><span style="font-size:11px;color:var(--text-muted)">Consumes a small amount of tokens</span></p><div class="confirm-btns"><button class="btn-ok">Analyze</button><button class="btn-cancel">Cancel</button></div></div>`;document.body.appendChild(o);o.querySelector(".btn-ok").onclick=()=>{o.remove();res(true);};o.querySelector(".btn-cancel").onclick=()=>{o.remove();res(false);};});}
+function showConfirm(p){return new Promise(res=>{const o=document.createElement("div");o.className="confirm-overlay";const pn=formatAnalysisProvider(p);o.innerHTML=`<div class="confirm-dialog"><p>${t("confirmAnalyze", { provider: pn })}</p><div class="confirm-btns"><button class="btn-ok">${escapeHtml(t("analyze"))}</button><button class="btn-cancel">${escapeHtml(t("cancel"))}</button></div></div>`;document.body.appendChild(o);o.querySelector(".btn-ok").onclick=()=>{o.remove();res(true);};o.querySelector(".btn-cancel").onclick=()=>{o.remove();res(false);};});}
 
 function renderAnalysis(r){
   r=sanitizeAnalysis(r);
@@ -1377,7 +1726,7 @@ function renderAnalysis(r){
 
   h += renderAnalysisHeader(providerId, mode, targetProviderId);
   if (r._fallbackNotice) {
-    h += `<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border-light);font-size:11px;color:var(--text-secondary)">${escapeHtml(r._fallbackNotice)}</div>`;
+    h += `<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border-light);font-size:11px;color:var(--text-secondary)">${escapeHtml(t("showingCachedFrom", { provider: formatAnalysisProviderShort(r._selectedProvider) }))}</div>`;
   }
 
   // Summary + topics
@@ -1391,7 +1740,7 @@ function renderAnalysis(r){
   // Outcomes section
   if(r.outcomes&&r.outcomes.length){
     h+='<div class="analysis-section" style="border-left:3px solid #48BB78">';
-    h+='<div class="analysis-section-header"><span class="section-icon" style="color:#48BB78">&#9733;</span>Outcomes</div>';
+    h+=`<div class="analysis-section-header"><span class="section-icon" style="color:#48BB78">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
     h+='<ul class="analysis-insights">';
     r.outcomes.forEach(o=>{h+=`<li>${renderOutcomeItem(o)}</li>`;});
     h+='</ul></div>';
@@ -1400,7 +1749,7 @@ function renderAnalysis(r){
   // Time Breakdown section
   if(r.timeBreakdown&&r.timeBreakdown.length){
     h+='<div class="analysis-section" style="border-left:3px solid #5B8DEF">';
-    h+='<div class="analysis-section-header"><span class="section-icon" style="color:#5B8DEF">&#9719;</span>Time Breakdown</div>';
+    h+=`<div class="analysis-section-header"><span class="section-icon" style="color:#5B8DEF">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
     h+='<div class="analysis-breakdown">';
     r.timeBreakdown.forEach((item,i)=>{const c=BREAKDOWN_COLORS[i%BREAKDOWN_COLORS.length];h+=`<div class="seg" style="width:${item.percent}%;background:${c}" title="${escapeHtml(`${item.activity}: ${item.percent}%`)}">${item.percent>10?escapeHtml(item.activity):""}</div>`;});
     h+='</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
@@ -1411,7 +1760,7 @@ function renderAnalysis(r){
   // Suggestions section
   if(r.suggestions&&r.suggestions.length){
     h+='<div class="analysis-section" style="border-left:3px solid var(--accent)">';
-    h+='<div class="analysis-section-header"><span class="section-icon" style="color:var(--accent)">&#9881;</span>Suggestions</div>';
+    h+=`<div class="analysis-section-header"><span class="section-icon" style="color:var(--accent)">&#9881;</span>${escapeHtml(t("suggestions"))}</div>`;
     h+='<ul class="analysis-suggestions">';
     r.suggestions.forEach(s=>{h+=`<li>${escapeHtml(s)}</li>`;});
     h+='</ul></div>';
@@ -1459,7 +1808,7 @@ function renderAnalysis(r){
   // inline Open Settings link so the user can recover. This complements the
   // error path in selectSession() which only catches thrown errors.
   if (r.summary && isFixableAnalysisError(r.summary)) {
-    h += `<div style="margin-top:8px;font-size:11px"><a class="analysis-error-link" data-action="open-settings">Open Settings</a> to configure an API provider as a fallback.</div>`;
+    h += `<div style="margin-top:8px;font-size:11px"><a class="analysis-error-link" data-action="open-settings">${escapeHtml(t("openSettings"))}</a> ${escapeHtml(t("configureApiProviderFallback"))}</div>`;
   }
   ct.innerHTML=h;
   bindAnalysisErrorLinks(ct);
@@ -1489,7 +1838,7 @@ function renderAnalysis(r){
         if (selectedSessionId == null) return;
         showAnalysisContent();
         if (!result) {
-          ct.innerHTML = '<div style="color:var(--text-secondary)">Could not analyze</div>';
+          ct.innerHTML = `<div style="color:var(--text-secondary)">${escapeHtml(t("couldNotAnalyze"))}</div>`;
           return;
         }
         renderAnalysis(result);
@@ -1519,20 +1868,20 @@ async function openReportModal(scope) {
   const copyBtn = document.getElementById("reportCopyBtn");
 
   overlay.style.display = "flex";
-  titleEl.textContent = scope === "week" ? "周报" : "日报";
-  subEl.textContent = "基于当前 analytics 数据生成，可直接复制。";
-  textEl.value = "生成中...";
+  titleEl.textContent = scope === "week" ? t("reportWeek") : t("reportDay");
+  subEl.textContent = t("reportSub");
+  textEl.value = t("reportGenerating");
   textEl.readOnly = true;
   statusEl.textContent = "";
   copyBtn.disabled = true;
 
   try {
     const result = await window.analyticsAPI.generateReport(scope);
-    titleEl.textContent = result && result.title ? result.title : (scope === "week" ? "周报" : "日报");
-    textEl.value = result && result.text ? result.text : "暂无可用数据。";
-    copyBtn.disabled = !textEl.value || textEl.value === "暂无可用数据。";
+    titleEl.textContent = scope === "week" ? t("reportWeek") : t("reportDay");
+    textEl.value = result && result.text ? result.text : t("reportNoData");
+    copyBtn.disabled = !textEl.value || textEl.value === t("reportNoData");
   } catch (err) {
-    textEl.value = `生成失败：${err && (err.message || String(err))}`;
+    textEl.value = t("reportFailed", { message: err && (err.message || String(err)) });
     copyBtn.disabled = true;
   }
 }
@@ -1549,7 +1898,7 @@ function copyReportText() {
   textEl.setSelectionRange(0, textEl.value.length);
   let ok = false;
   try { ok = document.execCommand("copy"); } catch { ok = false; }
-  statusEl.textContent = ok ? "已复制" : "复制失败，请手动复制";
+  statusEl.textContent = ok ? t("copied") : t("copyFailed");
 }
 
 // ── Tabs ──
@@ -1622,8 +1971,8 @@ async function loadData(){
     const now=new Date();
     const rangeLabels={
       today:`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`,
-      "3days":"Past 3 days",
-      week:"Past 7 days",
+      "3days":t("rangePast3Days"),
+      week:t("rangePast7Days"),
       month: selectedMonth ? `${selectedMonth.year}-${String(selectedMonth.month).padStart(2,"0")}` : "",
     };
     document.getElementById("dateLabel").textContent=rangeLabels[currentRange]||"";
@@ -1645,11 +1994,11 @@ window.analyticsAPI.getAnalysisOptions().then(opts=>{
 // ── Settings modal (AI provider config) ──
 const PROVIDER_DEFAULTS = {
   claude: { baseUrl: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001", needsKey: true,
-    keyHint: "Get an API key from console.anthropic.com" },
+    keyHint: { zh: "可在 console.anthropic.com 获取 API key", en: "Get an API key from console.anthropic.com" } },
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true,
-    keyHint: "Works with OpenAI, Qwen, DeepSeek, OpenRouter, vLLM, etc. — set the endpoint accordingly" },
+    keyHint: { zh: "兼容 OpenAI、Qwen、DeepSeek、OpenRouter、vLLM 等，按需设置 endpoint", en: "Works with OpenAI, Qwen, DeepSeek, OpenRouter, vLLM, etc. — set the endpoint accordingly" } },
   ollama: { baseUrl: "http://localhost:11434", model: "qwen2.5:7b", needsKey: false,
-    keyHint: "Ollama runs locally — no API key required" },
+    keyHint: { zh: "Ollama 本地运行，不需要 API key", en: "Ollama runs locally — no API key required" } },
 };
 
 function setSettingsStatus(text, kind) {
@@ -1668,14 +2017,15 @@ function applyProviderDefaults(provider, opts) {
   const apiKeyHint = document.getElementById("settingsApiKeyHint");
   const baseUrlHint = document.getElementById("settingsBaseUrlHint");
   const modelHint = document.getElementById("settingsModelHint");
+  const keyHint = typeof def.keyHint === "string" ? def.keyHint : ((def.keyHint && def.keyHint[currentLang]) || (def.keyHint && def.keyHint.en) || "");
 
   baseUrlEl.placeholder = def.baseUrl;
   modelEl.placeholder = def.model;
   baseUrlHint.textContent = `Default: ${def.baseUrl}`;
   modelHint.textContent = `Default: ${def.model}`;
   apiKeyHint.textContent = def.needsKey
-    ? def.keyHint + ". Stored locally; leave blank to keep the existing key."
-    : def.keyHint;
+    ? keyHint + (currentLang === "zh" ? "。会保存在本地；留空可继续使用已保存的 key。" : ". Stored locally; leave blank to keep the existing key.")
+    : keyHint;
   apiKeyField.style.display = def.needsKey ? "block" : "none";
   apiKeyEl.required = !!def.needsKey;
   if (opts.clearKey) apiKeyEl.value = "";
@@ -1709,7 +2059,9 @@ async function openSettings() {
   const apiKeyEl = document.getElementById("settingsApiKey");
   apiKeyEl.value = "";
   if (cfg && cfg.apiKeyMasked) {
-    apiKeyEl.placeholder = cfg.apiKeyMasked + " (saved — leave blank to keep)";
+    apiKeyEl.placeholder = currentLang === "zh"
+      ? `${cfg.apiKeyMasked}（已保存，留空可继续使用）`
+      : `${cfg.apiKeyMasked} (saved — leave blank to keep)`;
   } else {
     apiKeyEl.placeholder = "sk-...";
   }
@@ -1720,7 +2072,7 @@ async function openSettings() {
   try {
     if (!analysisOptions || !analysisOptions.length) await refreshAnalysisOptions();
     const defaultSelect = document.getElementById("settingsDefaultAnalysisProvider");
-    const opts = ['<option value="">(use first available)</option>'].concat(
+    const opts = [`<option value="">${escapeHtml(t("useFirstAvailable"))}</option>`].concat(
       (analysisOptions || []).map(opt => {
         const id = opt.id || opt.provider;
         return `<option value="${id}">${formatAnalysisProvider(opt)}</option>`;
@@ -1746,7 +2098,7 @@ async function loadCliDiagnostics() {
   let diag = null;
   try { diag = await window.analyticsAPI.getCliDiagnostics(); } catch (e) { console.warn("getCliDiagnostics failed", e); }
   if (!diag) {
-    el.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:6px 0">Diagnostics unavailable</div>';
+    el.innerHTML = `<div style="color:var(--text-muted);text-align:center;padding:6px 0">${escapeHtml(t("diagnosticsUnavailable"))}</div>`;
     return;
   }
   renderCliDiagnostics(diag);
@@ -1762,10 +2114,10 @@ function renderCliDiagnostics(diag) {
     const label = key === "claude" ? "Claude Code" : "Codex";
     const pathHtml = info.found
       ? `<span class="cli-diag-path" title="${escapeHtml(info.path||"")}">${escapeHtml(info.path||"")}</span>`
-      : `<span class="cli-diag-path" style="color:#C62828">not detected</span>`;
+      : `<span class="cli-diag-path" style="color:#C62828">${escapeHtml(t("notDetected"))}</span>`;
     const versionHtml = info.version ? `<span class="cli-diag-version">v${escapeHtml(info.version)}</span>` : "";
-    const customTag = info.custom ? `<span class="cli-diag-tag">custom</span>` : "";
-    const cooldownTag = info.cooldown ? `<span class="cli-diag-tag" style="background:#FDECEA;color:#C62828">cooldown</span>` : "";
+    const customTag = info.custom ? `<span class="cli-diag-tag">${escapeHtml(t("customTag"))}</span>` : "";
+    const cooldownTag = info.cooldown ? `<span class="cli-diag-tag" style="background:#FDECEA;color:#C62828">${escapeHtml(t("cooldownTag"))}</span>` : "";
     rows.push(
       `<div class="cli-diag-row">`
       + `<span class="cli-diag-dot ${dotClass}"></span>`
@@ -1780,18 +2132,18 @@ function renderCliDiagnostics(diag) {
   // Searched-paths reveal — useful when a CLI is missing so the user knows
   // which dirs Clawd actually looked in before deciding to set a custom path.
   const dirsHtml = (diag.searchDirs && diag.searchDirs.length)
-    ? `<details class="cli-diag-help"><summary>Searched ${diag.searchDirs.length} directories</summary>`
+    ? `<details class="cli-diag-help"><summary>${escapeHtml(t("searchedDirectories", { count: diag.searchDirs.length }))}</summary>`
       + `<div class="cli-diag-paths">` + diag.searchDirs.map(d => `<div>${escapeHtml(d)}</div>`).join("") + `</div>`
-      + (diag.shell ? `<div style="margin-top:4px">Login shell: <code>${escapeHtml(diag.shell)}</code></div>` : "")
+      + (diag.shell ? `<div style="margin-top:4px">${escapeHtml(t("loginShell"))} <code>${escapeHtml(diag.shell)}</code></div>` : "")
       + `</details>`
     : "";
   // Codex bundle candidates: Codex.app + Cursor/VS Code OpenAI extension.
   // These are checked even when `which codex` returns nothing — surface them
   // so users with only the Mac app or IDE plugin can see Clawd looked there.
   const bundlesHtml = (diag.bundleCandidates && diag.bundleCandidates.length)
-    ? `<details class="cli-diag-help"><summary>Codex bundle locations checked (${diag.bundleCandidates.length})</summary>`
+    ? `<details class="cli-diag-help"><summary>${escapeHtml(t("bundleLocationsChecked", { count: diag.bundleCandidates.length }))}</summary>`
       + `<div class="cli-diag-paths">` + diag.bundleCandidates.map(d => `<div>${escapeHtml(d)}</div>`).join("") + `</div>`
-      + `<div style="margin-top:4px;color:var(--text-muted)">Includes Codex.app and Cursor/VS Code OpenAI ChatGPT extensions.</div>`
+      + `<div style="margin-top:4px;color:var(--text-muted)">${escapeHtml(t("bundleLocationsHint"))}</div>`
       + `</details>`
     : "";
   el.innerHTML = rows.join("") + dirsHtml + bundlesHtml;
@@ -1805,11 +2157,11 @@ async function testCustomCliPath(key) {
   const raw = inp.value.trim();
   if (!raw) {
     out.className = "cli-test-result fail";
-    out.textContent = "Path is empty";
+    out.textContent = t("pathEmpty");
     return;
   }
   out.className = "cli-test-result";
-  out.textContent = "Testing…";
+  out.textContent = t("testing");
   try {
     const r = await window.analyticsAPI.testCliPath(raw);
     if (r && r.ok) {
@@ -1817,11 +2169,11 @@ async function testCustomCliPath(key) {
       out.textContent = `OK — v${r.version}`;
     } else {
       out.className = "cli-test-result fail";
-      out.textContent = (r && r.error) || "Test failed";
+      out.textContent = (r && r.error) || t("testFailed");
     }
   } catch (e) {
     out.className = "cli-test-result fail";
-    out.textContent = "Test failed: " + (e.message || e);
+    out.textContent = t("testFailedWithMessage", { message: e.message || e });
   }
 }
 
@@ -1873,7 +2225,7 @@ async function saveSettings() {
 
   try {
     await window.analyticsAPI.saveAIConfig(payload);
-    setSettingsStatus("Saved", "success");
+    setSettingsStatus(t("saved"), "success");
     // Refresh the analysis option list so the API provider shows up in
     // pickers (batch dialog, error-recovery flow, etc.) without reloading.
     await refreshAnalysisOptions();
@@ -1882,15 +2234,15 @@ async function saveSettings() {
     loadCliDiagnostics();
     setTimeout(closeSettings, 600);
   } catch (e) {
-    setSettingsStatus("Save failed: " + (e.message || e), "error");
+    setSettingsStatus(t("saveFailed", { message: e.message || e }), "error");
   }
 }
 
 async function clearSettings() {
-  if (!confirm("Clear the saved API key, provider config, and custom CLI paths?")) return;
+  if (!confirm(t("clearConfirm"))) return;
   try {
     await window.analyticsAPI.clearAIConfig();
-    setSettingsStatus("Cleared", "success");
+    setSettingsStatus(t("cleared"), "success");
     document.getElementById("settingsApiKey").value = "";
     document.getElementById("settingsApiKey").placeholder = "sk-...";
     document.getElementById("settingsBaseUrl").value = "";
@@ -1906,7 +2258,7 @@ async function clearSettings() {
     await refreshAnalysisOptions();
     setTimeout(closeSettings, 600);
   } catch (e) {
-    setSettingsStatus("Clear failed: " + (e.message || e), "error");
+    setSettingsStatus(t("clearFailed", { message: e.message || e }), "error");
   }
 }
 
@@ -1933,6 +2285,9 @@ document.getElementById("settingsBtn").addEventListener("click", openSettings);
 document.getElementById("settingsCancelBtn").addEventListener("click", closeSettings);
 document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
 document.getElementById("settingsClearBtn").addEventListener("click", clearSettings);
+document.getElementById("langBtnZh").addEventListener("click", () => setLanguage("zh"));
+document.getElementById("langBtnEn").addEventListener("click", () => setLanguage("en"));
+applyLanguage();
 document.getElementById("settingsProvider").addEventListener("change", function() {
   applyProviderDefaults(this.value, { clearKey: true });
 });
@@ -2041,7 +2396,7 @@ function sanitizeAnalysis(result) {
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && e.key === "D") {
     demoMode = !demoMode;
-    document.title = demoMode ? "Agent Timeline [DEMO]" : "Agent Timeline";
+    document.title = demoMode ? `${t("documentTitle")} [DEMO]` : t("documentTitle");
     if (currentData) {
       const d = sanitizeData(currentData);
       renderStats(d); renderTimeAxis(); renderTimeline(d);
@@ -2091,28 +2446,28 @@ async function offerBatchAnalysis() {
   const choice = await new Promise(res => {
     const o = document.createElement("div"); o.className = "confirm-overlay";
     o.innerHTML = `<div class="confirm-dialog" style="max-width:400px;text-align:left">
-      <p style="font-size:14px;font-weight:700;margin-bottom:10px;text-align:center">Pre-analyze Sessions</p>
-      <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;text-align:center">Select scope to pre-analyze. Remaining sessions can be analyzed on click.</p>
+      <p style="font-size:14px;font-weight:700;margin-bottom:10px;text-align:center">${escapeHtml(t("preAnalyzeTitle"))}</p>
+      <p style="font-size:11px;color:var(--text-muted);margin-bottom:12px;text-align:center">${escapeHtml(t("preAnalyzeSub"))}</p>
       <div style="margin-bottom:12px">
-        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">Scope:</label>
+        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">${escapeHtml(t("scope"))}</label>
         <select id="scopeSelect" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:100%">
-          <option value="today">Today (${todayCount} sessions)</option>
-          <option value="3days" selected>Last 3 days (${threeDaysCount} sessions)</option>
-          <option value="week">Last 7 days (${allSessions.length} sessions)</option>
-          <option value="custom">Last N sessions...</option>
+          <option value="today">${escapeHtml(t("todaySessions", { count: todayCount }))}</option>
+          <option value="3days" selected>${escapeHtml(t("last3DaysSessions", { count: threeDaysCount }))}</option>
+          <option value="week">${escapeHtml(t("last7DaysSessions", { count: allSessions.length }))}</option>
+          <option value="custom">${escapeHtml(t("lastNSessions"))}</option>
         </select>
       </div>
       <div id="customNRow" style="display:none;margin-bottom:12px">
-        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">Number of sessions:</label>
+        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">${escapeHtml(t("numberOfSessions"))}</label>
         <input id="customN" type="number" min="1" max="${allSessions.length}" value="5" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:100%">
       </div>
       <div style="margin-bottom:12px">
-        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">Provider:</label>
+        <label style="font-size:11px;color:var(--text-secondary);display:block;margin-bottom:4px">${escapeHtml(t("provider"))}</label>
         <select id="providerSelect" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:100%">
           ${providerOptions}
         </select>
       </div>
-      <div class="confirm-btns"><button class="btn-ok">Start</button><button class="btn-cancel">Skip</button></div>
+      <div class="confirm-btns"><button class="btn-ok">${escapeHtml(t("start"))}</button><button class="btn-cancel">${escapeHtml(t("skip"))}</button></div>
     </div>`;
     document.body.appendChild(o);
     o.querySelector("#scopeSelect").onchange=function(){
@@ -2166,14 +2521,14 @@ async function offerBatchAnalysis() {
   const prog = document.createElement("div");
   prog.id = "batchProgress";
   prog.style.cssText = "position:sticky;top:0;left:0;right:0;height:28px;background:var(--accent-light);z-index:3000;display:flex;align-items:center;padding:0 16px;gap:10px;border-radius:6px;margin-bottom:8px;border:1px solid var(--border)";
-  prog.innerHTML = '<span id="batchLabel" style="font-size:11px;color:var(--accent);font-weight:600;white-space:nowrap">Analyzing...</span><div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div id="batchBar" style="height:100%;background:var(--accent);width:0%;transition:width .3s;border-radius:3px"></div></div>';
+  prog.innerHTML = `<span id="batchLabel" style="font-size:11px;color:var(--accent);font-weight:600;white-space:nowrap">${escapeHtml(t("batchAnalyzing"))}</span><div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden"><div id="batchBar" style="height:100%;background:var(--accent);width:0%;transition:width .3s;border-radius:3px"></div></div>`;
   document.querySelector(".container").prepend(prog);
 
   for (let i = 0; i < sessionsToAnalyze.length; i++) {
     const s = sessionsToAnalyze[i];
     const pct = ((i + 1) / sessionsToAnalyze.length * 100).toFixed(0);
     document.getElementById("batchBar").style.width = pct + "%";
-    document.getElementById("batchLabel").textContent = `Analyzing ${i + 1}/${sessionsToAnalyze.length}`;
+    document.getElementById("batchLabel").textContent = t("batchProgress", { current: i + 1, total: sessionsToAnalyze.length });
 
     // Mark card as analyzing (cross-tab persistent)
     markAnalyzing(s.id);
