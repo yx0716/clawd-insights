@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { applyStationaryCollectionBehavior } = require("./mac-window");
 const hitGeometry = require("./hit-geometry");
-const { findNearestWorkArea, computeLooseClamp } = require("./work-area");
+const { findNearestWorkArea, computeLooseClamp, SYNTHETIC_WORK_AREA } = require("./work-area");
 
 // ── Autoplay policy: allow sound playback without user gesture ──
 // MUST be set before any BrowserWindow is created (before app.whenReady)
@@ -117,7 +117,7 @@ function getCurrentPixelSize(overrideWa) {
     const { x, y, width, height } = win.getBounds();
     wa = getNearestWorkArea(x + width / 2, y + height / 2);
   }
-  if (!wa) wa = screen.getPrimaryDisplay().workArea;
+  if (!wa) wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
   const px = Math.round(wa.width * ratio / 100);
   return { width: px, height: px };
 }
@@ -644,7 +644,7 @@ function createWindow() {
     currentSize = prefs.size;
   } else if (prefs && SIZES[prefs.size]) {
     // Migrate legacy S/M/L to proportional mode
-    const wa = screen.getPrimaryDisplay().workArea;
+    const wa = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
     const px = SIZES[prefs.size].width;
     const ratio = Math.round(px / wa.width * 100);
     currentSize = `P:${Math.max(1, Math.min(75, ratio))}`;
@@ -678,7 +678,7 @@ function createWindow() {
     startX = clamped.x;
     startY = clamped.y;
   } else {
-    const { workArea } = screen.getPrimaryDisplay();
+    const workArea = getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
     startX = workArea.x + workArea.width - size.width - 20;
     startY = workArea.y + workArea.height - size.height - 20;
   }
