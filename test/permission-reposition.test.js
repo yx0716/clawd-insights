@@ -159,8 +159,9 @@ describe("permission bubble stack layout", () => {
     const belowBounds = layout({ ...common, bubbleHeights: [150, 150, 150] });
     const sideBounds = layout({ ...common, bubbleHeights: [300, 300, 300] });
 
-    // Sanity: the two cases really do go through different branches.
-    assert.notStrictEqual(belowBounds[0].x, sideBounds[0].x === belowBounds[0].x ? "same" : "diff");
+    // Sanity: the two cases really do go through different branches
+    // (below centers x on hitCx, side anchors on hitRight, so x must differ).
+    assert.notStrictEqual(belowBounds[0].x, sideBounds[0].x);
     // Visual invariant must hold in BOTH branches.
     for (const bounds of [belowBounds, sideBounds]) {
       for (let i = 0; i < bounds.length - 1; i++) {
