@@ -1,5 +1,5 @@
 {
-  "name": "clawd-on-desk-insights",
+  "name": "clawd-insights",
   "version": "0.6.0",
   "description": "A desktop pet fork with a RescueTime-style analytics dashboard and AI-generated coding session insights.",
   "main": "src/main.js",
@@ -26,8 +26,8 @@
   "license": "MIT",
   "type": "commonjs",
   "build": {
-    "appId": "com.clawd.on-desk.insights",
-    "productName": "Clawd on Desk Insights",
+    "appId": "com.clawd.insights",
+    "productName": "Clawd Insights",
     "mac": {
       "icon": "assets/icon.png",
       "target": [
@@ -47,7 +47,7 @@
     "win": {
       "icon": "assets/icon.ico",
       "signAndEditExecutable": false,
-      "artifactName": "Clawd-on-Desk-Insights-Setup-${version}.${ext}",
+      "artifactName": "Clawd-Insights-Setup-${version}.${ext}",
       "target": [
         {
           "target": "nsis",
@@ -107,7 +107,7 @@
       {
         "provider": "github",
         "owner": "yx0716",
-        "repo": "clawd-on-desk-insights"
+        "repo": "clawd-insights"
       }
     ]
   },
