@@ -237,6 +237,106 @@ module.exports = function initAnalyticsData(ctx) {
     return (ms / 3600000).toFixed(1) + "h";
   }
 
+  function topEntries(obj, limit = 3) {
+    return Object.entries(obj || {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit);
+  }
+
+  function buildDailyReport(todayData, computedInsights = []) {
+    const lines = [];
+    lines.push(`# 日报 ${todayData.date}`);
+    lines.push("");
+    lines.push("## 概览");
+    lines.push(`- 活跃时长：${fmtDur(todayData.activeTime)}`);
+    lines.push(`- 总记录时长：${fmtDur(todayData.totalTime)}`);
+    lines.push(`- 会话数：${todayData.sessionCount}`);
+    lines.push(`- 事件数：${todayData.totalEvents}`);
+    lines.push(`- 异常数：${todayData.errorCount}`);
+
+    const topProjects = topEntries(todayData.projectTotals, 3);
+    if (topProjects.length) {
+      lines.push("");
+      lines.push("## 重点项目");
+      for (const [project, ms] of topProjects) {
+        lines.push(`- ${project}：${fmtDur(ms)}`);
+      }
+    }
+
+    const topAgents = topEntries(todayData.agentTotals, 3);
+    if (topAgents.length) {
+      lines.push("");
+      lines.push("## Agent 分布");
+      for (const [agent, ms] of topAgents) {
+        lines.push(`- ${agent}：${fmtDur(ms)}`);
+      }
+    }
+
+    if (computedInsights.length) {
+      lines.push("");
+      lines.push("## 今日信号");
+      for (const item of computedInsights.slice(0, 4)) {
+        lines.push(`- ${item.label}：${item.value}${item.detail ? `，${item.detail}` : ""}`);
+      }
+    }
+
+    if (todayData.sessions && todayData.sessions.length) {
+      lines.push("");
+      lines.push("## 关键会话");
+      for (const session of todayData.sessions.slice(0, 5)) {
+        lines.push(`- [${session.agent}] ${session.project}：${fmtDur(session.totalActive)} active，跨度 ${fmtDur(session.duration)}`);
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  function buildWeeklyReport(weekData) {
+    const lines = [];
+    const activeDays = (weekData.days || []).filter(day => day.totalTime > 0);
+    const avgActive = activeDays.length ? Math.round(weekData.weekActiveTime / activeDays.length) : 0;
+
+    lines.push("# 周报 最近 7 天");
+    lines.push("");
+    lines.push("## 概览");
+    lines.push(`- 活跃时长：${fmtDur(weekData.weekActiveTime)}`);
+    lines.push(`- 总记录时长：${fmtDur(weekData.weekTotalTime)}`);
+    lines.push(`- 会话数：${weekData.weekSessions}`);
+    lines.push(`- 事件数：${weekData.weekTotalEvents}`);
+    lines.push(`- 活跃日均：${fmtDur(avgActive)}`);
+
+    const topProjects = topEntries(weekData.weekProjectTotals, 5);
+    if (topProjects.length) {
+      lines.push("");
+      lines.push("## 本周重点项目");
+      for (const [project, ms] of topProjects) {
+        lines.push(`- ${project}：${fmtDur(ms)}`);
+      }
+    }
+
+    const topAgents = topEntries(weekData.weekAgentTotals, 3);
+    if (topAgents.length) {
+      lines.push("");
+      lines.push("## Agent 分布");
+      for (const [agent, ms] of topAgents) {
+        lines.push(`- ${agent}：${fmtDur(ms)}`);
+      }
+    }
+
+    if (weekData.days && weekData.days.length) {
+      lines.push("");
+      lines.push("## 每日拆分");
+      for (const day of weekData.days) {
+        if (!day.totalTime) continue;
+        const topProject = topEntries(day.projectTotals, 1)[0];
+        const suffix = topProject ? `，主项目 ${topProject[0]} ${fmtDur(topProject[1])}` : "";
+        lines.push(`- ${day.date} (${day.dayLabel})：活跃 ${fmtDur(day.activeTime)}，${day.sessionCount} sessions${suffix}`);
+      }
+    }
+
+    return lines.join("\n");
+  }
+
   function aggregateWeek(filters) {
     const now = new Date();
     const days = [];
@@ -274,5 +374,5 @@ module.exports = function initAnalyticsData(ctx) {
     };
   }
 
-  return { loadEvents, aggregateToday, aggregateWeek, computeInsights, STATE_COLORS, AGENT_COLORS };
+  return { loadEvents, aggregateToday, aggregateWeek, computeInsights, buildDailyReport, buildWeeklyReport, STATE_COLORS, AGENT_COLORS };
 };
