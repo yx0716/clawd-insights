@@ -144,7 +144,7 @@
   },
 
   "transitions": {
-    "calico-idle.apng":         { "in": 400, "out": 800 },
+    "calico-idle.apng":         { "out": 800 },
     "calico-notification.apng": { "in": 300, "out": 1200 },
     "calico-happy.apng":        { "out": 1500 },
     "calico-yawning.apng":      { "in": 500 },
