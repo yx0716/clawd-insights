@@ -11,6 +11,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+const INTERNAL_ANALYTICS_SUMMARY_MARKER = "[clawd-analytics-internal-summary-task]";
+
 module.exports = function initAnalyticsScan(ctx) {
   const home = os.homedir();
 
@@ -90,6 +92,10 @@ module.exports = function initAnalyticsScan(ctx) {
     return parts[parts.length - 1] || normalized;
   }
 
+  function containsInternalAnalyticsSummaryMarker(value) {
+    return String(value || "").toLowerCase().includes(INTERNAL_ANALYTICS_SUMMARY_MARKER);
+  }
+
   function shouldHideSession(session) {
     const candidates = [
       session.project,
@@ -97,7 +103,8 @@ module.exports = function initAnalyticsScan(ctx) {
       session.cwd,
       session.fullPath,
     ];
-    return candidates.some(value => HIDDEN_PROJECT_TOKENS.has(normalizeProjectToken(value)));
+    if (candidates.some(value => HIDDEN_PROJECT_TOKENS.has(normalizeProjectToken(value)))) return true;
+    return containsInternalAnalyticsSummaryMarker(session.firstUserMsg);
   }
 
   // Peel leading pasted data blocks (JSON objects/arrays, fenced code blocks).
@@ -307,6 +314,10 @@ module.exports = function initAnalyticsScan(ctx) {
               else if (Array.isArray(msg.content)) {
                 for (const c of msg.content) { if (c && c.type === "text" && c.text) { text = c.text; break; } }
               }
+              if (containsInternalAnalyticsSummaryMarker(text)) {
+                sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+                continue;
+              }
               const meaningful = extractMeaningfulText(text);
               if (meaningful && !isSystemInjectedUserText(meaningful)) {
                 sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
@@ -419,6 +430,10 @@ module.exports = function initAnalyticsScan(ctx) {
                   if (!sess.firstUserMsg && Array.isArray(p.content)) {
                     let text = "";
                     for (const c of p.content) { if (c && c.type === "input_text" && c.text) { text = c.text; break; } }
+                    if (containsInternalAnalyticsSummaryMarker(text)) {
+                      sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+                      continue;
+                    }
                     const meaningful = extractMeaningfulText(text);
                     if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
                   }
@@ -488,6 +503,10 @@ module.exports = function initAnalyticsScan(ctx) {
                 const msg = rec.message || {};
                 let text = typeof msg.content === "string" ? msg.content : "";
                 if (!text && Array.isArray(msg.content)) { for (const c of msg.content) { if (c && c.type === "text" && c.text) { text = c.text; break; } } }
+                if (containsInternalAnalyticsSummaryMarker(text)) {
+                  sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+                  continue;
+                }
                 const meaningful = extractMeaningfulText(text);
                 if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
               }

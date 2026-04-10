@@ -46,6 +46,8 @@ body * { -webkit-app-region:no-drag; }
 
 /* ── Timeline ── */
 .timeline-card { grid-area:timeline; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); }
+.timeline-hint { margin:-2px 0 10px; font-size:10px; color:var(--text-muted); line-height:1.5; }
+.timeline-hint kbd { font:inherit; font-weight:700; color:var(--text-secondary); background:var(--bg); border:1px solid var(--border-light); border-radius:4px; padding:1px 5px; }
 .time-axis { display:flex; align-items:stretch; margin-bottom:6px; }
 .time-axis-spacer { width:72px; flex-shrink:0; }
 .time-axis-track { flex:1; position:relative; height:14px; font-size:9px; color:var(--text-muted); }
@@ -299,6 +301,7 @@ body * { -webkit-app-region:no-drag; }
       <span style="font-size:10px;color:var(--text-muted)">—</span>
       <select id="rangeEnd" style="font-size:11px;border:1px solid var(--border);border-radius:4px;padding:2px 6px;background:var(--bg);color:var(--text)"></select>
     </div>
+    <div class="timeline-hint">提示：把鼠标放在时间轴上滚轮缩放，快速展开某一块；按 <kbd>←</kbd> / <kbd>→</kbd> 可左右移动。</div>
     <div class="time-axis">
       <div class="time-axis-spacer"></div>
       <div class="time-axis-track" id="timeAxis"></div>

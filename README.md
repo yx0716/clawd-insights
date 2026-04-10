@@ -158,6 +158,8 @@ The dialog has two sections:
 
 Every time you open the Analytics Dashboard, if there are unanalyzed sessions, the dashboard **automatically pops up a dialog** — `Pre-analyze Sessions` — letting you analyze a whole time range in one go.
 
+> **Note**: the dashboard's own internal AI summary jobs are automatically excluded from the timeline and session stats. Even if you launch `npm start` from some other directory, those internal analysis runs will not be counted as work sessions.
+
 Available scopes:
 
 - **Today** — every session from today
