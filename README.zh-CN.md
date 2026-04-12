@@ -56,9 +56,36 @@
 - **国际化** — 支持英文和中文界面，右键菜单或托盘切换
 - **自动更新** — 检查 GitHub release；Windows 退出时安装 NSIS 更新包，macOS/Linux 源码运行时通过 `git pull` + 重启自动更新
 
-## 状态映射
+## 动画一览
 
-Clawd 有 12 种动画状态，由 Agent hook 驱动——待机、思考、打字、建造、杂耍、指挥、报错、开心、通知、扫地、搬运、睡觉——还有极简模式和点击彩蛋。完整动画表格及 GIF 预览见：**[docs/state-mapping.zh-CN.md](docs/state-mapping.zh-CN.md)**
+<table>
+  <tr>
+    <td align="center"><img src="assets/gif/clawd-idle.gif" width="100"><br><sub>待机</sub></td>
+    <td align="center"><img src="assets/gif/clawd-thinking.gif" width="100"><br><sub>思考</sub></td>
+    <td align="center"><img src="assets/gif/clawd-typing.gif" width="100"><br><sub>打字</sub></td>
+    <td align="center"><img src="assets/gif/clawd-building.gif" width="100"><br><sub>建造</sub></td>
+    <td align="center"><img src="assets/gif/clawd-juggling.gif" width="100"><br><sub>杂耍</sub></td>
+    <td align="center"><img src="assets/gif/clawd-conducting.gif" width="100"><br><sub>指挥</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/gif/clawd-error.gif" width="100"><br><sub>报错</sub></td>
+    <td align="center"><img src="assets/gif/clawd-happy.gif" width="100"><br><sub>开心</sub></td>
+    <td align="center"><img src="assets/gif/clawd-notification.gif" width="100"><br><sub>通知</sub></td>
+    <td align="center"><img src="assets/gif/clawd-sweeping.gif" width="100"><br><sub>扫地</sub></td>
+    <td align="center"><img src="assets/gif/clawd-carrying.gif" width="100"><br><sub>搬运</sub></td>
+    <td align="center"><img src="assets/gif/clawd-sleeping.gif" width="100"><br><sub>睡觉</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/gif/calico-idle.gif" width="80"><br><sub>三花待机</sub></td>
+    <td align="center"><img src="assets/gif/calico-thinking.gif" width="80"><br><sub>三花思考</sub></td>
+    <td align="center"><img src="assets/gif/calico-typing.gif" width="80"><br><sub>三花打字</sub></td>
+    <td align="center"><img src="assets/gif/calico-building.gif" width="80"><br><sub>三花建造</sub></td>
+    <td align="center"><img src="assets/gif/calico-juggling.gif" width="80"><br><sub>三花杂耍</sub></td>
+    <td align="center"><img src="assets/gif/calico-conducting.gif" width="80"><br><sub>三花指挥</sub></td>
+  </tr>
+</table>
+
+完整事件映射表、极简模式、点击彩蛋见：**[docs/state-mapping.zh-CN.md](docs/state-mapping.zh-CN.md)**
 
 ## 快速开始
 

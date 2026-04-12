@@ -56,9 +56,36 @@ A desktop pet that reacts to your AI coding agent sessions in real-time. Clawd l
 - **i18n** — English and Chinese UI; switch via right-click menu or tray
 - **Auto-update** — checks GitHub releases; Windows installs NSIS updates on quit, macOS/Linux `git pull` + restart when running from a cloned repo
 
-## State Mapping
+## Animations
 
-Clawd has 12 animated states driven by agent hooks — idle, thinking, typing, building, juggling, conducting, error, happy, notification, sweeping, carrying, sleeping — plus mini mode and click reaction easter eggs. See the full animation table with GIF previews: **[docs/state-mapping.md](docs/state-mapping.md)**
+<table>
+  <tr>
+    <td align="center"><img src="assets/gif/clawd-idle.gif" width="100"><br><sub>Idle</sub></td>
+    <td align="center"><img src="assets/gif/clawd-thinking.gif" width="100"><br><sub>Thinking</sub></td>
+    <td align="center"><img src="assets/gif/clawd-typing.gif" width="100"><br><sub>Typing</sub></td>
+    <td align="center"><img src="assets/gif/clawd-building.gif" width="100"><br><sub>Building</sub></td>
+    <td align="center"><img src="assets/gif/clawd-juggling.gif" width="100"><br><sub>Juggling</sub></td>
+    <td align="center"><img src="assets/gif/clawd-conducting.gif" width="100"><br><sub>Conducting</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/gif/clawd-error.gif" width="100"><br><sub>Error</sub></td>
+    <td align="center"><img src="assets/gif/clawd-happy.gif" width="100"><br><sub>Happy</sub></td>
+    <td align="center"><img src="assets/gif/clawd-notification.gif" width="100"><br><sub>Notification</sub></td>
+    <td align="center"><img src="assets/gif/clawd-sweeping.gif" width="100"><br><sub>Sweeping</sub></td>
+    <td align="center"><img src="assets/gif/clawd-carrying.gif" width="100"><br><sub>Carrying</sub></td>
+    <td align="center"><img src="assets/gif/clawd-sleeping.gif" width="100"><br><sub>Sleeping</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/gif/calico-idle.gif" width="80"><br><sub>Calico Idle</sub></td>
+    <td align="center"><img src="assets/gif/calico-thinking.gif" width="80"><br><sub>Calico Thinking</sub></td>
+    <td align="center"><img src="assets/gif/calico-typing.gif" width="80"><br><sub>Calico Typing</sub></td>
+    <td align="center"><img src="assets/gif/calico-building.gif" width="80"><br><sub>Calico Building</sub></td>
+    <td align="center"><img src="assets/gif/calico-juggling.gif" width="80"><br><sub>Calico Juggling</sub></td>
+    <td align="center"><img src="assets/gif/calico-conducting.gif" width="80"><br><sub>Calico Conducting</sub></td>
+  </tr>
+</table>
+
+Full event-to-state mapping, mini mode, and click reactions: **[docs/state-mapping.md](docs/state-mapping.md)**
 
 ## Quick Start
 
