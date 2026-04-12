@@ -130,6 +130,24 @@ describe("prefs.migrate", () => {
     assert.strictEqual(upgraded.version, 1);
     assert.strictEqual(upgraded.agents["claude-code"].enabled, false);
   });
+
+  it("backfills positionSaved=true for files with non-zero x/y", () => {
+    const raw = { version: 1, x: 500, y: 300 };
+    const upgraded = prefs.migrate(raw);
+    assert.strictEqual(upgraded.positionSaved, true);
+  });
+
+  it("backfills positionSaved=false for files with x=0,y=0", () => {
+    const raw = { version: 1, x: 0, y: 0 };
+    const upgraded = prefs.migrate(raw);
+    assert.strictEqual(upgraded.positionSaved, false);
+  });
+
+  it("does not overwrite existing positionSaved field", () => {
+    const raw = { version: 1, x: 0, y: 0, positionSaved: true };
+    const upgraded = prefs.migrate(raw);
+    assert.strictEqual(upgraded.positionSaved, true);
+  });
 });
 
 describe("prefs.load", () => {

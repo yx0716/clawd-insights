@@ -32,6 +32,7 @@ const SCHEMA = {
   // Window state
   x: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
   y: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
+  positionSaved: { type: "boolean", default: false },
   size: {
     type: "string",
     default: "P:10",
@@ -148,6 +149,13 @@ function migrate(raw) {
     if (out.themeOverrides === undefined) {
       out.themeOverrides = SCHEMA.themeOverrides.defaultFactory();
     }
+  }
+  // v1 backfill: positionSaved didn't exist before this field was added.
+  // Existing users who have non-default x/y clearly had a saved position.
+  if (out.positionSaved === undefined) {
+    out.positionSaved =
+      (typeof out.x === "number" && out.x !== 0) ||
+      (typeof out.y === "number" && out.y !== 0);
   }
   // Future migrations slot in here as `if (out.version < N) { ... out.version = N }`.
   return out;

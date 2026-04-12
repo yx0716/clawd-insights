@@ -241,6 +241,32 @@ function createSettingsController({
     if (Object.keys(accumulated).length === 0) {
       return { status: "ok", noop: true };
     }
+    // Post-validation: re-run validators against the merged snapshot so
+    // cross-field constraints (e.g. showTray + showDock) see the combined
+    // state, not just the pre-bulk snapshot each individual invoke saw.
+    const mergedSnapshot = { ...store.getSnapshot(), ...accumulated };
+    const mergedDeps = { ...injectedDeps, snapshot: mergedSnapshot };
+    for (const key of Object.keys(accumulated)) {
+      const entry = updates[key];
+      const validator = entry && resolveValidator(entry);
+      if (!validator) continue;
+      const recheck = runStep(`${key} post-validate`, validator, accumulated[key], mergedDeps);
+      if (isThenable(recheck)) {
+        // Async validators in bulk: only the first async key is awaited;
+        // remaining keys are skipped. This is acceptable because all current
+        // validators are synchronous. If async validators are added later
+        // and used in bulk paths, refactor to Promise.all().
+        return recheck.then((r) => {
+          if (!r || r.status !== "ok") return r;
+          return commitBulk(accumulated);
+        });
+      }
+      if (!recheck || recheck.status !== "ok") return recheck;
+    }
+    return commitBulk(accumulated);
+  }
+
+  function commitBulk(accumulated) {
     const { changed } = store._commit(accumulated);
     if (changed) {
       const persisted = persistInternal();

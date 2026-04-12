@@ -124,6 +124,7 @@ const updateRegistry = {
   miniEdge: requireEnum("miniEdge", ["left", "right"]),
   preMiniX: requireFiniteNumber("preMiniX"),
   preMiniY: requireFiniteNumber("preMiniY"),
+  positionSaved: requireBoolean("positionSaved"),
 
   // ── Pure data prefs (function-form: validator only) ──
   lang: requireEnum("lang", ["en", "zh"]),

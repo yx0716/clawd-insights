@@ -170,6 +170,26 @@ describe("applyBulk", () => {
     const r = await ctrl.applyBulk({ lang: "en", soundMuted: false });
     assert.strictEqual(r.noop, true);
   });
+
+  it("rejects bulk that would violate cross-field constraints (showTray + showDock)", async () => {
+    const ctrl = createSettingsController({ prefsPath: makeTempPath() });
+    // Both start true. Trying to set both false in a single bulk should be
+    // caught by post-validation even though each individual validator only
+    // sees the pre-bulk snapshot.
+    const r = await ctrl.applyBulk({ showTray: false, showDock: false });
+    assert.strictEqual(r.status, "error");
+    // Neither field committed — store still has both true
+    assert.strictEqual(ctrl.get("showTray"), true);
+    assert.strictEqual(ctrl.get("showDock"), true);
+  });
+
+  it("allows bulk with only one of showTray/showDock set to false", async () => {
+    const ctrl = createSettingsController({ prefsPath: makeTempPath() });
+    const r = await ctrl.applyBulk({ showTray: false });
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(ctrl.get("showTray"), false);
+    assert.strictEqual(ctrl.get("showDock"), true);
+  });
 });
 
 describe("applyCommand", () => {

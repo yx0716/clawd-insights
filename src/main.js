@@ -141,6 +141,7 @@ function flushRuntimeStateToPrefs() {
   _settingsController.applyBulk({
     x: bounds.x,
     y: bounds.y,
+    positionSaved: true,
     size: currentSize,
     miniMode: _mini.getMiniMode(),
     miniEdge: _mini.getMiniEdge(),
@@ -789,7 +790,7 @@ function wireSettingsSubscribers() {
     try {
       for (const bw of BrowserWindow.getAllWindows()) {
         if (!bw.isDestroyed() && bw.webContents && !bw.webContents.isDestroyed()) {
-          bw.webContents.send("settings-changed", { changes });
+          bw.webContents.send("settings-changed", { changes, snapshot: _settingsController.getSnapshot() });
         }
       }
     } catch (err) {
@@ -930,7 +931,7 @@ function createWindow() {
     const miniPos = _mini.restoreFromPrefs(prefs, size);
     startX = miniPos.x;
     startY = miniPos.y;
-  } else if (prefs.x !== 0 || prefs.y !== 0) {
+  } else if (prefs.positionSaved) {
     const clamped = clampToScreen(prefs.x, prefs.y, size.width, size.height);
     startX = clamped.x;
     startY = clamped.y;
