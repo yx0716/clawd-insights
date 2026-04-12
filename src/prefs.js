@@ -50,6 +50,13 @@ const SCHEMA = {
   showTray: { type: "boolean", default: true },
   showDock: { type: "boolean", default: true },
   autoStartWithClaude: { type: "boolean", default: false },
+  // System-backed: actual truth lives in OS login items / autostart files.
+  // `openAtLoginHydrated` starts false; main.js's startup hydrate helper imports
+  // the current system value into prefs on first run, then flips this flag.
+  // Without hydration, an upgrading user with login-startup already enabled
+  // would see prefs report `false` and have it written back to the system.
+  openAtLogin: { type: "boolean", default: false },
+  openAtLoginHydrated: { type: "boolean", default: false },
   bubbleFollowPet: { type: "boolean", default: false },
   hideBubbles: { type: "boolean", default: false },
   showSessionId: { type: "boolean", default: false },

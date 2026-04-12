@@ -13,9 +13,30 @@
 //   applyUpdate(key, value)        single-field update from menu/IPC
 //   applyBulk(partial)             multi-field update (window bounds, mini state)
 //   applyCommand(name, payload)    side-effect command (removeTheme, etc.) — always async
+//   hydrate(partial)               import external state into prefs WITHOUT
+//                                    running pre-commit effects (used by startup
+//                                    system-backed settings hydration)
 //   getSnapshot() / get(key)       read access
 //   subscribe(fn) / subscribeKey(key, fn)   reactive side effects
 //   persist()                      manual flush (idempotent — no-op if locked)
+//
+// **updateRegistry entry shapes**: each entry in `updates` may be either
+//
+//   - a plain function `(value, deps) => result`            — pure validator,
+//                                                              no side effect
+//   - an object `{ validate, effect? }`                     — pre-commit gate:
+//                                                              `validate` runs
+//                                                              first, then `effect`
+//                                                              touches the outside
+//                                                              world. Either may
+//                                                              return a Promise.
+//                                                              If effect fails, the
+//                                                              store is NOT committed.
+//
+// `hydrate()` invokes only the `validate` half (or the function-form entry as a
+// pure validator) and skips `effect` entirely. This is the only way to import
+// external state — like `app.getLoginItemSettings()` — into prefs without
+// triggering a redundant write back to the system.
 //
 // **Sync vs async**: `applyUpdate` and `applyBulk` are isomorphic — they return
 // a plain `{status, message?}` object synchronously when all involved actions
@@ -84,30 +105,71 @@ function createSettingsController({
     return v && typeof v.then === "function";
   }
 
-  // Invoke a single validator. Returns either a sync result object or a
-  // Promise resolving to one. Never throws — wraps thrown errors as
-  // { status: "error" }.
-  function invokeAction(key, value) {
-    const action = updates[key];
-    if (!action) {
+  // Resolve an entry's validator function. Function-form entries ARE the
+  // validator; object-form entries expose it as `.validate`.
+  function resolveValidator(entry) {
+    if (typeof entry === "function") return entry;
+    if (entry && typeof entry.validate === "function") return entry.validate;
+    return null;
+  }
+
+  // Resolve an entry's pre-commit effect (object-form only). Function-form
+  // entries have no effect by definition. Returns null if absent.
+  function resolveEffect(entry) {
+    if (entry && typeof entry === "object" && typeof entry.effect === "function") {
+      return entry.effect;
+    }
+    return null;
+  }
+
+  // Run one fn (validator or effect) and normalize its return into a sync
+  // object or a Promise resolving to one. Never throws.
+  function runStep(label, fn, value, deps) {
+    let raw;
+    try {
+      raw = fn(value, deps);
+    } catch (err) {
+      return { status: "error", message: `${label} threw: ${err && err.message}` };
+    }
+    if (isThenable(raw)) {
+      return raw.then(
+        (r) => r || { status: "error", message: `${label}: returned no result` },
+        (err) => ({ status: "error", message: `${label} threw: ${err && err.message}` })
+      );
+    }
+    return raw || { status: "error", message: `${label}: returned no result` };
+  }
+
+  // Invoke an entry's validator (always) followed by its effect (if any).
+  // `options.skipEffect` true → only the validator runs (used by hydrate()).
+  // Returns either a sync result object or a Promise resolving to one.
+  function invokeAction(key, value, options = {}) {
+    const entry = updates[key];
+    if (!entry) {
       return { status: "error", message: `unknown settings key: ${key}` };
     }
     if (store.get(key) === value) {
       return { status: "ok", noop: true };
     }
-    let raw;
-    try {
-      raw = action(value, buildDeps());
-    } catch (err) {
-      return { status: "error", message: `${key} action threw: ${err && err.message}` };
+    const validator = resolveValidator(entry);
+    if (!validator) {
+      return { status: "error", message: `${key}: entry has no validator` };
     }
-    if (isThenable(raw)) {
-      return raw.then(
-        (r) => r || { status: "error", message: `${key}: action returned no result` },
-        (err) => ({ status: "error", message: `${key} action threw: ${err && err.message}` })
-      );
+    const validateResult = runStep(`${key} validate`, validator, value, buildDeps());
+
+    const effect = options.skipEffect ? null : resolveEffect(entry);
+    if (!effect) return validateResult;
+
+    // Effect runs only if validate succeeded.
+    function maybeRunEffect(r) {
+      if (!r || r.status !== "ok" || r.noop) return r;
+      return runStep(`${key} effect`, effect, value, buildDeps());
     }
-    return raw || { status: "error", message: `${key}: action returned no result` };
+
+    if (isThenable(validateResult)) {
+      return validateResult.then(maybeRunEffect);
+    }
+    return maybeRunEffect(validateResult);
   }
 
   // Commit one key/value after a successful validator result. Returns the
@@ -187,6 +249,35 @@ function createSettingsController({
     return { status: "ok" };
   }
 
+  // Import external state into prefs WITHOUT running pre-commit effects.
+  // This is the only correct way to push system-backed values (e.g. from
+  // `app.getLoginItemSettings()`) into the store. Going through `applyUpdate`
+  // would re-run the effect, which writes BACK to the system — harmless but
+  // wasteful, and conceptually backwards.
+  //
+  // Sync-or-Promise like applyBulk. Validators still run; commit is atomic
+  // across all keys. Returns the same `{ status, message?, noop? }` shape.
+  function hydrate(partial) {
+    if (!partial || typeof partial !== "object") {
+      return { status: "error", message: "hydrate: partial must be an object" };
+    }
+    const entries = Object.keys(partial).map((key) => ({
+      key,
+      value: partial[key],
+      actionResult: invokeAction(key, partial[key], { skipEffect: true }),
+    }));
+    const anyAsync = entries.some((e) => isThenable(e.actionResult));
+
+    if (!anyAsync) {
+      return finishBulk(entries);
+    }
+    return Promise.all(
+      entries.map((e) =>
+        Promise.resolve(e.actionResult).then((result) => ({ ...e, actionResult: result }))
+      )
+    ).then(finishBulk);
+  }
+
   async function applyCommand(name, payload) {
     const command = commands[name];
     if (!command) {
@@ -256,6 +347,7 @@ function createSettingsController({
     applyUpdate,
     applyBulk,
     applyCommand,
+    hydrate,
     getSnapshot,
     get,
     subscribe,

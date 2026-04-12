@@ -4,13 +4,27 @@
 //
 // Two registries:
 //
-//   updateRegistry  — single-field updates. Each entry is a pure validator
-//                     `(value, deps) => { status: 'ok' | 'error', message? }`.
-//                     Critically: validators do NOT perform side effects.
-//                     UI side effects (menu rebuild, tray create/destroy,
-//                     hook install/uninstall, bubble reposition, ...) live in
-//                     subscribers wired up in main.js. This keeps the action
-//                     layer pure and easy to test.
+//   updateRegistry  — single-field updates. Each entry is EITHER:
+//
+//     (a) a plain function `(value, deps) => { status, message? }` —
+//         a PURE VALIDATOR with no side effect. Used for fields whose
+//         truth lives entirely inside prefs (lang, soundMuted, ...).
+//         Reactive UI projection lives in main.js subscribers.
+//
+//     (b) an object `{ validate, effect }` — a PRE-COMMIT GATE for
+//         fields whose truth depends on the OUTSIDE WORLD (the OS login
+//         items database, ~/.claude/settings.json, etc.). The effect
+//         actually performs the system call; if it fails, the controller
+//         does NOT commit, so prefs cannot drift away from system reality.
+//         Effects can be sync or async; effects throw → controller wraps
+//         as { status: 'error' }.
+//
+//     Why both forms coexist: the gate-vs-projection split is real (see
+//     plan-settings-panel.md §4.2). Forcing every entry to be a gate
+//     would create empty effect functions for pure-data fields and blur
+//     the contract. Forcing every effect into a subscriber would make
+//     "save the system call's failure" impossible because subscribers
+//     run AFTER commit and can't unwind it.
 //
 //   commandRegistry — non-field actions like `removeTheme`, `installHooks`,
 //                     `registerShortcut`. These return
@@ -24,10 +38,15 @@
 //
 //   actionFn(value, { snapshot, ...injectedDeps })
 //
-// where `snapshot` is the current store snapshot (for cross-field checks).
+// `injectedDeps` is whatever main.js passed to `createSettingsController`. For
+// effect-bearing entries this MUST include the system helpers the effect
+// needs (e.g. `setLoginItem`, `registerHooks`) — actions never `require()`
+// electron or fs directly so the test suite can inject mocks.
 //
-// Phase 0 covers only the persisted fields touched by the existing menu items.
-// Commands are mostly stubs — Phase 2/3/4 will fill them in.
+// HYDRATE PATH: `controller.hydrate(partial)` runs only the validator and
+// SKIPS the effect. This is how startup imports system-backed values into
+// prefs without writing them right back. Object-form entries must therefore
+// keep validate side-effect-free.
 
 const { CURRENT_VERSION } = require("./prefs");
 
@@ -106,13 +125,72 @@ const updateRegistry = {
   preMiniX: requireFiniteNumber("preMiniX"),
   preMiniY: requireFiniteNumber("preMiniY"),
 
-  // ── Pure data prefs ──
+  // ── Pure data prefs (function-form: validator only) ──
   lang: requireEnum("lang", ["en", "zh"]),
   soundMuted: requireBoolean("soundMuted"),
   bubbleFollowPet: requireBoolean("bubbleFollowPet"),
   hideBubbles: requireBoolean("hideBubbles"),
   showSessionId: requireBoolean("showSessionId"),
-  autoStartWithClaude: requireBoolean("autoStartWithClaude"),
+
+  // ── System-backed prefs (object-form: validate + effect pre-commit gate) ──
+  //
+  // autoStartWithClaude: writes/removes a SessionStart hook in
+  //   ~/.claude/settings.json via hooks/install.js. Failure to write the file
+  //   (permission denied, disk full, corrupt JSON) MUST prevent the prefs
+  //   commit so the UI never shows "on" while the file is unchanged.
+  autoStartWithClaude: {
+    validate: requireBoolean("autoStartWithClaude"),
+    effect(value, deps) {
+      if (!deps || typeof deps.installAutoStart !== "function" || typeof deps.uninstallAutoStart !== "function") {
+        return {
+          status: "error",
+          message: "autoStartWithClaude effect requires installAutoStart/uninstallAutoStart deps",
+        };
+      }
+      try {
+        if (value) deps.installAutoStart();
+        else deps.uninstallAutoStart();
+        return { status: "ok" };
+      } catch (err) {
+        return {
+          status: "error",
+          message: `autoStartWithClaude: ${err && err.message}`,
+        };
+      }
+    },
+  },
+
+  // openAtLogin: writes the OS login item entry. Truth lives in the OS
+  //   (LaunchAgent on macOS, Registry Run key on Windows, ~/.config/autostart
+  //   on Linux). Effect proxies to a deps-injected setter so platform branching
+  //   stays in main.js. See main.js's hydrateSystemBackedSettings() for the
+  //   inverse direction (system → prefs on first run).
+  openAtLogin: {
+    validate: requireBoolean("openAtLogin"),
+    effect(value, deps) {
+      if (!deps || typeof deps.setOpenAtLogin !== "function") {
+        return {
+          status: "error",
+          message: "openAtLogin effect requires setOpenAtLogin dep",
+        };
+      }
+      try {
+        deps.setOpenAtLogin(value);
+        return { status: "ok" };
+      } catch (err) {
+        return {
+          status: "error",
+          message: `openAtLogin: ${err && err.message}`,
+        };
+      }
+    },
+  },
+
+  // openAtLoginHydrated is set exactly once by hydrateSystemBackedSettings()
+  //   on first run after the openAtLogin field is added. Pure validator —
+  //   no effect. After hydration prefs becomes the source of truth and the
+  //   user-visible toggle goes through the openAtLogin gate above.
+  openAtLoginHydrated: requireBoolean("openAtLoginHydrated"),
 
   // ── macOS visibility (cross-field validation) ──
   showTray(value, { snapshot }) {

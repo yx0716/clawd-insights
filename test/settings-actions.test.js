@@ -72,15 +72,28 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.preMiniY(Infinity, deps).status, "error");
   });
 
-  it("boolean fields reject non-booleans", () => {
+  it("function-form boolean fields reject non-booleans", () => {
     const deps = { snapshot: baseSnapshot };
     for (const key of [
       "soundMuted", "bubbleFollowPet", "hideBubbles",
-      "showSessionId", "autoStartWithClaude", "miniMode",
+      "showSessionId", "miniMode", "openAtLoginHydrated",
     ]) {
       assert.strictEqual(updateRegistry[key](true, deps).status, "ok", `${key}(true)`);
       assert.strictEqual(updateRegistry[key](false, deps).status, "ok", `${key}(false)`);
       assert.strictEqual(updateRegistry[key]("yes", deps).status, "error", `${key}("yes")`);
+    }
+  });
+
+  it("object-form boolean fields validate via entry.validate", () => {
+    const deps = { snapshot: baseSnapshot };
+    for (const key of ["autoStartWithClaude", "openAtLogin"]) {
+      const entry = updateRegistry[key];
+      assert.strictEqual(typeof entry, "object", `${key} should be object-form`);
+      assert.strictEqual(typeof entry.validate, "function", `${key} should expose validate`);
+      assert.strictEqual(typeof entry.effect, "function", `${key} should expose effect`);
+      assert.strictEqual(entry.validate(true, deps).status, "ok", `${key} validate(true)`);
+      assert.strictEqual(entry.validate(false, deps).status, "ok", `${key} validate(false)`);
+      assert.strictEqual(entry.validate("yes", deps).status, "error", `${key} validate("yes")`);
     }
   });
 
@@ -97,6 +110,74 @@ describe("updateRegistry pure-data validators", () => {
     assert.strictEqual(updateRegistry.agents([], deps).status, "error");
     assert.strictEqual(updateRegistry.themeOverrides({}, deps).status, "ok");
     assert.strictEqual(updateRegistry.themeOverrides("nope", deps).status, "error");
+  });
+});
+
+describe("object-form effects (autoStartWithClaude / openAtLogin)", () => {
+  it("autoStartWithClaude effect calls installAutoStart on true", () => {
+    let installCalls = 0;
+    let uninstallCalls = 0;
+    const deps = {
+      installAutoStart: () => installCalls++,
+      uninstallAutoStart: () => uninstallCalls++,
+    };
+    const r = updateRegistry.autoStartWithClaude.effect(true, deps);
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(installCalls, 1);
+    assert.strictEqual(uninstallCalls, 0);
+  });
+
+  it("autoStartWithClaude effect calls uninstallAutoStart on false", () => {
+    let installCalls = 0;
+    let uninstallCalls = 0;
+    const deps = {
+      installAutoStart: () => installCalls++,
+      uninstallAutoStart: () => uninstallCalls++,
+    };
+    const r = updateRegistry.autoStartWithClaude.effect(false, deps);
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(installCalls, 0);
+    assert.strictEqual(uninstallCalls, 1);
+  });
+
+  it("autoStartWithClaude effect returns error when deps missing", () => {
+    const r = updateRegistry.autoStartWithClaude.effect(true, {});
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /requires installAutoStart\/uninstallAutoStart/);
+  });
+
+  it("autoStartWithClaude effect catches install throws", () => {
+    const deps = {
+      installAutoStart: () => { throw new Error("file locked"); },
+      uninstallAutoStart: () => {},
+    };
+    const r = updateRegistry.autoStartWithClaude.effect(true, deps);
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /file locked/);
+  });
+
+  it("openAtLogin effect calls setOpenAtLogin with the value", () => {
+    let lastValue = null;
+    const deps = { setOpenAtLogin: (v) => { lastValue = v; } };
+    const r1 = updateRegistry.openAtLogin.effect(true, deps);
+    assert.strictEqual(r1.status, "ok");
+    assert.strictEqual(lastValue, true);
+    const r2 = updateRegistry.openAtLogin.effect(false, deps);
+    assert.strictEqual(r2.status, "ok");
+    assert.strictEqual(lastValue, false);
+  });
+
+  it("openAtLogin effect returns error when deps missing", () => {
+    const r = updateRegistry.openAtLogin.effect(true, {});
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /requires setOpenAtLogin/);
+  });
+
+  it("openAtLogin effect catches setter throws", () => {
+    const deps = { setOpenAtLogin: () => { throw new Error("permission denied"); } };
+    const r = updateRegistry.openAtLogin.effect(true, deps);
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /permission denied/);
   });
 });
 

@@ -44,11 +44,58 @@ const SIZES = {
 // `_settingsController.applyUpdate()`, which auto-persists.
 const prefsModule = require("./prefs");
 const { createSettingsController } = require("./settings-controller");
+const loginItemHelpers = require("./login-item");
 const PREFS_PATH = path.join(app.getPath("userData"), "clawd-prefs.json");
 const _initialPrefsLoad = prefsModule.load(PREFS_PATH);
+
+// Lazy helpers — these run inside the action `effect` callbacks at click time,
+// long after server.js / hooks/install.js are loaded. Wrapping them in closures
+// avoids a chicken-and-egg require order at module load.
+function _installAutoStartHook() {
+  const { registerHooks } = require("../hooks/install.js");
+  registerHooks({ silent: true, autoStart: true, port: getHookServerPort() });
+}
+function _uninstallAutoStartHook() {
+  const { unregisterAutoStart } = require("../hooks/install.js");
+  unregisterAutoStart();
+}
+
+// Cross-platform "open at login" writer used by both the openAtLogin effect
+// and the startup hydration helper. Throws on failure so the action layer can
+// surface the error to the UI.
+function _writeSystemOpenAtLogin(enabled) {
+  if (isLinux) {
+    const launchScript = path.join(__dirname, "..", "launch.js");
+    const execCmd = app.isPackaged
+      ? `"${process.env.APPIMAGE || app.getPath("exe")}"`
+      : `node "${launchScript}"`;
+    loginItemHelpers.linuxSetOpenAtLogin(enabled, { execCmd });
+    return;
+  }
+  app.setLoginItemSettings(
+    loginItemHelpers.getLoginItemSettings({
+      isPackaged: app.isPackaged,
+      openAtLogin: enabled,
+      execPath: process.execPath,
+      appPath: app.getAppPath(),
+    })
+  );
+}
+function _readSystemOpenAtLogin() {
+  if (isLinux) return loginItemHelpers.linuxGetOpenAtLogin();
+  return app.getLoginItemSettings(
+    app.isPackaged ? {} : { path: process.execPath, args: [app.getAppPath()] }
+  ).openAtLogin;
+}
+
 const _settingsController = createSettingsController({
   prefsPath: PREFS_PATH,
   loadResult: _initialPrefsLoad,
+  injectedDeps: {
+    installAutoStart: _installAutoStartHook,
+    uninstallAutoStart: _uninstallAutoStartHook,
+    setOpenAtLogin: _writeSystemOpenAtLogin,
+  },
 });
 
 // Mirror of `_settingsController.get("lang")` so existing sync read sites in
@@ -56,6 +103,34 @@ const _settingsController = createSettingsController({
 // Updated by the subscriber in `wireSettingsSubscribers()` below — never
 // assign directly.
 let lang = _settingsController.get("lang");
+
+// First-run import of system-backed settings into prefs. The actual truth for
+// `openAtLogin` lives in OS login items / autostart files; if we just trusted
+// the schema default (false), an upgrading user with login-startup already
+// enabled would silently lose it the first time prefs is saved. So on first
+// boot after this field exists in the schema, copy the system value INTO prefs
+// and mark it hydrated. After that, prefs is the source of truth and the
+// openAtLogin pre-commit gate handles future writes back to the system.
+//
+// MUST run inside app.whenReady() — Electron's app.getLoginItemSettings() is
+// only stable after the app is ready. MUST run before createWindow() so the
+// first menu render reads the hydrated value.
+function hydrateSystemBackedSettings() {
+  if (_settingsController.get("openAtLoginHydrated")) return;
+  let systemValue = false;
+  try {
+    systemValue = !!_readSystemOpenAtLogin();
+  } catch (err) {
+    console.warn("Clawd: failed to read system openAtLogin during hydration:", err && err.message);
+  }
+  const result = _settingsController.hydrate({
+    openAtLogin: systemValue,
+    openAtLoginHydrated: true,
+  });
+  if (result && result.status === "error") {
+    console.warn("Clawd: openAtLogin hydration failed:", result.message);
+  }
+}
 
 // Capture window/mini runtime state into the controller and write to disk.
 // Replaces the legacy `savePrefs()` callsites — they used to read fresh
@@ -133,6 +208,7 @@ let isQuitting = false;
 let showTray = _settingsController.get("showTray");
 let showDock = _settingsController.get("showDock");
 let autoStartWithClaude = _settingsController.get("autoStartWithClaude");
+let openAtLogin = _settingsController.get("openAtLogin");
 let bubbleFollowPet = _settingsController.get("bubbleFollowPet");
 let hideBubbles = _settingsController.get("hideBubbles");
 let showSessionId = _settingsController.get("showSessionId");
@@ -582,6 +658,8 @@ const _menuCtx = {
   set showDock(v) { _settingsController.applyUpdate("showDock", v); },
   get autoStartWithClaude() { return autoStartWithClaude; },
   set autoStartWithClaude(v) { _settingsController.applyUpdate("autoStartWithClaude", v); },
+  get openAtLogin() { return openAtLogin; },
+  set openAtLogin(v) { _settingsController.applyUpdate("openAtLogin", v); },
   get bubbleFollowPet() { return bubbleFollowPet; },
   set bubbleFollowPet(v) { _settingsController.applyUpdate("bubbleFollowPet", v); },
   get hideBubbles() { return hideBubbles; },
@@ -632,6 +710,7 @@ const _menuCtx = {
   discoverThemes: () => themeLoader.discoverThemes(),
   getActiveThemeId: () => activeTheme ? activeTheme._id : "clawd",
   ensureUserThemesDir: () => themeLoader.ensureUserThemesDir(),
+  openSettingsWindow: () => openSettingsWindow(),
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
@@ -648,7 +727,7 @@ const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,
 // from a future settings panel land here identically.
 const MENU_AFFECTING_KEYS = new Set([
   "lang", "soundMuted", "bubbleFollowPet", "hideBubbles", "showSessionId",
-  "autoStartWithClaude", "showTray", "showDock", "theme", "size",
+  "autoStartWithClaude", "openAtLogin", "showTray", "showDock", "theme", "size",
 ]);
 function wireSettingsSubscribers() {
   _settingsController.subscribe(({ changes }) => {
@@ -667,18 +746,16 @@ function wireSettingsSubscribers() {
         console.warn("Clawd: applyDockVisibility failed:", err && err.message);
       }
     }
+    // autoStartWithClaude / openAtLogin are object-form pre-commit gates in
+    // settings-actions.js — by the time we get here the system call already
+    // succeeded (or the commit was rejected), so the subscriber only needs
+    // to update the mirror cache. No more registerHooks/setLoginItemSettings
+    // here; that violates the unidirectional flow (see plan §4.2).
     if ("autoStartWithClaude" in changes) {
       autoStartWithClaude = changes.autoStartWithClaude;
-      try {
-        const { registerHooks, unregisterAutoStart } = require("../hooks/install.js");
-        if (changes.autoStartWithClaude) {
-          registerHooks({ silent: true, autoStart: true, port: getHookServerPort() });
-        } else {
-          unregisterAutoStart();
-        }
-      } catch (err) {
-        console.warn("Clawd: failed to toggle auto-start hook:", err && err.message);
-      }
+    }
+    if ("openAtLogin" in changes) {
+      openAtLogin = changes.openAtLogin;
     }
     if ("bubbleFollowPet" in changes) bubbleFollowPet = changes.bubbleFollowPet;
     if ("hideBubbles" in changes) hideBubbles = changes.hideBubbles;
@@ -755,6 +832,73 @@ const _updaterCtx = {
 };
 const _updater = require("./updater")(_updaterCtx);
 const { setupAutoUpdater, checkForUpdates, getUpdateMenuItem, getUpdateMenuLabel } = _updater;
+
+// ── Settings panel window ──
+//
+// Single-instance, non-modal, system-titlebar BrowserWindow that hosts the
+// settings UI. Reuses ipcMain.handle("settings:get-snapshot" / "settings:update")
+// already wired up for the controller. The renderer subscribes to
+// settings-changed broadcasts so menu changes and panel changes stay in sync.
+let settingsWindow = null;
+
+function getSettingsWindowIcon() {
+  // Don't pass an icon on macOS — the system uses the .app bundle icon.
+  if (isMac) return undefined;
+  if (isWin) {
+    // Packaged build: extraResources puts icon.ico at process.resourcesPath.
+    // Dev: read it from assets/. The files[] glob in package.json doesn't
+    // include assets/icon.ico, so don't try to load it from __dirname/.. in
+    // a packaged build — that path doesn't exist inside app.asar.
+    return app.isPackaged
+      ? path.join(process.resourcesPath, "icon.ico")
+      : path.join(__dirname, "..", "assets", "icon.ico");
+  }
+  // Linux: build config points at assets/icons/, but those aren't shipped in
+  // files[]. Skip the icon — the .desktop file (deb/AppImage) provides one.
+  return undefined;
+}
+
+function openSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (settingsWindow.isMinimized()) settingsWindow.restore();
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+  const iconPath = getSettingsWindowIcon();
+  const opts = {
+    width: 800,
+    height: 560,
+    minWidth: 640,
+    minHeight: 480,
+    show: false,
+    frame: true,
+    transparent: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    skipTaskbar: false,
+    alwaysOnTop: false,
+    title: "Clawd Settings",
+    backgroundColor: "#f5f5f7",
+    webPreferences: {
+      preload: path.join(__dirname, "preload-settings.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  };
+  if (iconPath) opts.icon = iconPath;
+  settingsWindow = new BrowserWindow(opts);
+  settingsWindow.setMenuBarVisibility(false);
+  settingsWindow.loadFile(path.join(__dirname, "settings.html"));
+  settingsWindow.once("ready-to-show", () => {
+    settingsWindow.show();
+    settingsWindow.focus();
+  });
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
+}
 
 function createWindow() {
   // Read everything from the settings controller. The mirror caches above
@@ -1266,6 +1410,11 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // Import system-backed settings (openAtLogin) into prefs on first run.
+    // Must run before createWindow() so the first menu draw sees the
+    // hydrated value rather than the schema default.
+    hydrateSystemBackedSettings();
+
     permDebugLog = path.join(app.getPath("userData"), "permission-debug.log");
     updateDebugLog = path.join(app.getPath("userData"), "update-debug.log");
     createWindow();

@@ -243,6 +243,184 @@ describe("subscribe / subscribeKey", () => {
   });
 });
 
+describe("object-form entries (validate + effect pre-commit gate)", () => {
+  it("runs validate then effect; commits only after both succeed", async () => {
+    let effectCalls = 0;
+    let lastEffectValue = null;
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        gated: {
+          validate: (v) => typeof v === "boolean"
+            ? { status: "ok" }
+            : { status: "error", message: "must be boolean" },
+          effect: (v) => {
+            effectCalls++;
+            lastEffectValue = v;
+            return { status: "ok" };
+          },
+        },
+      },
+    });
+    const r = await ctrl.applyUpdate("gated", true);
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(effectCalls, 1);
+    assert.strictEqual(lastEffectValue, true);
+    assert.strictEqual(ctrl.get("gated"), true);
+  });
+
+  it("does not run effect when validate fails", async () => {
+    let effectCalls = 0;
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        gated: {
+          validate: () => ({ status: "error", message: "nope" }),
+          effect: () => { effectCalls++; return { status: "ok" }; },
+        },
+      },
+    });
+    const r = await ctrl.applyUpdate("gated", true);
+    assert.strictEqual(r.status, "error");
+    assert.strictEqual(effectCalls, 0);
+    assert.strictEqual(ctrl.get("gated"), undefined);
+  });
+
+  it("does not commit when effect fails (store stays clean)", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        gated: {
+          validate: () => ({ status: "ok" }),
+          effect: () => ({ status: "error", message: "system rejected" }),
+        },
+      },
+    });
+    let broadcasts = 0;
+    ctrl.subscribe(() => broadcasts++);
+    const r = await ctrl.applyUpdate("gated", true);
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /system rejected/);
+    assert.strictEqual(ctrl.get("gated"), undefined);
+    assert.strictEqual(broadcasts, 0, "no broadcast on effect failure");
+  });
+
+  it("propagates effect throws as { status: error }", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        gated: {
+          validate: () => ({ status: "ok" }),
+          effect: () => { throw new Error("kaboom"); },
+        },
+      },
+    });
+    const r = await ctrl.applyUpdate("gated", true);
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /kaboom/);
+    assert.strictEqual(ctrl.get("gated"), undefined);
+  });
+
+  it("supports async effect", async () => {
+    let resolved = false;
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        gated: {
+          validate: () => ({ status: "ok" }),
+          effect: async () => {
+            await new Promise((r) => setTimeout(r, 1));
+            resolved = true;
+            return { status: "ok" };
+          },
+        },
+      },
+    });
+    const r = await ctrl.applyUpdate("gated", "anything");
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(resolved, true);
+  });
+
+  it("noop short-circuits before validate or effect", async () => {
+    let validateCalls = 0;
+    let effectCalls = 0;
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        lang: {  // override built-in lang with a tracking gate
+          validate: () => { validateCalls++; return { status: "ok" }; },
+          effect: () => { effectCalls++; return { status: "ok" }; },
+        },
+      },
+    });
+    // Default lang is "en"; set to "en" again should noop.
+    const r = await ctrl.applyUpdate("lang", "en");
+    assert.strictEqual(r.noop, true);
+    assert.strictEqual(validateCalls, 0);
+    assert.strictEqual(effectCalls, 0);
+  });
+});
+
+describe("hydrate (system → prefs import, no effect)", () => {
+  it("runs validate but skips effect, then commits", async () => {
+    let effectCalls = 0;
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        sysBacked: {
+          validate: (v) => typeof v === "boolean"
+            ? { status: "ok" }
+            : { status: "error", message: "bad" },
+          effect: () => { effectCalls++; return { status: "ok" }; },
+        },
+      },
+    });
+    const r = await ctrl.hydrate({ sysBacked: true });
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(effectCalls, 0, "effect must not run during hydrate");
+    assert.strictEqual(ctrl.get("sysBacked"), true);
+  });
+
+  it("rejects partial that fails validate without committing anything", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      updates: {
+        a: { validate: () => ({ status: "ok" }), effect: () => ({ status: "ok" }) },
+        b: { validate: () => ({ status: "error", message: "bad b" }) },
+      },
+    });
+    const r = await ctrl.hydrate({ a: 1, b: 2 });
+    assert.strictEqual(r.status, "error");
+    assert.strictEqual(ctrl.get("a"), undefined);
+    assert.strictEqual(ctrl.get("b"), undefined);
+  });
+
+  it("rejects non-object input", () => {
+    const ctrl = createSettingsController({ prefsPath: makeTempPath() });
+    const r = ctrl.hydrate(null);
+    assert.strictEqual(r.status, "error");
+  });
+
+  it("commits multiple keys atomically with a single broadcast", async () => {
+    const ctrl = createSettingsController({ prefsPath: makeTempPath() });
+    let broadcasts = 0;
+    let lastChanges = null;
+    ctrl.subscribe(({ changes }) => { broadcasts++; lastChanges = changes; });
+    // Use existing pure-data fields (function-form entries) — hydrate must
+    // work for both function-form and object-form entries.
+    const r = await ctrl.hydrate({ lang: "zh", soundMuted: true });
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(broadcasts, 1);
+    assert.deepStrictEqual(lastChanges, { lang: "zh", soundMuted: true });
+  });
+
+  it("noop when value already matches", async () => {
+    const ctrl = createSettingsController({ prefsPath: makeTempPath() });
+    const r = await ctrl.hydrate({ lang: "en" }); // default
+    assert.strictEqual(r.noop, true);
+  });
+});
+
 describe("locked controller (future-version files)", () => {
   it("applyUpdate still validates and updates store but does not persist", async () => {
     const p = makeTempPath();
