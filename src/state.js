@@ -487,15 +487,8 @@ function cleanStaleSessions() {
   }
 }
 
-// Remove every session whose agentId matches, then recompute the display
-// state. Used by the agent-gate (setAgentFlag "enabled"=false command) to
-// clean up runtime state after a user disables an agent — without this, a session
-// mid-transition would keep driving the display even though the agent is
-// supposed to be off.
-//
-// Keeps `sessions` Map mutation inside this module — callers ask us, not
-// reach in. setState() already respects minDisplay timings, so the visible
-// pet will finish its current animation before settling to sleeping/idle.
+// setState() respects minDisplay timings, so the visible pet finishes
+// its current animation before settling to the resolved state.
 function clearSessionsByAgent(agentId) {
   if (!agentId) return 0;
   let removed = 0;

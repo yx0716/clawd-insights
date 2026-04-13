@@ -15,33 +15,19 @@ const {
   writeRuntimeConfig,
 } = require("../hooks/server-config");
 
-// Decision helper for the per-agent permission-bubble sub-gate.
-//
-// Returns true iff the bubble should NOT be rendered for this request. The
-// caller is responsible for the side effects (res.destroy for CC, silent
-// return for opencode) — keeping this pure lets the test suite exercise the
-// branch matrix without spinning up an HTTP server.
-//
-// "branch" selects which agent's rules apply:
-//   - "cc"       → Claude Code / CodeBuddy. ExitPlanMode and AskUserQuestion
-//                  are UX flows that happen to travel through /permission;
-//                  they MUST stay live even when the sub-gate is off.
-//   - "opencode" → opencode plugin. No per-tool exceptions (opencode doesn't
-//                  use ExitPlanMode or AskUserQuestion through this path).
-//
-// A missing ctx.isAgentPermissionsEnabled function reads as "don't suppress"
-// (default-on, same spirit as the gate helpers themselves).
-function shouldBypassBubbleForSubGate(ctx, { toolName, agentId, branch }) {
-  if (branch === "cc") {
-    if (toolName === "ExitPlanMode" || toolName === "AskUserQuestion") return false;
-    if (typeof ctx.isAgentPermissionsEnabled !== "function") return false;
-    return !ctx.isAgentPermissionsEnabled(agentId);
-  }
-  if (branch === "opencode") {
-    if (typeof ctx.isAgentPermissionsEnabled !== "function") return false;
-    return !ctx.isAgentPermissionsEnabled("opencode");
-  }
-  return false;
+// ExitPlanMode (Plan Review) and AskUserQuestion (elicitation) happen to
+// travel through /permission, but they're UX flows — not approvals the
+// sub-gate is named for. Silencing them would break plan-mode and leave
+// CC hanging on an elicitation.
+function shouldBypassCCBubble(ctx, toolName, agentId) {
+  if (toolName === "ExitPlanMode" || toolName === "AskUserQuestion") return false;
+  if (typeof ctx.isAgentPermissionsEnabled !== "function") return false;
+  return !ctx.isAgentPermissionsEnabled(agentId);
+}
+
+function shouldBypassOpencodeBubble(ctx) {
+  if (typeof ctx.isAgentPermissionsEnabled !== "function") return false;
+  return !ctx.isAgentPermissionsEnabled("opencode");
 }
 
 module.exports = function initServer(ctx) {
@@ -349,18 +335,9 @@ function startHttpServer() {
               return;
             }
 
-            // hideBubbles: drop silently, let opencode TUI handle it.
-            // (Unlike CC we have no HTTP connection to "hold open", so the
-            // only meaningful degradation is to not render a bubble.)
-            //
-            // Per-agent permission sub-gate: same treatment. The user has
-            // explicitly asked not to see opencode bubbles, so drop the
-            // bubble and let the TUI prompt take over.
-            const opencodeSubGateBypass = shouldBypassBubbleForSubGate(ctx, {
-              toolName,
-              agentId: "opencode",
-              branch: "opencode",
-            });
+            // No HTTP connection to hold open — only degradation is to
+            // not render a bubble and let the TUI prompt handle it.
+            const opencodeSubGateBypass = shouldBypassOpencodeBubble(ctx);
             if (ctx.hideBubbles || opencodeSubGateBypass) {
               ctx.permLog(`opencode bubble hidden: tool=${toolName} — TUI fallback (hideBubbles=${ctx.hideBubbles} subGateBypass=${opencodeSubGateBypass})`);
               return;
@@ -468,18 +445,7 @@ function startHttpServer() {
             return;
           }
 
-          // Per-agent permission sub-gate. Runs AFTER the PASSTHROUGH check
-          // (read-only tools still auto-allow) and BEFORE we create a
-          // permEntry for an actual permission request. Same destruction
-          // semantics as DND / master-gate disabled: tear down the
-          // connection so CC falls back to its built-in chat prompt.
-          //
-          // ExitPlanMode and AskUserQuestion are excluded by the helper —
-          // they're UX flows that happen to travel through /permission,
-          // not "permission bubbles" in the Allow/Deny sense the toggle
-          // is named for. Silencing them would break plan-mode and leave
-          // CC hanging on elicitations it expects responses to.
-          if (shouldBypassBubbleForSubGate(ctx, { toolName, agentId: permAgentId, branch: "cc" })) {
+          if (shouldBypassCCBubble(ctx, toolName, permAgentId)) {
             ctx.permLog(`${permAgentId} bubbles disabled → destroy connection, chat fallback (tool=${toolName})`);
             res.destroy();
             return;
@@ -586,6 +552,4 @@ return { startHttpServer, getHookServerPort, syncClawdHooks, syncGeminiHooks, sy
 
 };
 
-// Exposed for tests. Attached after the factory so `require('./server')` still
-// returns the factory as its default — tests do `require('./server').__test`.
-module.exports.__test = { shouldBypassBubbleForSubGate };
+module.exports.__test = { shouldBypassCCBubble, shouldBypassOpencodeBubble };

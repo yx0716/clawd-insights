@@ -360,13 +360,8 @@ function createSettingsController({
     ).then(finishBulk);
   }
 
-  // Serialize commands by name. Two rapid toggles of the same command (e.g.
-  // `setAgentFlag` with the same agent + flag) would otherwise race — later
-  // effect resolves first, earlier effect commits over it. Different commands
-  // can still run in parallel; only same-name same-time is queued. This is
-  // also why main-switch + sub-switch share a single `setAgentFlag` command
-  // instead of splitting into two — distinct command names don't share a
-  // queue, and both would be rewriting the same `agents` object.
+  // Serialize commands by name — same-name rapid toggles would otherwise
+  // race and the later-resolving one would commit over the earlier.
   function applyCommand(name, payload) {
     const lockKey = `cmd:${name}`;
     const prev = _asyncLocks.get(lockKey);

@@ -199,55 +199,64 @@ function renderAgentsTab(parent) {
   parent.appendChild(buildSection("", rows));
 }
 
-// Returns 1-2 rows per agent: the master enable switch, and (for agents
-// that raise a Clawd bubble of any kind) a sub-row for the per-agent
-// bubble toggle. The two switches are deliberately independent — no
-// master-off-disables-sub visual coupling. The gate layer already
-// short-circuits correctly: if master is off the event stream never
-// reaches /permission, so the sub-flag's stored value is inert until
-// the master flips back on.
-//
-// The sub-row shows for BOTH capabilities.permissionApproval (real
-// approval bubbles — CC, CodeBuddy, opencode) and interactiveBubble
-// (informational notification bubbles — Codex). The underlying prefs
-// flag (permissionsEnabled) is the same for both; the split at this
-// layer is purely about NOT mislabeling Codex's informational "Got it"
-// bubble as a permission approval.
 function buildAgentRows(agent) {
-  const rows = [buildAgentMasterRow(agent)];
+  const rows = [
+    buildAgentSwitchRow({
+      agent,
+      flag: "enabled",
+      extraClass: null,
+      buildText: (text) => {
+        const label = document.createElement("span");
+        label.className = "row-label";
+        label.textContent = agent.name || agent.id;
+        text.appendChild(label);
+        const badges = document.createElement("span");
+        badges.className = "row-desc agent-badges";
+        const esKey = agent.eventSource === "log-poll" ? "eventSourceLogPoll"
+          : agent.eventSource === "plugin-event" ? "eventSourcePlugin"
+          : "eventSourceHook";
+        const esBadge = document.createElement("span");
+        esBadge.className = "agent-badge";
+        esBadge.textContent = t(esKey);
+        badges.appendChild(esBadge);
+        if (agent.capabilities && agent.capabilities.permissionApproval) {
+          const permBadge = document.createElement("span");
+          permBadge.className = "agent-badge accent";
+          permBadge.textContent = t("badgePermissionBubble");
+          badges.appendChild(permBadge);
+        }
+        text.appendChild(badges);
+      },
+    }),
+  ];
   const caps = agent.capabilities || {};
   if (caps.permissionApproval || caps.interactiveBubble) {
-    rows.push(buildAgentPermissionsRow(agent));
+    rows.push(buildAgentSwitchRow({
+      agent,
+      flag: "permissionsEnabled",
+      extraClass: "row-sub",
+      buildText: (text) => {
+        const label = document.createElement("span");
+        label.className = "row-label";
+        label.textContent = t("rowAgentPermissions");
+        text.appendChild(label);
+        const desc = document.createElement("span");
+        desc.className = "row-desc";
+        desc.textContent = t("rowAgentPermissionsDesc");
+        text.appendChild(desc);
+      },
+    }));
   }
   return rows;
 }
 
-function buildAgentMasterRow(agent) {
+function buildAgentSwitchRow({ agent, flag, extraClass, buildText }) {
   const row = document.createElement("div");
-  row.className = "row";
+  row.className = extraClass ? `row ${extraClass}` : "row";
 
   const text = document.createElement("div");
   text.className = "row-text";
-  const label = document.createElement("span");
-  label.className = "row-label";
-  label.textContent = agent.name || agent.id;
-  text.appendChild(label);
-  const badges = document.createElement("span");
-  badges.className = "row-desc agent-badges";
-  const esKey = agent.eventSource === "log-poll" ? "eventSourceLogPoll"
-    : agent.eventSource === "plugin-event" ? "eventSourcePlugin"
-    : "eventSourceHook";
-  const esBadge = document.createElement("span");
-  esBadge.className = "agent-badge";
-  esBadge.textContent = t(esKey);
-  badges.appendChild(esBadge);
-  if (agent.capabilities && agent.capabilities.permissionApproval) {
-    const permBadge = document.createElement("span");
-    permBadge.className = "agent-badge accent";
-    permBadge.textContent = t("badgePermissionBubble");
-    badges.appendChild(permBadge);
-  }
-  text.appendChild(badges);
+  buildText(text);
   row.appendChild(text);
 
   const ctrl = document.createElement("div");
@@ -256,59 +265,20 @@ function buildAgentMasterRow(agent) {
   sw.className = "switch";
   sw.setAttribute("role", "switch");
   sw.setAttribute("tabindex", "0");
-  const currentEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
-  const enabled = currentEntry ? currentEntry.enabled !== false : true;
-  if (enabled) sw.classList.add("on");
-  sw.setAttribute("aria-checked", enabled ? "true" : "false");
-  attachSwitchToggle(sw, () => {
-    const curEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
-    const curEnabled = curEntry ? curEntry.enabled !== false : true;
-    return window.settingsAPI.command("setAgentFlag", {
+  const readFlag = () => {
+    const entry = snapshot && snapshot.agents && snapshot.agents[agent.id];
+    return entry ? entry[flag] !== false : true;
+  };
+  const on = readFlag();
+  if (on) sw.classList.add("on");
+  sw.setAttribute("aria-checked", on ? "true" : "false");
+  attachSwitchToggle(sw, () =>
+    window.settingsAPI.command("setAgentFlag", {
       agentId: agent.id,
-      flag: "enabled",
-      value: !curEnabled,
-    });
-  });
-  ctrl.appendChild(sw);
-  row.appendChild(ctrl);
-  return row;
-}
-
-function buildAgentPermissionsRow(agent) {
-  const row = document.createElement("div");
-  row.className = "row row-sub";
-
-  const text = document.createElement("div");
-  text.className = "row-text";
-  const label = document.createElement("span");
-  label.className = "row-label";
-  label.textContent = t("rowAgentPermissions");
-  text.appendChild(label);
-  const desc = document.createElement("span");
-  desc.className = "row-desc";
-  desc.textContent = t("rowAgentPermissionsDesc");
-  text.appendChild(desc);
-  row.appendChild(text);
-
-  const ctrl = document.createElement("div");
-  ctrl.className = "row-control";
-  const sw = document.createElement("div");
-  sw.className = "switch";
-  sw.setAttribute("role", "switch");
-  sw.setAttribute("tabindex", "0");
-  const currentEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
-  const permEnabled = currentEntry ? currentEntry.permissionsEnabled !== false : true;
-  if (permEnabled) sw.classList.add("on");
-  sw.setAttribute("aria-checked", permEnabled ? "true" : "false");
-  attachSwitchToggle(sw, () => {
-    const curEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
-    const curPermEnabled = curEntry ? curEntry.permissionsEnabled !== false : true;
-    return window.settingsAPI.command("setAgentFlag", {
-      agentId: agent.id,
-      flag: "permissionsEnabled",
-      value: !curPermEnabled,
-    });
-  });
+      flag,
+      value: !readFlag(),
+    })
+  );
   ctrl.appendChild(sw);
   row.appendChild(ctrl);
   return row;

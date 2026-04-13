@@ -34,12 +34,8 @@ const RESTORE_FOCUS_DELAY_MS = 300;
 const WIN_TOPMOST_LEVEL = "pop-up-menu";
 const LINUX_WINDOW_TYPE = "toolbar";
 
-// Pure gate for Codex's informational "Got it" bubble. Unlike Claude
-// Code/opencode, Codex doesn't come through /permission, so its per-agent
-// bubble toggle must be checked here at the bubble-creation entry point.
-//
-// Default-on semantics match the other agent-gate helpers: if the runtime
-// ctx predates isAgentPermissionsEnabled, don't silently suppress.
+// Codex doesn't come through /permission, so its sub-gate is checked at
+// the bubble-creation callsite instead of at the route entrance.
 function shouldSuppressCodexNotifyBubble(ctx) {
   const codexBubblesEnabled =
     typeof ctx.isAgentPermissionsEnabled !== "function" ||
@@ -572,11 +568,8 @@ function handleDecide(event, behavior) {
 const CODEX_NOTIFY_EXPIRE_MS = 30000;
 
 function showCodexNotifyBubble({ sessionId, command }) {
-  const codexBubblesEnabled =
-    typeof ctx.isAgentPermissionsEnabled !== "function" ||
-    ctx.isAgentPermissionsEnabled("codex");
   if (shouldSuppressCodexNotifyBubble(ctx)) {
-    permLog(`codex notify suppressed: session=${sessionId} dnd=${ctx.doNotDisturb} hideBubbles=${ctx.hideBubbles} subGate=${codexBubblesEnabled}`);
+    permLog(`codex notify suppressed: session=${sessionId} dnd=${ctx.doNotDisturb} hideBubbles=${ctx.hideBubbles}`);
     return;
   }
   const permEntry = {
@@ -612,13 +605,8 @@ function dismissCodexNotify(permEntry) {
   syncPermissionShortcuts();
 }
 
-// Tear down every pending permission entry tied to `agentId`. Called by the
-// setAgentFlag command when either the master `enabled` flag flips to false
-// OR the sub `permissionsEnabled` flag flips to false, so a freshly-silenced
-// agent doesn't leave orphan bubbles. Mirrors the DND dispatcher exactly: CC entries get
-// res.destroy() (CC falls back to its built-in chat prompt), opencode entries
-// skip the bridge reply (TUI falls back to its own prompt), codex notify
-// entries just close the bubble (no blocking request to answer).
+// Mirrors the DND dispatcher: CC res.destroy() so it falls back to chat,
+// opencode skips the bridge reply so TUI takes over, codex just closes.
 function dismissPermissionsByAgent(agentId) {
   if (!agentId) return 0;
   const toDismiss = pendingPermissions.filter((p) => p && p.agentId === agentId);

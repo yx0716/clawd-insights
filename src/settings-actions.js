@@ -48,7 +48,7 @@
 // prefs without writing them right back. Object-form entries must therefore
 // keep validate side-effect-free.
 
-const { CURRENT_VERSION } = require("./prefs");
+const { CURRENT_VERSION, AGENT_FLAGS } = require("./prefs");
 
 // ── Validator helpers ──
 
@@ -254,41 +254,16 @@ function notImplemented(name) {
   };
 }
 
-// setAgentFlag — atomic single-agent single-flag toggle.
+// setAgentFlag — atomic single-agent, single-flag toggle.
 // Payload `{ agentId, flag, value }` where flag ∈ AGENT_FLAGS.
 //
 // Flags:
-//   enabled             — master gate: event stream on/off for this agent
-//   permissionsEnabled  — sub gate: permission-bubble UI on/off (event
-//                         stream still flows). Only meaningful for agents
-//                         whose capabilities.permissionApproval is true.
+//   enabled             — master: event stream on/off
+//   permissionsEnabled  — sub: bubble UI on/off (events still flow)
 //
-// A single setAgentFlag command (instead of separate setAgentEnabled +
-// setAgentPermissionsEnabled) matters because the controller serializes
-// by command NAME (settings-controller.js:367). Two distinct commands
-// flipping the same agents object would race — the later-resolving one
-// would commit over the earlier, losing one of the toggles. Folding both
-// into one command means rapid user clicks across main + sub switches
-// queue behind the same lockKey.
-//
-// The primitive here is "one agent, one flag flipped" — NOT "full agents
-// object replaced". Side effects need the single agentId to:
-//   - start/stop the matching log-poll monitor (enabled only)
-//   - clear pre-existing sessions of that agent from state.js (enabled only)
-//   - dismiss pre-existing permission bubbles of that agent
-//     (enabled=false OR permissionsEnabled=false)
-//
-// All side-effect helpers come in via `deps` so the test suite can inject
-// spies without booting Electron or the real log monitors:
-//
-//   deps.startMonitorForAgent(id)       no-op unless id is a log-poll agent
-//   deps.stopMonitorForAgent(id)        no-op unless id is a log-poll agent
-//   deps.clearSessionsByAgent(id)       from state.js
-//   deps.dismissPermissionsByAgent(id)  from permission.js
-//
-// Returns `{ status, commit }`. The controller applies `commit` atomically
-// after the effects succeed.
-const AGENT_FLAGS = ["enabled", "permissionsEnabled"];
+// Main + sub share one command so rapid toggles serialize under the same
+// controller lockKey — two separate commands would lost-update the
+// agents object.
 const _validateAgentFlagId = requireString("setAgentFlag.agentId");
 const _validateAgentFlagValue = requireBoolean("setAgentFlag.value");
 function setAgentFlag(payload, deps) {
@@ -309,7 +284,6 @@ function setAgentFlag(payload, deps) {
   const snapshot = deps && deps.snapshot;
   const currentAgents = (snapshot && snapshot.agents) || {};
   const currentEntry = currentAgents[agentId];
-  // Missing entry / missing flag → default-true, matching the gate semantics.
   const currentValue =
     currentEntry && typeof currentEntry[flag] === "boolean" ? currentEntry[flag] : true;
   if (currentValue === value) {
@@ -326,9 +300,6 @@ function setAgentFlag(payload, deps) {
         if (typeof deps.startMonitorForAgent === "function") deps.startMonitorForAgent(agentId);
       }
     } else if (flag === "permissionsEnabled") {
-      // Sub-gate toggle: monitor/sessions are unaffected — the event stream
-      // keeps flowing. Only dismiss in-flight bubbles on turn-OFF so the
-      // user doesn't see a stale bubble after silencing them.
       if (!value && typeof deps.dismissPermissionsByAgent === "function") {
         deps.dismissPermissionsByAgent(agentId);
       }
@@ -340,9 +311,6 @@ function setAgentFlag(payload, deps) {
     };
   }
 
-  // Spread the existing entry so sibling flags aren't wiped. The previous
-  // `{ [agentId]: { enabled } }` shape silently discarded any other flags
-  // every time the main switch flipped.
   const nextEntry = { ...(currentEntry || {}), [flag]: value };
   const nextAgents = { ...currentAgents, [agentId]: nextEntry };
   return { status: "ok", commit: { agents: nextAgents } };
