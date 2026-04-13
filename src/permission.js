@@ -571,6 +571,7 @@ function showCodexNotifyBubble({ sessionId, command }) {
     toolInput: { command: command || "(unknown)" },
     resolvedSuggestion: null, createdAt: Date.now(),
     isElicitation: false, isCodexNotify: true,
+    agentId: "codex",
     autoExpireTimer: null,
   };
   pendingPermissions.push(permEntry);
@@ -593,6 +594,49 @@ function dismissCodexNotify(permEntry) {
   }
   repositionBubbles();
   syncPermissionShortcuts();
+}
+
+// Tear down every pending permission entry tied to `agentId`. Called by the
+// setAgentEnabled(false) command so a freshly-disabled agent doesn't leave
+// orphan bubbles. Mirrors the DND dispatcher exactly: CC entries get
+// res.destroy() (CC falls back to its built-in chat prompt), opencode entries
+// skip the bridge reply (TUI falls back to its own prompt), codex notify
+// entries just close the bubble (no blocking request to answer).
+function dismissPermissionsByAgent(agentId) {
+  if (!agentId) return 0;
+  const toDismiss = pendingPermissions.filter((p) => p && p.agentId === agentId);
+  if (toDismiss.length === 0) return 0;
+  for (const perm of toDismiss) {
+    if (perm.isCodexNotify) {
+      dismissCodexNotify(perm);
+      continue;
+    }
+    const idx = pendingPermissions.indexOf(perm);
+    if (idx !== -1) pendingPermissions.splice(idx, 1);
+    if (perm._delayTimer) { clearTimeout(perm._delayTimer); perm._delayTimer = null; }
+    if (perm.abortHandler && perm.res) {
+      try { perm.res.removeListener("close", perm.abortHandler); } catch {}
+    }
+    if (perm.bubble && !perm.bubble.isDestroyed()) {
+      try { perm.bubble.webContents.send("permission-hide"); } catch {}
+      if (perm.hideTimer) clearTimeout(perm.hideTimer);
+      const bub = perm.bubble;
+      perm.hideTimer = setTimeout(() => {
+        if (bub && !bub.isDestroyed()) bub.destroy();
+      }, 250);
+    }
+    // opencode: skip bridge reply — TUI has its own fallback prompt.
+    // CC / codebuddy / elicitation: destroy the connection so CC falls back
+    //   to its built-in chat permission prompt (same pattern as DND, see
+    //   commit 9f90... spike 2026-04-07).
+    if (!perm.isOpencode && perm.res && !perm.res.destroyed) {
+      try { perm.res.destroy(); } catch {}
+    }
+  }
+  repositionBubbles();
+  syncPermissionShortcuts();
+  permLog(`dismissPermissionsByAgent(${agentId}): cleared ${toDismiss.length}`);
+  return toDismiss.length;
 }
 
 function clearCodexNotifyBubbles(sessionId) {
@@ -623,6 +667,7 @@ return {
   pendingPermissions, PASSTHROUGH_TOOLS,
   handleBubbleHeight, handleDecide, cleanup,
   showCodexNotifyBubble, clearCodexNotifyBubbles,
+  dismissPermissionsByAgent,
   syncPermissionShortcuts,
   replyOpencodePermission,
 };

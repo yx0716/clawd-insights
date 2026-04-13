@@ -28,6 +28,8 @@ ipcRenderer.on("settings-changed", (_event, payload) => {
 contextBridge.exposeInMainWorld("settingsAPI", {
   getSnapshot: () => ipcRenderer.invoke("settings:get-snapshot"),
   update: (key, value) => ipcRenderer.invoke("settings:update", { key, value }),
+  command: (action, payload) => ipcRenderer.invoke("settings:command", { action, payload }),
+  listAgents: () => ipcRenderer.invoke("settings:list-agents"),
   onChanged: (cb) => {
     if (typeof cb === "function") listeners.add(cb);
   },

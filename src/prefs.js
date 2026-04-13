@@ -73,6 +73,8 @@ const SCHEMA = {
       "copilot-cli": { enabled: true },
       "cursor-agent": { enabled: true },
       "gemini-cli": { enabled: true },
+      "codebuddy": { enabled: true },
+      "kiro-cli": { enabled: true },
       "opencode": { enabled: true },
     }),
     normalize: normalizeAgents,

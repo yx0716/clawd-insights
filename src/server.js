@@ -197,6 +197,15 @@ function startHttpServer() {
           const agentId = typeof data.agent_id === "string" ? data.agent_id : "claude-code";
           const host = typeof data.host === "string" ? data.host : null;
           const headless = data.headless === true;
+          // Agent gate: user disabled this agent in the settings panel. Drop
+          // with 204 so hook scripts get a quick no-op response instead of
+          // hanging on our HTTP connection. Still surfaces as a success code
+          // so hook exit behavior is unchanged.
+          if (typeof ctx.isAgentEnabled === "function" && !ctx.isAgentEnabled(agentId)) {
+            res.writeHead(204, { [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID });
+            res.end();
+            return;
+          }
           if (ctx.STATE_SVGS[state]) {
             const sid = session_id || "default";
             if (state.startsWith("mini-") && !svg) {
@@ -272,6 +281,14 @@ function startHttpServer() {
             res.writeHead(200, { [CLAWD_SERVER_HEADER]: CLAWD_SERVER_ID });
             res.end("ok");
 
+            // Agent gate: same silent-drop semantics as DND — plugin is
+            // fire-and-forget, so 200 ACK satisfies it; skipping the bridge
+            // reply lets the opencode TUI fall back to its built-in prompt.
+            if (typeof ctx.isAgentEnabled === "function" && !ctx.isAgentEnabled("opencode")) {
+              ctx.permLog("opencode disabled → silent drop, TUI fallback");
+              return;
+            }
+
             const toolName = typeof data.tool_name === "string" && data.tool_name ? data.tool_name : "unknown";
             const rawInput = data.tool_input && typeof data.tool_input === "object" ? data.tool_input : {};
             const toolInput = truncateDeep(rawInput);
@@ -322,6 +339,7 @@ function startHttpServer() {
               toolInput,
               resolvedSuggestion: null,
               createdAt: Date.now(),
+              agentId: "opencode",
               isOpencode: true,
               opencodeRequestId: requestId,
               opencodeBridgeUrl: bridgeUrl,
@@ -361,10 +379,27 @@ function startHttpServer() {
             return;
           }
 
+          // Agent gate: mirror DND — destroy the connection so CC (or
+          // codebuddy, since they share this path) falls back to its built-in
+          // chat prompt. Any non-opencode agent_id passing through here
+          // gets the same treatment.
+          const ccAgentId = typeof data.agent_id === "string" && data.agent_id ? data.agent_id : "claude-code";
+          if (typeof ctx.isAgentEnabled === "function" && !ctx.isAgentEnabled(ccAgentId)) {
+            ctx.permLog(`${ccAgentId} disabled → destroy connection, chat fallback`);
+            res.destroy();
+            return;
+          }
+
           const toolName = typeof data.tool_name === "string" ? data.tool_name : "Unknown";
           const rawInput = data.tool_input && typeof data.tool_input === "object" ? data.tool_input : {};
           const toolInput = truncateDeep(rawInput);
           const sessionId = data.session_id || "default";
+          // Tag the permEntry with the source agent. Clawd's HTTP permission
+          // path is shared between Claude Code and codebuddy (both set
+          // capabilities.permissionApproval=true and POST here). Stamping lets
+          // dismissPermissionsByAgent() clean up the right ones when the user
+          // disables an agent mid-flight.
+          const permAgentId = typeof data.agent_id === "string" && data.agent_id ? data.agent_id : "claude-code";
           const rawSuggestions = Array.isArray(data.permission_suggestions) ? data.permission_suggestions : [];
           // Merge multiple addRules suggestions (e.g. piped commands) into one button
           const addRulesItems = rawSuggestions.filter(s => s && s.type === "addRules");
@@ -401,7 +436,7 @@ function startHttpServer() {
             ctx.permLog(`ELICITATION: tool=${toolName} session=${sessionId}`);
             ctx.updateSession(sessionId, "notification", "Elicitation", null, "", null, null, null, "claude-code");
 
-            const permEntry = { res, abortHandler: null, suggestions: [], sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now(), isElicitation: true };
+            const permEntry = { res, abortHandler: null, suggestions: [], sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now(), isElicitation: true, agentId: permAgentId };
             const abortHandler = () => {
               if (res.writableFinished) return;
               ctx.permLog("abortHandler fired (elicitation)");
@@ -414,7 +449,7 @@ function startHttpServer() {
             return;
           }
 
-          const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now() };
+          const permEntry = { res, abortHandler: null, suggestions, sessionId, bubble: null, hideTimer: null, toolName, toolInput, resolvedSuggestion: null, createdAt: Date.now(), agentId: permAgentId };
           const abortHandler = () => {
             if (res.writableFinished) return;
             ctx.permLog("abortHandler fired");

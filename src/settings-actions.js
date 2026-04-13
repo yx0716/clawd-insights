@@ -254,11 +254,73 @@ function notImplemented(name) {
   };
 }
 
+// setAgentEnabled — atomic single-agent toggle. Payload `{ agentId, enabled }`.
+//
+// We use a command (not an updateRegistry entry) because the primitive here is
+// "one agent flipped" — not "full agents object replaced". Side effects need
+// the single agentId to:
+//   - start/stop the matching log-poll monitor (codex, gemini-cli)
+//   - clear pre-existing sessions of that agent from state.js
+//   - dismiss pre-existing permission bubbles of that agent from permission.js
+//
+// Wrapping the whole agents object through updateRegistry would force the
+// effect to diff old vs. new snapshots to figure out which agent actually
+// changed. The command form skips that.
+//
+// All side-effect helpers come in via `deps` so the test suite can inject
+// spies without booting Electron or the real log monitors:
+//
+//   deps.startMonitorForAgent(id)       no-op unless id is a log-poll agent
+//   deps.stopMonitorForAgent(id)        no-op unless id is a log-poll agent
+//   deps.clearSessionsByAgent(id)       from state.js
+//   deps.dismissPermissionsByAgent(id)  from permission.js
+//
+// Returns `{ status, commit }`. The controller applies `commit` atomically
+// after the effects succeed.
+function setAgentEnabled(payload, deps) {
+  if (!payload || typeof payload !== "object") {
+    return { status: "error", message: "setAgentEnabled: payload must be an object" };
+  }
+  const { agentId, enabled } = payload;
+  if (typeof agentId !== "string" || !agentId) {
+    return { status: "error", message: "setAgentEnabled: agentId must be a non-empty string" };
+  }
+  if (typeof enabled !== "boolean") {
+    return { status: "error", message: "setAgentEnabled: enabled must be a boolean" };
+  }
+  const snapshot = deps && deps.snapshot;
+  const currentAgents = (snapshot && snapshot.agents) || {};
+  const currentEntry = currentAgents[agentId];
+  const currentEnabled = currentEntry ? currentEntry.enabled !== false : true;
+  if (currentEnabled === enabled) {
+    return { status: "ok", noop: true };
+  }
+
+  try {
+    if (!enabled) {
+      if (typeof deps.stopMonitorForAgent === "function") deps.stopMonitorForAgent(agentId);
+      if (typeof deps.clearSessionsByAgent === "function") deps.clearSessionsByAgent(agentId);
+      if (typeof deps.dismissPermissionsByAgent === "function") deps.dismissPermissionsByAgent(agentId);
+    } else {
+      if (typeof deps.startMonitorForAgent === "function") deps.startMonitorForAgent(agentId);
+    }
+  } catch (err) {
+    return {
+      status: "error",
+      message: `setAgentEnabled side effect threw: ${err && err.message}`,
+    };
+  }
+
+  const nextAgents = { ...currentAgents, [agentId]: { enabled } };
+  return { status: "ok", commit: { agents: nextAgents } };
+}
+
 const commandRegistry = {
   removeTheme: notImplemented("removeTheme"),
   installHooks: notImplemented("installHooks"),
   uninstallHooks: notImplemented("uninstallHooks"),
   registerShortcut: notImplemented("registerShortcut"),
+  setAgentEnabled,
 };
 
 module.exports = {

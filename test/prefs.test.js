@@ -41,7 +41,7 @@ describe("prefs.getDefaults", () => {
 
   it("seeds all known agents as enabled", () => {
     const d = prefs.getDefaults();
-    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "opencode"]) {
+    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "opencode"]) {
       assert.strictEqual(d.agents[id].enabled, true, `${id} should default enabled`);
     }
   });

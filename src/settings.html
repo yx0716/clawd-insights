@@ -234,6 +234,32 @@ html, body {
 .switch.on::after { left: 16px; }
 .switch.pending { opacity: 0.5; cursor: wait; }
 
+/* ── Agent badges ── */
+.agent-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.agent-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+@media (prefers-color-scheme: dark) {
+  .agent-badge { background: rgba(255, 255, 255, 0.08); }
+}
+.agent-badge.accent {
+  background: rgba(217, 119, 87, 0.12);
+  color: var(--accent);
+}
+
 /* ── Select (segmented) ── */
 .segmented {
   display: inline-flex;

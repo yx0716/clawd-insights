@@ -88,6 +88,27 @@ function _readSystemOpenAtLogin() {
   ).openAtLogin;
 }
 
+// Forward declarations — these are defined later in the file but the
+// controller's injectedDeps need to resolve them lazily. Using a function
+// wrapper lets us bind them after module scope finishes without a second
+// `setDeps()` API on the controller.
+function _deferredStartMonitorForAgent(id) {
+  return startMonitorForAgent(id);
+}
+function _deferredStopMonitorForAgent(id) {
+  return stopMonitorForAgent(id);
+}
+function _deferredClearSessionsByAgent(id) {
+  return _state && typeof _state.clearSessionsByAgent === "function"
+    ? _state.clearSessionsByAgent(id)
+    : 0;
+}
+function _deferredDismissPermissionsByAgent(id) {
+  return _perm && typeof _perm.dismissPermissionsByAgent === "function"
+    ? _perm.dismissPermissionsByAgent(id)
+    : 0;
+}
+
 const _settingsController = createSettingsController({
   prefsPath: PREFS_PATH,
   loadResult: _initialPrefsLoad,
@@ -95,6 +116,10 @@ const _settingsController = createSettingsController({
     installAutoStart: _installAutoStartHook,
     uninstallAutoStart: _uninstallAutoStartHook,
     setOpenAtLogin: _writeSystemOpenAtLogin,
+    startMonitorForAgent: _deferredStartMonitorForAgent,
+    stopMonitorForAgent: _deferredStopMonitorForAgent,
+    clearSessionsByAgent: _deferredClearSessionsByAgent,
+    dismissPermissionsByAgent: _deferredDismissPermissionsByAgent,
   },
 });
 
@@ -152,6 +177,21 @@ function flushRuntimeStateToPrefs() {
 
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
 let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
+
+// Agent-gate monitor dispatcher. Called by the `setAgentEnabled` command when
+// the user flips an agent in the settings panel. Monitors are idempotent —
+// calling start() twice or stop() on a never-started monitor is safe.
+// Non-log-poll agents (hook-based: CC, copilot, cursor, codebuddy, kiro,
+// opencode) have no module-level monitor to manage; their "off" state is
+// enforced at the HTTP route layer instead, so these are no-ops here.
+function startMonitorForAgent(agentId) {
+  if (agentId === "codex" && _codexMonitor) _codexMonitor.start();
+  else if (agentId === "gemini-cli" && _geminiMonitor) _geminiMonitor.start();
+}
+function stopMonitorForAgent(agentId) {
+  if (agentId === "codex" && _codexMonitor) _codexMonitor.stop();
+  else if (agentId === "gemini-cli" && _geminiMonitor) _geminiMonitor.stop();
+}
 
 // ── Theme loader ──
 const themeLoader = require("./theme-loader");
@@ -478,6 +518,17 @@ const _stateCtx = {
   miniPeekOut: () => miniPeekOut(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
+  hasAnyEnabledAgent: () => {
+    const snap = _settingsController.getSnapshot();
+    const agents = snap && snap.agents;
+    if (!agents || typeof agents !== "object") return true;
+    for (const id of Object.keys(agents)) {
+      const entry = agents[id];
+      if (!entry || typeof entry !== "object") { return true; }
+      if (entry.enabled !== false) return true;
+    }
+    return false;
+  },
 };
 const _state = require("./state")(_stateCtx);
 const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride,
@@ -543,6 +594,7 @@ const _focus = require("./focus")({ _allowSetForeground });
 const { initFocusHelper, killFocusHelper, focusTerminalWindow, clearMacFocusCooldownTimer } = _focus;
 
 // ── HTTP server — delegated to src/server.js ──
+const { isAgentEnabled: _isAgentEnabled } = require("./agent-gate");
 const _serverCtx = {
   get autoStartWithClaude() { return autoStartWithClaude; },
   get doNotDisturb() { return doNotDisturb; },
@@ -551,6 +603,7 @@ const _serverCtx = {
   get PASSTHROUGH_TOOLS() { return PASSTHROUGH_TOOLS; },
   get STATE_SVGS() { return _state.STATE_SVGS; },
   get sessions() { return sessions; },
+  isAgentEnabled: (agentId) => _isAgentEnabled(_settingsController.getSnapshot(), agentId),
   setState,
   updateSession,
   resolvePermissionEntry,
@@ -815,6 +868,26 @@ ipcMain.handle("settings:command", async (_event, payload) => {
     return { status: "error", message: "settings:command payload must be { action, payload }" };
   }
   return _settingsController.applyCommand(payload.action, payload.payload);
+});
+
+// Static metadata for the Agents tab: name, eventSource, capabilities.
+// The renderer uses this (alongside the agents snapshot field) to render one
+// row per agent. Static because it comes from agents/registry.js — no runtime
+// state involved — so the renderer can cache the result and never has to
+// re-fetch.
+ipcMain.handle("settings:list-agents", () => {
+  try {
+    const { getAllAgents } = require("../agents/registry");
+    return getAllAgents().map((a) => ({
+      id: a.id,
+      name: a.name,
+      eventSource: a.eventSource,
+      capabilities: a.capabilities || {},
+    }));
+  } catch (err) {
+    console.warn("Clawd: settings:list-agents failed:", err && err.message);
+    return [];
+  }
 });
 
 // ── Auto-updater — delegated to src/updater.js ──
@@ -1423,7 +1496,11 @@ if (!gotTheLock) {
     // Register global shortcut for toggling pet visibility
     registerToggleShortcut();
 
-    // Start Codex CLI JSONL log monitor
+    // Construct log monitors. We always instantiate them so toggling the
+    // agent on/off later can call start()/stop() without paying the require
+    // cost at click time. Whether we call .start() right now depends on the
+    // agent-gate snapshot — a user who disabled Codex at last shutdown
+    // shouldn't see its file watcher spin up on the next launch.
     try {
       const CodexLogMonitor = require("../agents/codex-log-monitor");
       const codexAgent = require("../agents/codex");
@@ -1436,23 +1513,25 @@ if (!gotTheLock) {
           });
           return;
         }
-        // Non-permission event — clear any lingering Codex notify bubbles
         clearCodexNotifyBubbles(sid);
         updateSession(sid, state, event, null, extra.cwd, null, null, null, "codex");
       });
-      _codexMonitor.start();
+      if (_isAgentEnabled(_settingsController.getSnapshot(), "codex")) {
+        _codexMonitor.start();
+      }
     } catch (err) {
       console.warn("Clawd: Codex log monitor not started:", err.message);
     }
 
-    // Start Gemini CLI session JSON monitor
     try {
       const GeminiLogMonitor = require("../agents/gemini-log-monitor");
       const geminiAgent = require("../agents/gemini-cli");
       _geminiMonitor = new GeminiLogMonitor(geminiAgent, (sid, state, event, extra) => {
         updateSession(sid, state, event, null, extra.cwd, null, null, null, "gemini-cli");
       });
-      _geminiMonitor.start();
+      if (_isAgentEnabled(_settingsController.getSnapshot(), "gemini-cli")) {
+        _geminiMonitor.start();
+      }
     } catch (err) {
       console.warn("Clawd: Gemini log monitor not started:", err.message);
     }

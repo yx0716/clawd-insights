@@ -28,6 +28,13 @@ const STRINGS = {
     sectionAlerts: "Alerts",
     sectionStartup: "Startup",
     sectionBubbles: "Bubbles",
+    agentsTitle: "Agents",
+    agentsSubtitle: "Turn tracking on or off per agent. Disabled agents stop log monitors and drop hook events at the HTTP boundary — they won't drive the pet, show permission bubbles, or keep sessions.",
+    agentsEmpty: "No agents registered.",
+    eventSourceHook: "Hook",
+    eventSourceLogPoll: "Log poll",
+    eventSourcePlugin: "Plugin",
+    badgePermissionBubble: "Permission bubble",
     rowLanguage: "Language",
     rowLanguageDesc: "Interface language for menus and bubbles.",
     rowSound: "Sound effects",
@@ -61,6 +68,13 @@ const STRINGS = {
     sectionAlerts: "提示",
     sectionStartup: "启动",
     sectionBubbles: "气泡",
+    agentsTitle: "Agent 管理",
+    agentsSubtitle: "按 agent 类型开关追踪。关闭后会停掉日志监视器、在 HTTP 入口丢弃 hook 事件——不会再驱动桌宠、不弹权限气泡、不记会话。",
+    agentsEmpty: "没有已注册的 agent。",
+    eventSourceHook: "Hook",
+    eventSourceLogPoll: "日志轮询",
+    eventSourcePlugin: "插件",
+    badgePermissionBubble: "权限气泡",
     rowLanguage: "语言",
     rowLanguageDesc: "菜单和气泡的界面语言。",
     rowSound: "音效",
@@ -85,6 +99,10 @@ const STRINGS = {
 
 let snapshot = null;
 let activeTab = "general";
+// Static per-agent metadata from agents/registry.js via settings:list-agents.
+// Fetched once at boot (since it can't change while the app is running).
+// Null until hydrated — renderAgentsTab() renders an empty placeholder.
+let agentMetadata = null;
 
 function t(key) {
   const lang = (snapshot && snapshot.lang) || "en";
@@ -112,7 +130,7 @@ function showToast(message, { error = false, ttl = 3500 } = {}) {
 // ── Sidebar ──
 const SIDEBAR_TABS = [
   { id: "general", icon: "\u2699", labelKey: "sidebarGeneral", available: true },
-  { id: "agents", icon: "\u26A1", labelKey: "sidebarAgents", available: false },
+  { id: "agents", icon: "\u26A1", labelKey: "sidebarAgents", available: true },
   { id: "theme", icon: "\u{1F3A8}", labelKey: "sidebarTheme", available: false },
   { id: "animMap", icon: "\u{1F3AC}", labelKey: "sidebarAnimMap", available: false },
   { id: "shortcuts", icon: "\u2328", labelKey: "sidebarShortcuts", available: false },
@@ -148,9 +166,94 @@ function renderContent() {
   content.innerHTML = "";
   if (activeTab === "general") {
     renderGeneralTab(content);
+  } else if (activeTab === "agents") {
+    renderAgentsTab(content);
   } else {
     renderPlaceholder(content);
   }
+}
+
+function renderAgentsTab(parent) {
+  const h1 = document.createElement("h1");
+  h1.textContent = t("agentsTitle");
+  parent.appendChild(h1);
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "subtitle";
+  subtitle.textContent = t("agentsSubtitle");
+  parent.appendChild(subtitle);
+
+  if (!agentMetadata || agentMetadata.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "placeholder";
+    empty.innerHTML = `<div class="placeholder-desc">${escapeHtml(t("agentsEmpty"))}</div>`;
+    parent.appendChild(empty);
+    return;
+  }
+
+  const rows = agentMetadata.map((agent) => buildAgentRow(agent));
+  parent.appendChild(buildSection("", rows));
+}
+
+function buildAgentRow(agent) {
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const text = document.createElement("div");
+  text.className = "row-text";
+  const label = document.createElement("span");
+  label.className = "row-label";
+  label.textContent = agent.name || agent.id;
+  text.appendChild(label);
+  const badges = document.createElement("span");
+  badges.className = "row-desc agent-badges";
+  const esKey = agent.eventSource === "log-poll" ? "eventSourceLogPoll"
+    : agent.eventSource === "plugin-event" ? "eventSourcePlugin"
+    : "eventSourceHook";
+  const esBadge = document.createElement("span");
+  esBadge.className = "agent-badge";
+  esBadge.textContent = t(esKey);
+  badges.appendChild(esBadge);
+  if (agent.capabilities && agent.capabilities.permissionApproval) {
+    const permBadge = document.createElement("span");
+    permBadge.className = "agent-badge accent";
+    permBadge.textContent = t("badgePermissionBubble");
+    badges.appendChild(permBadge);
+  }
+  text.appendChild(badges);
+  row.appendChild(text);
+
+  const ctrl = document.createElement("div");
+  ctrl.className = "row-control";
+  const sw = document.createElement("div");
+  sw.className = "switch";
+  sw.setAttribute("role", "switch");
+  const currentEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
+  const enabled = currentEntry ? currentEntry.enabled !== false : true;
+  if (enabled) sw.classList.add("on");
+  sw.addEventListener("click", () => {
+    if (sw.classList.contains("pending")) return;
+    const curEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
+    const curEnabled = curEntry ? curEntry.enabled !== false : true;
+    const next = !curEnabled;
+    sw.classList.add("pending");
+    window.settingsAPI
+      .command("setAgentEnabled", { agentId: agent.id, enabled: next })
+      .then((result) => {
+        sw.classList.remove("pending");
+        if (!result || result.status !== "ok") {
+          const msg = (result && result.message) || "unknown error";
+          showToast(t("toastSaveFailed") + msg, { error: true });
+        }
+      })
+      .catch((err) => {
+        sw.classList.remove("pending");
+        showToast(t("toastSaveFailed") + (err && err.message), { error: true });
+      });
+  });
+  ctrl.appendChild(sw);
+  row.appendChild(ctrl);
+  return row;
 }
 
 function renderPlaceholder(parent) {
@@ -222,10 +325,12 @@ function renderGeneralTab(parent) {
 function buildSection(title, rows) {
   const section = document.createElement("section");
   section.className = "section";
-  const heading = document.createElement("h2");
-  heading.className = "section-title";
-  heading.textContent = title;
-  section.appendChild(heading);
+  if (title) {
+    const heading = document.createElement("h2");
+    heading.className = "section-title";
+    heading.textContent = title;
+    section.appendChild(heading);
+  }
   const wrap = document.createElement("div");
   wrap.className = "section-rows";
   for (const row of rows) wrap.appendChild(row);
@@ -330,3 +435,18 @@ window.settingsAPI.getSnapshot().then((snap) => {
   renderSidebar();
   renderContent();
 });
+
+// Fetch static agent metadata once at boot. It's a pure lookup from
+// agents/registry.js — no runtime state — so there's no refresh loop.
+if (typeof window.settingsAPI.listAgents === "function") {
+  window.settingsAPI
+    .listAgents()
+    .then((list) => {
+      agentMetadata = Array.isArray(list) ? list : [];
+      if (activeTab === "agents") renderContent();
+    })
+    .catch((err) => {
+      console.warn("settings: listAgents failed", err);
+      agentMetadata = [];
+    });
+}
