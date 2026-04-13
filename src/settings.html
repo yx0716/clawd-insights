@@ -183,6 +183,18 @@ html, body {
   .section-rows { background: #1a1a1d; }
 }
 
+/* Per-agent sub-toggle (e.g. "Show permission bubbles"), rendered under
+   the master agent row. Indented to show the parent/child relationship;
+   smaller label to de-emphasize against the master switch. */
+.row-sub {
+  padding-left: 36px;
+}
+.row-sub .row-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
 .row-text {
   flex: 1;
   min-width: 0;

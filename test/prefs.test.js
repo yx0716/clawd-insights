@@ -45,6 +45,17 @@ describe("prefs.getDefaults", () => {
       assert.strictEqual(d.agents[id].enabled, true, `${id} should default enabled`);
     }
   });
+
+  it("seeds all known agents with permissionsEnabled=true", () => {
+    const d = prefs.getDefaults();
+    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "opencode"]) {
+      assert.strictEqual(
+        d.agents[id].permissionsEnabled,
+        true,
+        `${id} should default permissionsEnabled`
+      );
+    }
+  });
 });
 
 describe("prefs.validate", () => {
@@ -97,6 +108,41 @@ describe("prefs.validate", () => {
     // bogus + bad codex use defaults
     assert.strictEqual(v.agents.codex.enabled, true);
     assert.strictEqual(v.agents["bogus-entry"], undefined);
+  });
+
+  it("normalizes agents: preserves permissionsEnabled flag", () => {
+    const v = prefs.validate({
+      agents: {
+        "claude-code": { enabled: true, permissionsEnabled: false },
+      },
+    });
+    assert.strictEqual(v.agents["claude-code"].enabled, true);
+    assert.strictEqual(v.agents["claude-code"].permissionsEnabled, false);
+  });
+
+  it("normalizes agents: fills missing permissionsEnabled from defaults", () => {
+    // Pre-subgate prefs files only have { enabled: bool }. Normalization
+    // must NOT strip them, but must also NOT invent permissionsEnabled=false
+    // — defaults are true, and the gate reads "missing flag" as true anyway.
+    const v = prefs.validate({
+      agents: {
+        "claude-code": { enabled: false },
+      },
+    });
+    assert.strictEqual(v.agents["claude-code"].enabled, false);
+    assert.strictEqual(v.agents["claude-code"].permissionsEnabled, true);
+  });
+
+  it("normalizes agents: drops non-boolean permissionsEnabled, keeps valid enabled", () => {
+    const v = prefs.validate({
+      agents: {
+        "claude-code": { enabled: false, permissionsEnabled: "nope" },
+      },
+    });
+    assert.strictEqual(v.agents["claude-code"].enabled, false);
+    // Bad flag falls back to the default for that agent (true), not dropped
+    // altogether — the entry has a valid flag so it survives.
+    assert.strictEqual(v.agents["claude-code"].permissionsEnabled, true);
   });
 
   it("returns defaults for null/non-object input", () => {

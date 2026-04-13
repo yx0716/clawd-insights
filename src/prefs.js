@@ -68,14 +68,14 @@ const SCHEMA = {
   agents: {
     type: "object",
     defaultFactory: () => ({
-      "claude-code": { enabled: true },
-      "codex": { enabled: true },
-      "copilot-cli": { enabled: true },
-      "cursor-agent": { enabled: true },
-      "gemini-cli": { enabled: true },
-      "codebuddy": { enabled: true },
-      "kiro-cli": { enabled: true },
-      "opencode": { enabled: true },
+      "claude-code": { enabled: true, permissionsEnabled: true },
+      "codex": { enabled: true, permissionsEnabled: true },
+      "copilot-cli": { enabled: true, permissionsEnabled: true },
+      "cursor-agent": { enabled: true, permissionsEnabled: true },
+      "gemini-cli": { enabled: true, permissionsEnabled: true },
+      "codebuddy": { enabled: true, permissionsEnabled: true },
+      "kiro-cli": { enabled: true, permissionsEnabled: true },
+      "opencode": { enabled: true, permissionsEnabled: true },
     }),
     normalize: normalizeAgents,
   },
@@ -163,14 +163,35 @@ function migrate(raw) {
   return out;
 }
 
+// Allowed boolean flags on each agents[id] entry. Keeping a whitelist means
+// a typo in the prefs file (or a field we dropped in a later version) can't
+// sneak through into runtime — but it also means that adding a new flag
+// requires touching this list. Both existing flags default to true, so a
+// missing entry reads as "enabled + permissionsEnabled" via the gates.
+const AGENT_FLAG_KEYS = ["enabled", "permissionsEnabled"];
+
 function normalizeAgents(value, defaultsValue) {
   if (!value || typeof value !== "object") return defaultsValue;
   const out = { ...defaultsValue };
   for (const id of Object.keys(value)) {
     const entry = value[id];
-    if (entry && typeof entry === "object" && typeof entry.enabled === "boolean") {
-      out[id] = { enabled: entry.enabled };
+    if (!entry || typeof entry !== "object") continue;
+    // Start from the default entry for this id (so an unknown id still gets
+    // defaults on unspecified flags), fall back to a permissive default if
+    // the id is new to the registry.
+    const base = (defaultsValue && defaultsValue[id]) || { enabled: true, permissionsEnabled: true };
+    const merged = { ...base };
+    let touched = false;
+    for (const flag of AGENT_FLAG_KEYS) {
+      if (typeof entry[flag] === "boolean") {
+        merged[flag] = entry[flag];
+        touched = true;
+      }
     }
+    // Preserve legacy behavior: an entry with no valid boolean fields was
+    // previously dropped. Keep that — it catches garbage like `{ agents:
+    // { codex: "nope" } }` which the existing tests assert against.
+    if (touched) out[id] = merged;
   }
   return out;
 }

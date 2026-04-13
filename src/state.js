@@ -488,8 +488,8 @@ function cleanStaleSessions() {
 }
 
 // Remove every session whose agentId matches, then recompute the display
-// state. Used by the agent-gate (setAgentEnabled(false) command) to clean
-// up runtime state after a user disables an agent — without this, a session
+// state. Used by the agent-gate (setAgentFlag "enabled"=false command) to
+// clean up runtime state after a user disables an agent — without this, a session
 // mid-transition would keep driving the display even though the agent is
 // supposed to be off.
 //

@@ -3,7 +3,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
-const { isAgentEnabled } = require("../src/agent-gate");
+const { isAgentEnabled, isAgentPermissionsEnabled } = require("../src/agent-gate");
 const { commandRegistry } = require("../src/settings-actions");
 const prefs = require("../src/prefs");
 
@@ -49,7 +49,81 @@ describe("isAgentEnabled", () => {
   });
 });
 
-describe("setAgentEnabled command", () => {
+describe("isAgentPermissionsEnabled", () => {
+  it("returns true when snapshot is missing", () => {
+    assert.strictEqual(isAgentPermissionsEnabled(null, "claude-code"), true);
+    assert.strictEqual(isAgentPermissionsEnabled(undefined, "claude-code"), true);
+    assert.strictEqual(isAgentPermissionsEnabled({}, "claude-code"), true);
+  });
+
+  it("returns true when agentId is missing", () => {
+    const snap = prefs.getDefaults();
+    assert.strictEqual(isAgentPermissionsEnabled(snap, null), true);
+    assert.strictEqual(isAgentPermissionsEnabled(snap, ""), true);
+  });
+
+  it("returns true when agents field is absent (legacy upgrade)", () => {
+    assert.strictEqual(isAgentPermissionsEnabled({ lang: "en" }, "claude-code"), true);
+  });
+
+  it("returns true when the agent id is unknown to the registry", () => {
+    const snap = prefs.getDefaults();
+    assert.strictEqual(isAgentPermissionsEnabled(snap, "future-agent-id"), true);
+  });
+
+  it("returns true when permissionsEnabled flag is absent (pre-subgate prefs file)", () => {
+    // A prefs file written before the sub-gate existed has {enabled: true}
+    // only. The gate must not flip those users to "bubbles off" on upgrade.
+    assert.strictEqual(
+      isAgentPermissionsEnabled({ agents: { "claude-code": { enabled: true } } }, "claude-code"),
+      true
+    );
+  });
+
+  it("returns false only when permissionsEnabled === false", () => {
+    assert.strictEqual(
+      isAgentPermissionsEnabled(
+        { agents: { "claude-code": { enabled: true, permissionsEnabled: false } } },
+        "claude-code"
+      ),
+      false
+    );
+  });
+
+  it("is independent of the master enabled flag (does NOT short-circuit)", () => {
+    // A disabled agent with the sub-flag still on reads as permissions-on —
+    // callers are expected to check the master gate first. Keeping the gates
+    // independent lets the UI ask "what's the sub switch state" truthfully
+    // even while master is off.
+    assert.strictEqual(
+      isAgentPermissionsEnabled(
+        { agents: { "claude-code": { enabled: false, permissionsEnabled: true } } },
+        "claude-code"
+      ),
+      true
+    );
+    assert.strictEqual(
+      isAgentPermissionsEnabled(
+        { agents: { "claude-code": { enabled: false, permissionsEnabled: false } } },
+        "claude-code"
+      ),
+      false
+    );
+  });
+
+  it("treats malformed agent entries as permissions-enabled", () => {
+    assert.strictEqual(
+      isAgentPermissionsEnabled({ agents: { "claude-code": "nope" } }, "claude-code"),
+      true
+    );
+    assert.strictEqual(
+      isAgentPermissionsEnabled({ agents: { "claude-code": null } }, "claude-code"),
+      true
+    );
+  });
+});
+
+describe("setAgentFlag command", () => {
   function makeDeps(overrides = {}) {
     const calls = {
       startMonitorForAgent: [],
@@ -72,20 +146,33 @@ describe("setAgentEnabled command", () => {
 
   it("rejects missing agentId", () => {
     const { deps } = makeDeps();
-    const r = commandRegistry.setAgentEnabled({ enabled: false }, deps);
+    const r = commandRegistry.setAgentFlag({ flag: "enabled", value: false }, deps);
     assert.strictEqual(r.status, "error");
   });
 
-  it("rejects non-boolean enabled", () => {
+  it("rejects unknown flag name", () => {
     const { deps } = makeDeps();
-    const r = commandRegistry.setAgentEnabled({ agentId: "codex", enabled: "off" }, deps);
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "wombat", value: false },
+      deps
+    );
+    assert.strictEqual(r.status, "error");
+    assert.ok(r.message.includes("flag"));
+  });
+
+  it("rejects non-boolean value", () => {
+    const { deps } = makeDeps();
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "enabled", value: "off" },
+      deps
+    );
     assert.strictEqual(r.status, "error");
   });
 
   it("is noop when value already matches current state", () => {
     const { deps, calls } = makeDeps();
-    const r = commandRegistry.setAgentEnabled(
-      { agentId: "codex", enabled: true },
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "enabled", value: true },
       deps
     );
     assert.strictEqual(r.status, "ok");
@@ -94,10 +181,10 @@ describe("setAgentEnabled command", () => {
     assert.strictEqual(calls.startMonitorForAgent.length, 0);
   });
 
-  it("disabling runs stop + clear sessions + dismiss permissions (in that order)", () => {
+  it("disabling master flag runs stop + clear sessions + dismiss permissions", () => {
     const { deps, calls } = makeDeps();
-    const r = commandRegistry.setAgentEnabled(
-      { agentId: "codex", enabled: false },
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "enabled", value: false },
       deps
     );
     assert.strictEqual(r.status, "ok");
@@ -105,17 +192,16 @@ describe("setAgentEnabled command", () => {
     assert.deepStrictEqual(calls.clearSessionsByAgent, ["codex"]);
     assert.deepStrictEqual(calls.dismissPermissionsByAgent, ["codex"]);
     assert.strictEqual(calls.startMonitorForAgent.length, 0);
-    // Commit must flip just this agent's enabled flag.
     assert.strictEqual(r.commit.agents.codex.enabled, false);
     assert.strictEqual(r.commit.agents["claude-code"].enabled, true);
   });
 
-  it("enabling an already-disabled agent starts the monitor", () => {
+  it("enabling a previously-disabled agent starts the monitor", () => {
     const seeded = prefs.getDefaults();
-    seeded.agents.codex = { enabled: false };
+    seeded.agents.codex = { enabled: false, permissionsEnabled: true };
     const { deps, calls } = makeDeps({ snapshot: seeded });
-    const r = commandRegistry.setAgentEnabled(
-      { agentId: "codex", enabled: true },
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "enabled", value: true },
       deps
     );
     assert.strictEqual(r.status, "ok");
@@ -124,14 +210,69 @@ describe("setAgentEnabled command", () => {
     assert.strictEqual(r.commit.agents.codex.enabled, true);
   });
 
+  it("toggling master flag preserves permissionsEnabled (no silent wipe)", () => {
+    // Regression guard. Pre-refactor setAgentEnabled wrote
+    // `{ [agentId]: { enabled } }`, erasing sibling flags on every main-
+    // switch flip. setAgentFlag must spread the existing entry.
+    const seeded = prefs.getDefaults();
+    seeded.agents["claude-code"] = { enabled: true, permissionsEnabled: false };
+    const { deps } = makeDeps({ snapshot: seeded });
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "claude-code", flag: "enabled", value: false },
+      deps
+    );
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(r.commit.agents["claude-code"].enabled, false);
+    assert.strictEqual(
+      r.commit.agents["claude-code"].permissionsEnabled,
+      false,
+      "permissionsEnabled flag must survive a master-switch flip"
+    );
+  });
+
+  it("disabling permissionsEnabled only dismisses bubbles — no monitor/session churn", () => {
+    const { deps, calls } = makeDeps();
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "claude-code", flag: "permissionsEnabled", value: false },
+      deps
+    );
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(calls.dismissPermissionsByAgent, ["claude-code"]);
+    assert.strictEqual(calls.stopMonitorForAgent.length, 0);
+    assert.strictEqual(calls.clearSessionsByAgent.length, 0);
+    assert.strictEqual(calls.startMonitorForAgent.length, 0);
+    assert.strictEqual(r.commit.agents["claude-code"].permissionsEnabled, false);
+    assert.strictEqual(
+      r.commit.agents["claude-code"].enabled,
+      true,
+      "master enabled flag must be preserved when flipping the sub flag"
+    );
+  });
+
+  it("enabling permissionsEnabled is a pure data flip — no side effects", () => {
+    const seeded = prefs.getDefaults();
+    seeded.agents["claude-code"] = { enabled: true, permissionsEnabled: false };
+    const { deps, calls } = makeDeps({ snapshot: seeded });
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "claude-code", flag: "permissionsEnabled", value: true },
+      deps
+    );
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(calls.dismissPermissionsByAgent.length, 0);
+    assert.strictEqual(calls.stopMonitorForAgent.length, 0);
+    assert.strictEqual(calls.clearSessionsByAgent.length, 0);
+    assert.strictEqual(calls.startMonitorForAgent.length, 0);
+    assert.strictEqual(r.commit.agents["claude-code"].permissionsEnabled, true);
+  });
+
   it("propagates an error if a side effect throws, without committing", () => {
     const { deps } = makeDeps({
       stopMonitorForAgent: () => {
         throw new Error("boom");
       },
     });
-    const r = commandRegistry.setAgentEnabled(
-      { agentId: "codex", enabled: false },
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "codex", flag: "enabled", value: false },
       deps
     );
     assert.strictEqual(r.status, "error");
@@ -145,8 +286,8 @@ describe("setAgentEnabled command", () => {
     const { deps } = makeDeps();
     delete deps.startMonitorForAgent;
     delete deps.stopMonitorForAgent;
-    const r = commandRegistry.setAgentEnabled(
-      { agentId: "copilot-cli", enabled: false },
+    const r = commandRegistry.setAgentFlag(
+      { agentId: "copilot-cli", flag: "enabled", value: false },
       deps
     );
     assert.strictEqual(r.status, "ok");

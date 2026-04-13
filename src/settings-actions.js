@@ -254,18 +254,29 @@ function notImplemented(name) {
   };
 }
 
-// setAgentEnabled — atomic single-agent toggle. Payload `{ agentId, enabled }`.
+// setAgentFlag — atomic single-agent single-flag toggle.
+// Payload `{ agentId, flag, value }` where flag ∈ AGENT_FLAGS.
 //
-// We use a command (not an updateRegistry entry) because the primitive here is
-// "one agent flipped" — not "full agents object replaced". Side effects need
-// the single agentId to:
-//   - start/stop the matching log-poll monitor (codex, gemini-cli)
-//   - clear pre-existing sessions of that agent from state.js
-//   - dismiss pre-existing permission bubbles of that agent from permission.js
+// Flags:
+//   enabled             — master gate: event stream on/off for this agent
+//   permissionsEnabled  — sub gate: permission-bubble UI on/off (event
+//                         stream still flows). Only meaningful for agents
+//                         whose capabilities.permissionApproval is true.
 //
-// Wrapping the whole agents object through updateRegistry would force the
-// effect to diff old vs. new snapshots to figure out which agent actually
-// changed. The command form skips that.
+// A single setAgentFlag command (instead of separate setAgentEnabled +
+// setAgentPermissionsEnabled) matters because the controller serializes
+// by command NAME (settings-controller.js:367). Two distinct commands
+// flipping the same agents object would race — the later-resolving one
+// would commit over the earlier, losing one of the toggles. Folding both
+// into one command means rapid user clicks across main + sub switches
+// queue behind the same lockKey.
+//
+// The primitive here is "one agent, one flag flipped" — NOT "full agents
+// object replaced". Side effects need the single agentId to:
+//   - start/stop the matching log-poll monitor (enabled only)
+//   - clear pre-existing sessions of that agent from state.js (enabled only)
+//   - dismiss pre-existing permission bubbles of that agent
+//     (enabled=false OR permissionsEnabled=false)
 //
 // All side-effect helpers come in via `deps` so the test suite can inject
 // spies without booting Electron or the real log monitors:
@@ -277,41 +288,63 @@ function notImplemented(name) {
 //
 // Returns `{ status, commit }`. The controller applies `commit` atomically
 // after the effects succeed.
-const _validateAgentId = requireString("setAgentEnabled.agentId");
-const _validateAgentEnabled = requireBoolean("setAgentEnabled.enabled");
-function setAgentEnabled(payload, deps) {
+const AGENT_FLAGS = ["enabled", "permissionsEnabled"];
+const _validateAgentFlagId = requireString("setAgentFlag.agentId");
+const _validateAgentFlagValue = requireBoolean("setAgentFlag.value");
+function setAgentFlag(payload, deps) {
   if (!payload || typeof payload !== "object") {
-    return { status: "error", message: "setAgentEnabled: payload must be an object" };
+    return { status: "error", message: "setAgentFlag: payload must be an object" };
   }
-  const { agentId, enabled } = payload;
-  const idCheck = _validateAgentId(agentId);
+  const { agentId, flag, value } = payload;
+  const idCheck = _validateAgentFlagId(agentId);
   if (idCheck.status !== "ok") return idCheck;
-  const enabledCheck = _validateAgentEnabled(enabled);
-  if (enabledCheck.status !== "ok") return enabledCheck;
+  if (typeof flag !== "string" || !AGENT_FLAGS.includes(flag)) {
+    return {
+      status: "error",
+      message: `setAgentFlag.flag must be one of: ${AGENT_FLAGS.join(", ")}`,
+    };
+  }
+  const valueCheck = _validateAgentFlagValue(value);
+  if (valueCheck.status !== "ok") return valueCheck;
   const snapshot = deps && deps.snapshot;
   const currentAgents = (snapshot && snapshot.agents) || {};
   const currentEntry = currentAgents[agentId];
-  const currentEnabled = currentEntry ? currentEntry.enabled !== false : true;
-  if (currentEnabled === enabled) {
+  // Missing entry / missing flag → default-true, matching the gate semantics.
+  const currentValue =
+    currentEntry && typeof currentEntry[flag] === "boolean" ? currentEntry[flag] : true;
+  if (currentValue === value) {
     return { status: "ok", noop: true };
   }
 
   try {
-    if (!enabled) {
-      if (typeof deps.stopMonitorForAgent === "function") deps.stopMonitorForAgent(agentId);
-      if (typeof deps.clearSessionsByAgent === "function") deps.clearSessionsByAgent(agentId);
-      if (typeof deps.dismissPermissionsByAgent === "function") deps.dismissPermissionsByAgent(agentId);
-    } else {
-      if (typeof deps.startMonitorForAgent === "function") deps.startMonitorForAgent(agentId);
+    if (flag === "enabled") {
+      if (!value) {
+        if (typeof deps.stopMonitorForAgent === "function") deps.stopMonitorForAgent(agentId);
+        if (typeof deps.clearSessionsByAgent === "function") deps.clearSessionsByAgent(agentId);
+        if (typeof deps.dismissPermissionsByAgent === "function") deps.dismissPermissionsByAgent(agentId);
+      } else {
+        if (typeof deps.startMonitorForAgent === "function") deps.startMonitorForAgent(agentId);
+      }
+    } else if (flag === "permissionsEnabled") {
+      // Sub-gate toggle: monitor/sessions are unaffected — the event stream
+      // keeps flowing. Only dismiss in-flight bubbles on turn-OFF so the
+      // user doesn't see a stale bubble after silencing them.
+      if (!value && typeof deps.dismissPermissionsByAgent === "function") {
+        deps.dismissPermissionsByAgent(agentId);
+      }
     }
   } catch (err) {
     return {
       status: "error",
-      message: `setAgentEnabled side effect threw: ${err && err.message}`,
+      message: `setAgentFlag side effect threw: ${err && err.message}`,
     };
   }
 
-  const nextAgents = { ...currentAgents, [agentId]: { enabled } };
+  // Spread the existing entry so sibling flags aren't wiped. The previous
+  // `{ [agentId]: { enabled } }` shape silently discarded any other flags
+  // every time the main switch flipped.
+  const nextEntry = { ...(currentEntry || {}), [flag]: value };
+  const nextAgents = { ...currentAgents, [agentId]: nextEntry };
   return { status: "ok", commit: { agents: nextAgents } };
 }
 
@@ -320,7 +353,7 @@ const commandRegistry = {
   installHooks: notImplemented("installHooks"),
   uninstallHooks: notImplemented("uninstallHooks"),
   registerShortcut: notImplemented("registerShortcut"),
-  setAgentEnabled,
+  setAgentFlag,
 };
 
 module.exports = {

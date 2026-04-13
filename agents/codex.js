@@ -26,6 +26,14 @@ module.exports = {
   capabilities: {
     httpHook: false,
     permissionApproval: false,
+    // Codex surfaces an informational bubble (exec_approval_request /
+    // apply_patch_approval_request → showCodexNotifyBubble) that travels
+    // through Clawd's /permission machinery but is NOT an approval prompt
+    // — it's a read-only "Got it" notification. The settings panel treats
+    // this flag the same as permissionApproval for the purpose of
+    // rendering the per-agent "Show Clawd bubbles" sub-toggle, so the
+    // user can silence Codex bubbles without misnaming them as approvals.
+    interactiveBubble: true,
     sessionEnd: false, // no SessionEnd event, rely on task_complete + timeout
     subagent: false,
   },

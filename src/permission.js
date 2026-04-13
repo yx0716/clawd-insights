@@ -34,6 +34,19 @@ const RESTORE_FOCUS_DELAY_MS = 300;
 const WIN_TOPMOST_LEVEL = "pop-up-menu";
 const LINUX_WINDOW_TYPE = "toolbar";
 
+// Pure gate for Codex's informational "Got it" bubble. Unlike Claude
+// Code/opencode, Codex doesn't come through /permission, so its per-agent
+// bubble toggle must be checked here at the bubble-creation entry point.
+//
+// Default-on semantics match the other agent-gate helpers: if the runtime
+// ctx predates isAgentPermissionsEnabled, don't silently suppress.
+function shouldSuppressCodexNotifyBubble(ctx) {
+  const codexBubblesEnabled =
+    typeof ctx.isAgentPermissionsEnabled !== "function" ||
+    ctx.isAgentPermissionsEnabled("codex");
+  return !!(ctx.doNotDisturb || ctx.hideBubbles || !codexBubblesEnabled);
+}
+
 // Pure layout calculator for the permission bubble stack. Extracted out of
 // repositionBubbles() so the geometry can be unit-tested without spinning up
 // real Electron BrowserWindows. Returns one bounds object per height in the
@@ -559,8 +572,11 @@ function handleDecide(event, behavior) {
 const CODEX_NOTIFY_EXPIRE_MS = 30000;
 
 function showCodexNotifyBubble({ sessionId, command }) {
-  if (ctx.doNotDisturb || ctx.hideBubbles) {
-    permLog(`codex notify suppressed: session=${sessionId} dnd=${ctx.doNotDisturb} hideBubbles=${ctx.hideBubbles}`);
+  const codexBubblesEnabled =
+    typeof ctx.isAgentPermissionsEnabled !== "function" ||
+    ctx.isAgentPermissionsEnabled("codex");
+  if (shouldSuppressCodexNotifyBubble(ctx)) {
+    permLog(`codex notify suppressed: session=${sessionId} dnd=${ctx.doNotDisturb} hideBubbles=${ctx.hideBubbles} subGate=${codexBubblesEnabled}`);
     return;
   }
   const permEntry = {
@@ -597,8 +613,9 @@ function dismissCodexNotify(permEntry) {
 }
 
 // Tear down every pending permission entry tied to `agentId`. Called by the
-// setAgentEnabled(false) command so a freshly-disabled agent doesn't leave
-// orphan bubbles. Mirrors the DND dispatcher exactly: CC entries get
+// setAgentFlag command when either the master `enabled` flag flips to false
+// OR the sub `permissionsEnabled` flag flips to false, so a freshly-silenced
+// agent doesn't leave orphan bubbles. Mirrors the DND dispatcher exactly: CC entries get
 // res.destroy() (CC falls back to its built-in chat prompt), opencode entries
 // skip the bridge reply (TUI falls back to its own prompt), codex notify
 // entries just close the bubble (no blocking request to answer).
@@ -676,4 +693,4 @@ return {
 
 // Test-only exports — bypasses the initPermission factory so unit tests can
 // hit the pure layout function without standing up Electron / ctx mocks.
-module.exports.__test = { computeBubbleStackLayout };
+module.exports.__test = { computeBubbleStackLayout, shouldSuppressCodexNotifyBubble };

@@ -32,4 +32,31 @@ function isAgentEnabled(snapshot, agentId) {
   return entry.enabled !== false;
 }
 
-module.exports = { isAgentEnabled };
+// Per-agent permission-bubble sub-gate. Same default-true semantics as
+// isAgentEnabled — missing snapshot / entry / flag all read as "on". The
+// two gates are independent: the main gate controls "should the event
+// stream run at all", this one controls "if the event stream is running,
+// should we render a permission bubble". Caller is responsible for
+// checking the main gate first; this helper does NOT short-circuit on
+// enabled:false (so a future UI could legitimately ask "is the sub-toggle
+// on for a currently-disabled agent" without us lying).
+//
+// Callers:
+//   - src/server.js  → fold into the `hideBubbles` check at bubble-render
+//                      sites (CC/CodeBuddy + opencode), mirroring per-agent
+//                      hide-bubble semantics
+//   - NOT the /state route (main gate owns that)
+//   - NOT the /permission route entrance (we want PASSTHROUGH tools /
+//     AskUserQuestion / ExitPlanMode to keep flowing even when the
+//     sub-gate is off — the sub-gate only silences the bubble UI)
+function isAgentPermissionsEnabled(snapshot, agentId) {
+  if (!agentId) return true;
+  if (!snapshot || typeof snapshot !== "object") return true;
+  const agents = snapshot.agents;
+  if (!agents || typeof agents !== "object") return true;
+  const entry = agents[agentId];
+  if (!entry || typeof entry !== "object") return true;
+  return entry.permissionsEnabled !== false;
+}
+
+module.exports = { isAgentEnabled, isAgentPermissionsEnabled };

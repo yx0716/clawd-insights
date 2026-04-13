@@ -361,9 +361,12 @@ function createSettingsController({
   }
 
   // Serialize commands by name. Two rapid toggles of the same command (e.g.
-  // `setAgentEnabled` with the same agent) would otherwise race — later
+  // `setAgentFlag` with the same agent + flag) would otherwise race — later
   // effect resolves first, earlier effect commits over it. Different commands
-  // can still run in parallel; only same-name same-time is queued.
+  // can still run in parallel; only same-name same-time is queued. This is
+  // also why main-switch + sub-switch share a single `setAgentFlag` command
+  // instead of splitting into two — distinct command names don't share a
+  // queue, and both would be rewriting the same `agents` object.
   function applyCommand(name, payload) {
     const lockKey = `cmd:${name}`;
     const prev = _asyncLocks.get(lockKey);
@@ -400,7 +403,7 @@ function createSettingsController({
       // Defensive validate: commands produce arbitrary commit payloads, but
       // they still have to pass the same schema gates `applyUpdate` enforces.
       // Without this, a buggy command could persist a prefs snapshot the
-      // validator would have rejected (e.g. setAgentEnabled writing a
+      // validator would have rejected (e.g. setAgentFlag writing a
       // non-object `agents` field). We re-run the validator against a merged
       // snapshot so cross-field checks (showTray/showDock) see the final
       // state.

@@ -125,4 +125,23 @@ describe("Agent config modules — data integrity", () => {
     assert.strictEqual(ids.length, unique.size, `Duplicate IDs: ${ids.filter((id, i) => ids.indexOf(id) !== i)}`);
   });
 
+  // ── interactiveBubble capability ────────────────────────────────────────
+  // interactiveBubble is an optional capability for agents that raise a
+  // Clawd bubble without being a permission-approval request (Codex's
+  // informational "Got it" notify bubble is the only such case today).
+  // Settings panel renders the per-agent bubble sub-toggle for agents
+  // flagged EITHER permissionApproval OR interactiveBubble, so this flag
+  // must stay truthy on Codex or the user loses the ability to silence
+  // its bubbles.
+
+  it("codex has interactiveBubble=true (bubble-toggle capability)", () => {
+    const codex = agents.find((a) => a.id === "codex");
+    assert.ok(codex, "codex agent must be in the registry");
+    assert.strictEqual(
+      codex.capabilities.interactiveBubble,
+      true,
+      "codex.capabilities.interactiveBubble must be true so the settings panel renders the 'Show pop-up bubbles' sub-toggle for it"
+    );
+  });
+
 });

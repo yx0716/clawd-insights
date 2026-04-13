@@ -35,6 +35,8 @@ const STRINGS = {
     eventSourceLogPoll: "Log poll",
     eventSourcePlugin: "Plugin",
     badgePermissionBubble: "Permission bubble",
+    rowAgentPermissions: "Show pop-up bubbles",
+    rowAgentPermissionsDesc: "Turn off to let this agent handle prompts in its own terminal instead of showing a Clawd bubble.",
     rowLanguage: "Language",
     rowLanguageDesc: "Interface language for menus and bubbles.",
     rowSound: "Sound effects",
@@ -75,6 +77,8 @@ const STRINGS = {
     eventSourceLogPoll: "日志轮询",
     eventSourcePlugin: "插件",
     badgePermissionBubble: "权限气泡",
+    rowAgentPermissions: "显示弹窗",
+    rowAgentPermissionsDesc: "关闭后让该 agent 在自己的终端里处理提示，不再弹 Clawd 气泡。",
     rowLanguage: "语言",
     rowLanguageDesc: "菜单和气泡的界面语言。",
     rowSound: "音效",
@@ -191,11 +195,34 @@ function renderAgentsTab(parent) {
     return;
   }
 
-  const rows = agentMetadata.map((agent) => buildAgentRow(agent));
+  const rows = agentMetadata.flatMap((agent) => buildAgentRows(agent));
   parent.appendChild(buildSection("", rows));
 }
 
-function buildAgentRow(agent) {
+// Returns 1-2 rows per agent: the master enable switch, and (for agents
+// that raise a Clawd bubble of any kind) a sub-row for the per-agent
+// bubble toggle. The two switches are deliberately independent — no
+// master-off-disables-sub visual coupling. The gate layer already
+// short-circuits correctly: if master is off the event stream never
+// reaches /permission, so the sub-flag's stored value is inert until
+// the master flips back on.
+//
+// The sub-row shows for BOTH capabilities.permissionApproval (real
+// approval bubbles — CC, CodeBuddy, opencode) and interactiveBubble
+// (informational notification bubbles — Codex). The underlying prefs
+// flag (permissionsEnabled) is the same for both; the split at this
+// layer is purely about NOT mislabeling Codex's informational "Got it"
+// bubble as a permission approval.
+function buildAgentRows(agent) {
+  const rows = [buildAgentMasterRow(agent)];
+  const caps = agent.capabilities || {};
+  if (caps.permissionApproval || caps.interactiveBubble) {
+    rows.push(buildAgentPermissionsRow(agent));
+  }
+  return rows;
+}
+
+function buildAgentMasterRow(agent) {
   const row = document.createElement("div");
   row.className = "row";
 
@@ -236,9 +263,50 @@ function buildAgentRow(agent) {
   attachSwitchToggle(sw, () => {
     const curEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
     const curEnabled = curEntry ? curEntry.enabled !== false : true;
-    return window.settingsAPI.command("setAgentEnabled", {
+    return window.settingsAPI.command("setAgentFlag", {
       agentId: agent.id,
-      enabled: !curEnabled,
+      flag: "enabled",
+      value: !curEnabled,
+    });
+  });
+  ctrl.appendChild(sw);
+  row.appendChild(ctrl);
+  return row;
+}
+
+function buildAgentPermissionsRow(agent) {
+  const row = document.createElement("div");
+  row.className = "row row-sub";
+
+  const text = document.createElement("div");
+  text.className = "row-text";
+  const label = document.createElement("span");
+  label.className = "row-label";
+  label.textContent = t("rowAgentPermissions");
+  text.appendChild(label);
+  const desc = document.createElement("span");
+  desc.className = "row-desc";
+  desc.textContent = t("rowAgentPermissionsDesc");
+  text.appendChild(desc);
+  row.appendChild(text);
+
+  const ctrl = document.createElement("div");
+  ctrl.className = "row-control";
+  const sw = document.createElement("div");
+  sw.className = "switch";
+  sw.setAttribute("role", "switch");
+  sw.setAttribute("tabindex", "0");
+  const currentEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
+  const permEnabled = currentEntry ? currentEntry.permissionsEnabled !== false : true;
+  if (permEnabled) sw.classList.add("on");
+  sw.setAttribute("aria-checked", permEnabled ? "true" : "false");
+  attachSwitchToggle(sw, () => {
+    const curEntry = snapshot && snapshot.agents && snapshot.agents[agent.id];
+    const curPermEnabled = curEntry ? curEntry.permissionsEnabled !== false : true;
+    return window.settingsAPI.command("setAgentFlag", {
+      agentId: agent.id,
+      flag: "permissionsEnabled",
+      value: !curPermEnabled,
     });
   });
   ctrl.appendChild(sw);

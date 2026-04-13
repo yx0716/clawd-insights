@@ -178,8 +178,8 @@ function flushRuntimeStateToPrefs() {
 let _codexMonitor = null;          // Codex CLI JSONL log polling instance
 let _geminiMonitor = null;         // Gemini CLI session JSON polling instance
 
-// Agent-gate monitor dispatcher. Called by the `setAgentEnabled` command when
-// the user flips an agent in the settings panel. Monitors are idempotent —
+// Agent-gate monitor dispatcher. Called by the `setAgentFlag` command (flag
+// = "enabled") when the user flips an agent in the settings panel. Monitors are idempotent —
 // calling start() twice or stop() on a never-started monitor is safe.
 // Non-log-poll agents (hook-based: CC, copilot, cursor, codebuddy, kiro,
 // opencode) have no module-level monitor to manage; their "off" state is
@@ -423,6 +423,12 @@ const _permCtx = {
   getHitRectScreen,
   guardAlwaysOnTop,
   reapplyMacVisibility,
+  // Per-agent sub-gate query, same live-read pattern as _serverCtx.
+  // Used by showCodexNotifyBubble() to honor the user's "show pop-up
+  // bubbles" toggle for Codex — Codex has no /permission HTTP path to
+  // intercept, so the guard has to live at the bubble-creation callsite.
+  isAgentPermissionsEnabled: (agentId) =>
+    require("./agent-gate").isAgentPermissionsEnabled({ agents: _settingsController.get("agents") }, agentId),
   focusTerminalForSession: (sessionId) => {
     const s = sessions.get(sessionId);
     if (s && s.sourcePid) focusTerminalWindow(s.sourcePid, s.cwd, s.editor, s.pidChain);
@@ -598,7 +604,7 @@ const _focus = require("./focus")({ _allowSetForeground });
 const { initFocusHelper, killFocusHelper, focusTerminalWindow, clearMacFocusCooldownTimer } = _focus;
 
 // ── HTTP server — delegated to src/server.js ──
-const { isAgentEnabled: _isAgentEnabled } = require("./agent-gate");
+const { isAgentEnabled: _isAgentEnabled, isAgentPermissionsEnabled: _isAgentPermissionsEnabled } = require("./agent-gate");
 const _serverCtx = {
   get autoStartWithClaude() { return autoStartWithClaude; },
   get doNotDisturb() { return doNotDisturb; },
@@ -610,8 +616,9 @@ const _serverCtx = {
   // Every /state and /permission hook hit lands here; cloning the full
   // snapshot each time just to read one boolean wastes ~1KB per request
   // on a moderately populated prefs. `get("agents")` returns the live
-  // reference; we wrap it back into the shape isAgentEnabled expects.
+  // reference; we wrap it back into the shape the gate helpers expect.
   isAgentEnabled: (agentId) => _isAgentEnabled({ agents: _settingsController.get("agents") }, agentId),
+  isAgentPermissionsEnabled: (agentId) => _isAgentPermissionsEnabled({ agents: _settingsController.get("agents") }, agentId),
   setState,
   updateSession,
   resolvePermissionEntry,
