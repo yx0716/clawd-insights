@@ -16,6 +16,7 @@ const { resolveNodeBin } = require("./server-config");
 const { writeJsonAtomic, extractExistingNodeBin } = require("./json-utils");
 const MARKER = "kiro-hook.js";
 const CLAWD_AGENT_NAME = "clawd";
+const CLAWD_AGENT_DESCRIPTION = "Clawd desktop pet hook integration";
 const BUILTIN_DEFAULT_AGENT = "kiro_default";
 
 const KIRO_HOOK_EVENTS = [
@@ -54,7 +55,7 @@ function injectHooksIntoFile(filePath, options = {}) {
   }
   if (created) {
     settings.description = baseName === CLAWD_AGENT_NAME
-      ? "Clawd desktop pet hook integration"
+      ? CLAWD_AGENT_DESCRIPTION
       : `${baseName} agent with Clawd desktop pet hooks`;
   }
 
@@ -181,24 +182,34 @@ function syncClawdAgentFromBuiltin(filePath, options = {}) {
   }
 
   const result = generateClawdTemplateFromBuiltin(options);
-  let desired;
+
   if (!result.template) {
+    // Preserve existing file — may have prompt/tools/resources from a prior successful sync.
     if (!options.silent) {
-      console.warn(`Clawd: kiro-cli template generation failed, falling back to minimal clawd agent (no prompt/tools/resources). Reason: ${result.error?.message || "unknown"}`);
+      const fate = current
+        ? `preserving existing ${path.basename(filePath)}`
+        : "seeding minimal clawd agent (no prompt/tools/resources)";
+      console.warn(`Clawd: kiro-cli template generation failed — ${fate}. Reason: ${result.error?.message || "unknown"}`);
     }
-    desired = {
+    if (current) return { synced: true, changed: false };
+    const minimal = {
       name: CLAWD_AGENT_NAME,
-      description: "Clawd desktop pet hook integration",
+      description: CLAWD_AGENT_DESCRIPTION,
+      hooks: {},
     };
-  } else {
-    desired = { name: CLAWD_AGENT_NAME };
-    for (const key of Object.keys(result.template)) {
-      if (!EXCLUDED_KEYS.has(key)) {
-        desired[key] = result.template[key];
-      }
-    }
+    writeJsonAtomic(filePath, minimal);
+    return { synced: true, changed: true };
   }
 
+  const desired = {
+    name: CLAWD_AGENT_NAME,
+    description: CLAWD_AGENT_DESCRIPTION,
+  };
+  for (const key of Object.keys(result.template)) {
+    if (!EXCLUDED_KEYS.has(key)) {
+      desired[key] = result.template[key];
+    }
+  }
   desired.hooks = current && current.hooks && typeof current.hooks === "object"
     ? current.hooks
     : {};
