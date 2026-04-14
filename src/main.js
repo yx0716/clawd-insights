@@ -414,14 +414,23 @@ const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride
 const sessions = _state.sessions;
 const STATE_PRIORITY = _state.STATE_PRIORITY;
 
-// ── Daily reflection (triggered by state.js on first SessionStart of the day) ──
-function _triggerDailyReflection() {
+// ── Daily reflection (triggered by state.js on first SessionStart of the day, or manually) ──
+function _triggerDailyReflection(hoursBack) {
   if (!_analyticsAI) return;
   try {
-    const now = new Date();
-    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-    const startTs = yesterday.getTime();
-    const endTs = startTs + 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let startTs, endTs;
+    if (hoursBack && hoursBack > 0) {
+      // Manual trigger: look back N hours from now
+      startTs = now - hoursBack * 60 * 60 * 1000;
+      endTs = now;
+    } else {
+      // Auto trigger: yesterday
+      const today = new Date();
+      const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+      startTs = yesterday.getTime();
+      endTs = startTs + 24 * 60 * 60 * 1000;
+    }
     const analyses = _analyticsAI.loadPersistedAnalyses(startTs, endTs);
     // Only consider detail-mode analyses (they have timeBreakdown)
     const details = analyses.filter(a => a._mode === "detail" && Array.isArray(a.timeBreakdown) && a.timeBreakdown.length > 0);
@@ -467,19 +476,22 @@ function _triggerDailyReflection() {
     const thkPct = Math.round(thinkRatio * 100);
     const isZh = (lang === "zh");
 
-    // Collect yesterday's top suggestions
     const allSuggestions = details.flatMap(a => a.suggestions || []).filter(Boolean);
     const topSuggestion = allSuggestions[0] || "";
 
+    const rangeLabel = hoursBack
+      ? (isZh ? `过去 ${hoursBack} 小时` : `the past ${hoursBack}h`)
+      : (isZh ? "昨天" : "yesterday");
+
     let message;
     if (isZh) {
-      message = `昨天的 ${details.length} 个会话中，整理类活动占 ${orgPct}%，深度思考仅 ${thkPct}%。`;
-      message += `\n\n今天试试在一个问题上多待一会儿？`;
-      if (topSuggestion) message += `\n\n昨日建议：${topSuggestion}`;
+      message = `${rangeLabel}的 ${details.length} 个会话中，整理类活动占 ${orgPct}%，深度思考仅 ${thkPct}%。`;
+      message += `\n\n试试在一个问题上多待一会儿？`;
+      if (topSuggestion) message += `\n\n建议：${topSuggestion}`;
     } else {
-      message = `In yesterday's ${details.length} sessions, organizing took ${orgPct}% while deep thinking was only ${thkPct}%.`;
-      message += `\n\nTry staying with one problem longer today.`;
-      if (topSuggestion) message += `\n\nYesterday's tip: ${topSuggestion}`;
+      message = `In ${rangeLabel}'s ${details.length} sessions, organizing took ${orgPct}% while deep thinking was only ${thkPct}%.`;
+      message += `\n\nTry staying with one problem longer.`;
+      if (topSuggestion) message += `\n\nTip: ${topSuggestion}`;
     }
 
     showReflectionBubble({ message });
@@ -700,6 +712,7 @@ const _menuCtx = {
   getActiveThemeId: () => activeTheme ? activeTheme._id : "clawd",
   ensureUserThemesDir: () => themeLoader.ensureUserThemesDir(),
   toggleAnalyticsDashboard: () => _analyticsDash ? _analyticsDash.toggleDashboard() : null,
+  triggerReflection: (hoursBack) => _triggerDailyReflection(hoursBack),
 };
 const _menu = require("./menu")(_menuCtx);
 const { t, buildContextMenu, buildTrayMenu, rebuildAllMenus, createTray,

@@ -122,6 +122,12 @@ const i18n = {
     sessionMinAgo: "{n}m ago",
     sessionHrAgo: "{n}h ago",
     analytics: "Analytics Dashboard",
+    reflection: "Reflection",
+    reflectionLast3h: "Last 3 hours",
+    reflectionLast6h: "Last 6 hours",
+    reflectionToday: "Today",
+    reflectionYesterday: "Yesterday",
+    reflectionLast3d: "Last 3 days",
     soundEffects: "Sound Effects",
     showPet: "Show Clawd",
     hidePet: "Hide Clawd",
@@ -189,6 +195,12 @@ const i18n = {
     sessionMinAgo: "{n}分钟前",
     sessionHrAgo: "{n}小时前",
     analytics: "数据分析面板",
+    reflection: "反思提醒",
+    reflectionLast3h: "最近 3 小时",
+    reflectionLast6h: "最近 6 小时",
+    reflectionToday: "今天",
+    reflectionYesterday: "昨天",
+    reflectionLast3d: "最近 3 天",
     soundEffects: "音效",
     showPet: "显示 Clawd",
     hidePet: "隐藏 Clawd",
@@ -716,6 +728,16 @@ module.exports = function initMenu(ctx) {
       {
         label: t("analytics"),
         click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
+      {
+        label: t("reflection"),
+        submenu: [
+          { label: t("reflectionLast3h"), click: () => ctx.triggerReflection && ctx.triggerReflection(3) },
+          { label: t("reflectionLast6h"), click: () => ctx.triggerReflection && ctx.triggerReflection(6) },
+          { label: t("reflectionToday"), click: () => ctx.triggerReflection && ctx.triggerReflection(24) },
+          { label: t("reflectionYesterday"), click: () => ctx.triggerReflection && ctx.triggerReflection(0) },
+          { label: t("reflectionLast3d"), click: () => ctx.triggerReflection && ctx.triggerReflection(72) },
+        ],
       },
     ];
     // macOS: Dock and Menu Bar visibility toggles
