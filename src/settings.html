@@ -449,6 +449,24 @@ html, body {
   outline-offset: 2px;
 }
 
+/* ── Animation Map reset button ── */
+.anim-map-reset {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.anim-map-reset-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.anim-map-reset-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent !important;
+  color: var(--text-tertiary) !important;
+}
+
 /* ── Toast ── */
 .toast-stack {
   position: fixed;

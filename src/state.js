@@ -172,7 +172,30 @@ function setState(newState, svgOverride) {
   }
 }
 
+function isOneshotDisabled(logicalState) {
+  if (!ONESHOT_STATES.has(logicalState)) return false;
+  if (typeof ctx.isOneshotDisabled !== "function") return false;
+  try { return ctx.isOneshotDisabled(logicalState) === true; }
+  catch { return false; }
+}
+
 function applyState(state, svgOverride) {
+  // Phase 3b: user-disabled oneshot state — skip visual + sound, fall back to
+  // whatever resolveDisplayState picks (usually working/idle). Gate lives at
+  // applyState() top so it catches all three paths that reach here:
+  //   · oneshot direct setState (state.js:419)
+  //   · PermissionRequest direct setState (state.js:342)
+  //   · pending queued oneshot (state.js:163)
+  // and also runs before the mini-mode remap below, so "disable notification"
+  // silences both normal and mini visuals consistently.
+  if (isOneshotDisabled(state)) {
+    const resolved = resolveDisplayState();
+    if (resolved !== state) {
+      setState(resolved, getSvgOverride(resolved));
+    }
+    return;
+  }
+
   if (ctx.miniTransitioning && !state.startsWith("mini-")) {
     return;
   }

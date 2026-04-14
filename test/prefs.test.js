@@ -286,4 +286,54 @@ describe("prefs.save", () => {
     assert.strictEqual(written.lang, "en");
     assert.strictEqual(written.x, 0);
   });
+
+  it("round-trips themeOverrides with disabled: true", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.themeOverrides = {
+      clawd: {
+        sweeping: { disabled: true },
+      },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.sweeping, { disabled: true });
+  });
+
+  it("themeOverrides: disabled wins over file when both present on same key", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.themeOverrides = {
+      clawd: {
+        attention: {
+          disabled: true,
+          sourceThemeId: "clawd",
+          file: "clawd-happy.svg",
+        },
+      },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.attention, { disabled: true });
+  });
+
+  it("themeOverrides: file-form entry round-trips unchanged when disabled is absent/false", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.themeOverrides = {
+      clawd: {
+        attention: {
+          disabled: false,
+          sourceThemeId: "clawd",
+          file: "clawd-happy.svg",
+        },
+      },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.attention, {
+      sourceThemeId: "clawd",
+      file: "clawd-happy.svg",
+    });
+  });
 });

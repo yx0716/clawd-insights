@@ -384,17 +384,96 @@ async function removeTheme(payload, deps) {
   return { status: "ok" };
 }
 
+// Phase 3b: 仅允许 override 这 5 个"打扰态"——其他 state 要么不走 theme.states
+// 这条路（idle/working/juggling 走 tiers/闭包），要么不是打扰（idle/sleeping 等
+// 关了会让桌宠消失）。白名单硬钉在 action 层，UI 只是表象。
+const ONESHOT_OVERRIDE_STATES = new Set([
+  "attention", "error", "sweeping", "notification", "carrying",
+]);
+
+const _validateThemeOverrideThemeId = requireString("setThemeOverrideDisabled.themeId");
+function setThemeOverrideDisabled(payload, deps) {
+  if (!payload || typeof payload !== "object") {
+    return { status: "error", message: "setThemeOverrideDisabled: payload must be an object" };
+  }
+  const { themeId, stateKey, disabled } = payload;
+  const idCheck = _validateThemeOverrideThemeId(themeId);
+  if (idCheck.status !== "ok") return idCheck;
+  if (typeof stateKey !== "string" || !ONESHOT_OVERRIDE_STATES.has(stateKey)) {
+    return {
+      status: "error",
+      message: `setThemeOverrideDisabled.stateKey must be one of: ${[...ONESHOT_OVERRIDE_STATES].join(", ")}`,
+    };
+  }
+  if (typeof disabled !== "boolean") {
+    return { status: "error", message: "setThemeOverrideDisabled.disabled must be a boolean" };
+  }
+
+  const snapshot = (deps && deps.snapshot) || {};
+  const currentOverrides = snapshot.themeOverrides || {};
+  const currentThemeMap = currentOverrides[themeId] || {};
+  const currentEntry = currentThemeMap[stateKey];
+  const currentDisabled = !!(currentEntry && currentEntry.disabled === true);
+  if (currentDisabled === disabled) {
+    return { status: "ok", noop: true };
+  }
+
+  const nextThemeMap = { ...currentThemeMap };
+  if (disabled) {
+    nextThemeMap[stateKey] = { disabled: true };
+  } else {
+    // disabled=false：若原条目只有 disabled 就删掉；若同时带 sourceThemeId/file
+    // （Phase 3b-ext 格式）就脱掉 disabled 保留其余字段。normalizeThemeOverrides
+    // 自身会把孤立的 disabled:false 折叠成 file 形态或丢弃，这里依赖那层兜底。
+    if (currentEntry && typeof currentEntry.sourceThemeId === "string" && typeof currentEntry.file === "string") {
+      nextThemeMap[stateKey] = {
+        sourceThemeId: currentEntry.sourceThemeId,
+        file: currentEntry.file,
+      };
+    } else {
+      delete nextThemeMap[stateKey];
+    }
+  }
+
+  const nextOverrides = { ...currentOverrides };
+  if (Object.keys(nextThemeMap).length > 0) {
+    nextOverrides[themeId] = nextThemeMap;
+  } else {
+    delete nextOverrides[themeId];
+  }
+  return { status: "ok", commit: { themeOverrides: nextOverrides } };
+}
+
+const _validateResetOverridesThemeId = requireString("resetThemeOverrides.themeId");
+function resetThemeOverrides(payload, deps) {
+  const themeId = typeof payload === "string" ? payload : (payload && payload.themeId);
+  const idCheck = _validateResetOverridesThemeId(themeId);
+  if (idCheck.status !== "ok") return idCheck;
+
+  const snapshot = (deps && deps.snapshot) || {};
+  const currentOverrides = snapshot.themeOverrides || {};
+  if (!currentOverrides[themeId]) {
+    return { status: "ok", noop: true };
+  }
+  const nextOverrides = { ...currentOverrides };
+  delete nextOverrides[themeId];
+  return { status: "ok", commit: { themeOverrides: nextOverrides } };
+}
+
 const commandRegistry = {
   removeTheme,
   installHooks: notImplemented("installHooks"),
   uninstallHooks: notImplemented("uninstallHooks"),
   registerShortcut: notImplemented("registerShortcut"),
   setAgentFlag,
+  setThemeOverrideDisabled,
+  resetThemeOverrides,
 };
 
 module.exports = {
   updateRegistry,
   commandRegistry,
+  ONESHOT_OVERRIDE_STATES,
   // Exposed for tests
   requireBoolean,
   requireFiniteNumber,

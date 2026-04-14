@@ -66,6 +66,21 @@ const STRINGS = {
     themeDeleteLabel: "Delete theme",
     toastThemeDeleted: "Theme deleted.",
     toastThemeDeleteFailed: "Couldn't delete theme: ",
+    animMapTitle: "Animation Map",
+    animMapSubtitle: "Silence individual interrupt animations. Events still fire — Clawd just skips the visual and sound for the selected states.",
+    animMapSemanticsNote: "Disable = no visual + no sound. Permission bubbles, sessions, and terminal focus still work.",
+    animMapResetAll: "Reset all",
+    animMapAttentionLabel: "Task complete (happy)",
+    animMapAttentionDesc: "The happy bounce when the agent finishes a turn (Stop / PostCompact).",
+    animMapErrorLabel: "Error flash",
+    animMapErrorDesc: "The shake animation when a tool call fails.",
+    animMapSweepingLabel: "Context sweep",
+    animMapSweepingDesc: "The broom animation during PreCompact / context clearing.",
+    animMapNotificationLabel: "Notification",
+    animMapNotificationDesc: "The bell animation for permission requests and elicitations.",
+    animMapCarryingLabel: "Worktree carry",
+    animMapCarryingDesc: "The carrying animation when a worktree is created.",
+    toastAnimMapResetOk: "Animation overrides cleared.",
   },
   zh: {
     settingsTitle: "设置",
@@ -118,6 +133,21 @@ const STRINGS = {
     themeDeleteLabel: "删除主题",
     toastThemeDeleted: "主题已删除。",
     toastThemeDeleteFailed: "删除主题失败：",
+    animMapTitle: "动画映射",
+    animMapSubtitle: "关掉不想看的打扰动画。事件照样会触发——Clawd 只是不再播放对应的动画和音效。",
+    animMapSemanticsNote: "关闭 = 不播动画 + 不响音效。权限气泡、会话记录、终端聚焦照常工作。",
+    animMapResetAll: "全部恢复",
+    animMapAttentionLabel: "完成提示（happy）",
+    animMapAttentionDesc: "Agent 结束一轮时的开心跳动（Stop / PostCompact）。",
+    animMapErrorLabel: "错误提示",
+    animMapErrorDesc: "工具调用失败时的抖动动画。",
+    animMapSweepingLabel: "上下文清理",
+    animMapSweepingDesc: "PreCompact / 清空上下文时的扫把动画。",
+    animMapNotificationLabel: "通知提示",
+    animMapNotificationDesc: "权限请求、消息询问时的铃铛动画。",
+    animMapCarryingLabel: "Worktree 搬运",
+    animMapCarryingDesc: "创建 worktree 时的搬运动画。",
+    toastAnimMapResetOk: "动画覆盖已清空。",
   },
 };
 
@@ -161,7 +191,7 @@ const SIDEBAR_TABS = [
   { id: "general", icon: "\u2699", labelKey: "sidebarGeneral", available: true },
   { id: "agents", icon: "\u26A1", labelKey: "sidebarAgents", available: true },
   { id: "theme", icon: "\u{1F3A8}", labelKey: "sidebarTheme", available: true },
-  { id: "animMap", icon: "\u{1F3AC}", labelKey: "sidebarAnimMap", available: false },
+  { id: "animMap", icon: "\u{1F3AC}", labelKey: "sidebarAnimMap", available: true },
   { id: "shortcuts", icon: "\u2328", labelKey: "sidebarShortcuts", available: false },
   { id: "about", icon: "\u2139", labelKey: "sidebarAbout", available: false },
 ];
@@ -199,9 +229,105 @@ function renderContent() {
     renderAgentsTab(content);
   } else if (activeTab === "theme") {
     renderThemeTab(content);
+  } else if (activeTab === "animMap") {
+    renderAnimMapTab(content);
   } else {
     renderPlaceholder(content);
   }
+}
+
+// ── Animation Map tab (Phase 3b — Disable-only) ──
+
+// 每行一个 oneshot state。顺序影响 UI 排列——按优先级从高到低。
+const ANIM_MAP_ROWS = [
+  { stateKey: "error",        labelKey: "animMapErrorLabel",        descKey: "animMapErrorDesc" },
+  { stateKey: "notification", labelKey: "animMapNotificationLabel", descKey: "animMapNotificationDesc" },
+  { stateKey: "sweeping",     labelKey: "animMapSweepingLabel",     descKey: "animMapSweepingDesc" },
+  { stateKey: "attention",    labelKey: "animMapAttentionLabel",    descKey: "animMapAttentionDesc" },
+  { stateKey: "carrying",     labelKey: "animMapCarryingLabel",     descKey: "animMapCarryingDesc" },
+];
+
+function renderAnimMapTab(parent) {
+  const h1 = document.createElement("h1");
+  h1.textContent = t("animMapTitle");
+  parent.appendChild(h1);
+
+  const subtitle = document.createElement("p");
+  subtitle.className = "subtitle";
+  subtitle.textContent = t("animMapSubtitle");
+  parent.appendChild(subtitle);
+
+  const note = document.createElement("p");
+  note.className = "subtitle";
+  note.textContent = t("animMapSemanticsNote");
+  parent.appendChild(note);
+
+  const themeId = (snapshot && snapshot.theme) || "clawd";
+  const rows = ANIM_MAP_ROWS.map((spec) => buildAnimMapRow(spec, themeId));
+  parent.appendChild(buildSection("", rows));
+
+  const hasAny = readThemeOverrideMap(themeId) !== null;
+  const resetWrap = document.createElement("div");
+  resetWrap.className = "anim-map-reset";
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "theme-delete-btn anim-map-reset-btn";
+  resetBtn.textContent = t("animMapResetAll");
+  if (!hasAny) resetBtn.disabled = true;
+  attachActivation(resetBtn, () =>
+    window.settingsAPI.command("resetThemeOverrides", { themeId })
+      .then((result) => {
+        if (result && result.status === "ok" && !result.noop) {
+          showToast(t("toastAnimMapResetOk"));
+        }
+        return result;
+      })
+  );
+  resetWrap.appendChild(resetBtn);
+  parent.appendChild(resetWrap);
+}
+
+function readThemeOverrideMap(themeId) {
+  const all = snapshot && snapshot.themeOverrides;
+  const map = all && all[themeId];
+  if (!map || typeof map !== "object") return null;
+  const keys = Object.keys(map);
+  return keys.length > 0 ? map : null;
+}
+
+function isStateDisabled(themeId, stateKey) {
+  const map = readThemeOverrideMap(themeId);
+  const entry = map && map[stateKey];
+  return !!(entry && entry.disabled === true);
+}
+
+function buildAnimMapRow(spec, themeId) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML =
+    `<div class="row-text">` +
+      `<span class="row-label"></span>` +
+      `<span class="row-desc"></span>` +
+    `</div>` +
+    `<div class="row-control"><div class="switch" role="switch" tabindex="0"></div></div>`;
+  row.querySelector(".row-label").textContent = t(spec.labelKey);
+  row.querySelector(".row-desc").textContent = t(spec.descKey);
+  const sw = row.querySelector(".switch");
+
+  const disabled = isStateDisabled(themeId, spec.stateKey);
+  const visualOn = !disabled; // ON = 动画启用
+  if (visualOn) sw.classList.add("on");
+  sw.setAttribute("aria-checked", visualOn ? "true" : "false");
+
+  attachActivation(sw, () => {
+    const nextDisabled = !isStateDisabled(themeId, spec.stateKey);
+    return window.settingsAPI.command("setThemeOverrideDisabled", {
+      themeId,
+      stateKey: spec.stateKey,
+      disabled: nextDisabled,
+    });
+  });
+  return row;
 }
 
 // ── Theme tab ──
@@ -653,10 +779,17 @@ window.settingsAPI.onChanged((payload) => {
   // can alter the list shape, so those still refetch.
   const changes = payload && payload.changes;
   if (changes && "themeOverrides" in changes) {
-    fetchThemes().then(() => {
-      renderSidebar();
-      renderContent();
-    });
+    // 只有 theme tab 关心 list（removeTheme cleanup 可能改 list 形态）。
+    // animMap tab 的开关直接从 snapshot.themeOverrides 读，不用 refetch。
+    if (activeTab === "theme") {
+      fetchThemes().then(() => {
+        renderSidebar();
+        renderContent();
+      });
+      return;
+    }
+    renderSidebar();
+    renderContent();
     return;
   }
   if (changes && "theme" in changes && themeList) {

@@ -194,9 +194,12 @@ function normalizeThemeOverrides(value, defaultsValue) {
     const cleanThemeMap = {};
     for (const stateKey of Object.keys(themeMap)) {
       const entry = themeMap[stateKey];
+      if (!entry || typeof entry !== "object") continue;
+      if (entry.disabled === true) {
+        cleanThemeMap[stateKey] = { disabled: true };
+        continue;
+      }
       if (
-        entry &&
-        typeof entry === "object" &&
         typeof entry.sourceThemeId === "string" &&
         typeof entry.file === "string"
       ) {

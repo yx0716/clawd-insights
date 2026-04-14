@@ -532,6 +532,17 @@ const _stateCtx = {
   miniPeekOut: () => miniPeekOut(),
   buildContextMenu: () => buildContextMenu(),
   buildTrayMenu: () => buildTrayMenu(),
+  // Phase 3b: 读 prefs.themeOverrides 判断某个 oneshot state 是否被用户禁用。
+  // state.js gate 调这个做 early-return。不做白名单校验——settings-actions
+  // 负责写入合法性，这里只读。
+  isOneshotDisabled: (stateKey) => {
+    const themeId = activeTheme && activeTheme._id;
+    if (!themeId || !stateKey) return false;
+    const overrides = _settingsController.get("themeOverrides");
+    const themeMap = overrides && overrides[themeId];
+    const entry = themeMap && themeMap[stateKey];
+    return !!(entry && entry.disabled === true);
+  },
   hasAnyEnabledAgent: () => {
     // `get("agents")` returns the live reference (no clone) — we're only
     // reading. Missing agents field falls back to "assume enabled" (the
