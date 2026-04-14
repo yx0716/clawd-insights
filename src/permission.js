@@ -175,7 +175,7 @@ let hotkeysRegistered = false;
 
 function getActionablePermissions() {
   return pendingPermissions.filter(
-    p => !p.isElicitation && !p.isCodexNotify && p.toolName !== "ExitPlanMode"
+    p => !p.isElicitation && !p.isCodexNotify && !p.isReflection && p.toolName !== "ExitPlanMode"
   );
 }
 
@@ -517,6 +517,10 @@ function handleDecide(event, behavior) {
     dismissCodexNotify(perm);
     return;
   }
+  if (perm.isReflection) {
+    dismissReflectionBubble(perm);
+    return;
+  }
   // opencode "Always" button — map to reply="always" via resolvePermissionEntry
   if (behavior === "opencode-always") {
     perm.opencodeAlwaysPicked = true;
@@ -563,6 +567,42 @@ function handleDecide(event, behavior) {
   } else {
     resolvePermissionEntry(perm, behavior === "allow" ? "allow" : "deny");
   }
+}
+
+const REFLECTION_EXPIRE_MS = 20000;
+
+function showReflectionBubble({ message }) {
+  if (ctx.doNotDisturb || ctx.hideBubbles) return;
+  const permEntry = {
+    res: null,
+    abortHandler: null, suggestions: [],
+    sessionId: "__reflection__", bubble: null, hideTimer: null,
+    toolName: "DailyReflection",
+    toolInput: { message: message || "" },
+    resolvedSuggestion: null, createdAt: Date.now(),
+    isElicitation: false, isCodexNotify: false, isReflection: true,
+    autoExpireTimer: null,
+  };
+  pendingPermissions.push(permEntry);
+  showPermissionBubble(permEntry);
+  permEntry.autoExpireTimer = setTimeout(() => {
+    dismissReflectionBubble(permEntry);
+  }, REFLECTION_EXPIRE_MS);
+}
+
+function dismissReflectionBubble(permEntry) {
+  const idx = pendingPermissions.indexOf(permEntry);
+  if (idx === -1) return;
+  pendingPermissions.splice(idx, 1);
+  if (permEntry.autoExpireTimer) clearTimeout(permEntry.autoExpireTimer);
+  if (permEntry.hideTimer) clearTimeout(permEntry.hideTimer);
+  if (permEntry.bubble && !permEntry.bubble.isDestroyed()) {
+    permEntry.bubble.webContents.send("permission-hide");
+    const bub = permEntry.bubble;
+    setTimeout(() => { if (!bub.isDestroyed()) bub.destroy(); }, 250);
+  }
+  repositionBubbles();
+  syncPermissionShortcuts();
 }
 
 const CODEX_NOTIFY_EXPIRE_MS = 30000;
@@ -673,6 +713,7 @@ return {
   handleBubbleHeight, handleDecide, cleanup,
   showCodexNotifyBubble, clearCodexNotifyBubbles,
   dismissPermissionsByAgent,
+  showReflectionBubble,
   syncPermissionShortcuts,
   replyOpencodePermission,
 };

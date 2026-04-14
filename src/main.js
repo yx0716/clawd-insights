@@ -451,7 +451,7 @@ const _permCtx = {
   },
 };
 const _perm = require("./permission")(_permCtx);
-const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS, showCodexNotifyBubble, clearCodexNotifyBubbles, syncPermissionShortcuts, replyOpencodePermission } = _perm;
+const { showPermissionBubble, resolvePermissionEntry, sendPermissionResponse, repositionBubbles, permLog, PASSTHROUGH_TOOLS, showCodexNotifyBubble, clearCodexNotifyBubbles, showReflectionBubble, syncPermissionShortcuts, replyOpencodePermission } = _perm;
 const pendingPermissions = _perm.pendingPermissions;
 let permDebugLog = null; // set after app.whenReady()
 let updateDebugLog = null; // set after app.whenReady()
@@ -561,6 +561,7 @@ const _stateCtx = {
     return false;
   },
   logAnalyticsEvent: (...args) => _analyticsLog ? _analyticsLog.logEvent(...args) : null,
+  onFirstSessionOfDay: () => _triggerDailyReflection(),
 };
 const _state = require("./state")(_stateCtx);
 const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride,
@@ -569,6 +570,80 @@ const { setState, applyState, updateSession, resolveDisplayState, getSvgOverride
         startStartupRecovery: _startStartupRecovery } = _state;
 const sessions = _state.sessions;
 const STATE_PRIORITY = _state.STATE_PRIORITY;
+
+// ── Daily reflection (triggered by state.js on first SessionStart of the day) ──
+function _triggerDailyReflection() {
+  if (!_analyticsAI) return;
+  try {
+    const now = new Date();
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const startTs = yesterday.getTime();
+    const endTs = startTs + 24 * 60 * 60 * 1000;
+    const analyses = _analyticsAI.loadPersistedAnalyses(startTs, endTs);
+    // Only consider detail-mode analyses (they have timeBreakdown)
+    const details = analyses.filter(a => a._mode === "detail" && Array.isArray(a.timeBreakdown) && a.timeBreakdown.length > 0);
+    if (!details.length) return;
+
+    // Classify activities: "organize" vs "think" based on keywords in timeBreakdown
+    const organizeKeywords = [
+      "整理", "归档", "迁移", "搬运", "移动", "复制", "重命名", "清理",
+      "格式", "模板", "分类", "备份", "同步", "导入", "导出", "配置",
+      "安装", "设置", "环境", "工具链", "脚手架", "scaffold", "setup",
+      "organize", "migrate", "move", "copy", "rename", "cleanup", "format",
+      "template", "sort", "backup", "sync", "import", "export", "config",
+    ];
+    const thinkKeywords = [
+      "分析", "设计", "推演", "思考", "论证", "比较", "评估", "权衡",
+      "研究", "探索", "实验", "验证", "推理", "决策", "规划", "策略",
+      "抽象", "建模", "架构", "原理", "深入", "洞察", "反思",
+      "analyze", "design", "reason", "compare", "evaluate", "research",
+      "explore", "experiment", "verify", "decide", "plan", "strategy",
+      "abstract", "model", "architect", "insight", "deep",
+    ];
+
+    let organizeWeight = 0, thinkWeight = 0, totalWeight = 0;
+    for (const analysis of details) {
+      for (const item of analysis.timeBreakdown) {
+        const activity = String(item.activity || "").toLowerCase();
+        const pct = item.percent || 0;
+        totalWeight += pct;
+        if (organizeKeywords.some(kw => activity.includes(kw))) organizeWeight += pct;
+        if (thinkKeywords.some(kw => activity.includes(kw))) thinkWeight += pct;
+      }
+    }
+
+    if (totalWeight <= 0) return;
+    const organizeRatio = organizeWeight / totalWeight;
+    const thinkRatio = thinkWeight / totalWeight;
+
+    // Only show reminder if organizing clearly dominates thinking
+    if (organizeRatio <= 0.5 || thinkRatio >= organizeRatio * 0.6) return;
+
+    // Build the reminder message
+    const orgPct = Math.round(organizeRatio * 100);
+    const thkPct = Math.round(thinkRatio * 100);
+    const isZh = (lang === "zh");
+
+    // Collect yesterday's top suggestions
+    const allSuggestions = details.flatMap(a => a.suggestions || []).filter(Boolean);
+    const topSuggestion = allSuggestions[0] || "";
+
+    let message;
+    if (isZh) {
+      message = `昨天的 ${details.length} 个会话中，整理类活动占 ${orgPct}%，深度思考仅 ${thkPct}%。`;
+      message += `\n\n今天试试在一个问题上多待一会儿？`;
+      if (topSuggestion) message += `\n\n昨日建议：${topSuggestion}`;
+    } else {
+      message = `In yesterday's ${details.length} sessions, organizing took ${orgPct}% while deep thinking was only ${thkPct}%.`;
+      message += `\n\nTry staying with one problem longer today.`;
+      if (topSuggestion) message += `\n\nYesterday's tip: ${topSuggestion}`;
+    }
+
+    showReflectionBubble({ message });
+  } catch (err) {
+    console.warn("Clawd: daily reflection error:", err.message);
+  }
+}
 
 // ── Hit-test: SVG bounding box → screen coordinates ──
 function getHitRectScreen(bounds) {

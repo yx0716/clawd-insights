@@ -454,6 +454,22 @@ function show(data) {
     return;
   }
 
+  // Daily reflection mode — reminder bubble with Dismiss button only
+  if (data.toolName === "DailyReflection") {
+    headerTitle.textContent = data.lang === "zh" ? "\u6BCF\u65E5\u53CD\u601D" : "Daily Reflection";
+    toolPill.textContent = data.lang === "zh" ? "\u6628\u65E5\u56DE\u987E" : "YESTERDAY";
+    toolPill.setAttribute("data-tool", "DailyReflection");
+    toolPill.style.display = "";
+    commandBlock.style.whiteSpace = "pre-wrap";
+    commandBlock.textContent = (data.toolInput && data.toolInput.message) || "";
+    btnAllow.textContent = data.lang === "zh" ? "\u77E5\u9053\u4E86" : "Got it";
+    btnAllow.disabled = false;
+    btnDeny.style.display = "none";
+    suggestionsContainer.innerHTML = "";
+    revealCard();
+    return;
+  }
+
   // Codex notify mode — informational bubble with Dismiss button only
   if (data.toolName === "CodexExec") {
     headerTitle.textContent = data.lang === "zh" ? "Codex \u6743\u9650\u8BF7\u6C42" : "Codex Permission";

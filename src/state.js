@@ -355,6 +355,20 @@ function pickDisplayHint(state, existing, incoming) {
   return existing && existing.displayHint != null ? existing.displayHint : null;
 }
 
+// ── Daily reflection ──
+let _reflectionShownDate = ""; // YYYY-MM-DD of the last shown reflection
+
+function _checkDailyReflection() {
+  const today = new Date();
+  const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  if (_reflectionShownDate === dateKey) return;
+  _reflectionShownDate = dateKey;
+  // Fire asynchronously so it doesn't block session handling
+  if (typeof ctx.onFirstSessionOfDay === "function") {
+    setTimeout(() => ctx.onFirstSessionOfDay(), 3000); // 3s delay — let pet wake up first
+  }
+}
+
 // ── Session management ──
 function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain, agentPid, agentId, host, headless, displayHint) {
   if (startupRecoveryActive) {
@@ -368,6 +382,8 @@ function updateSession(sessionId, state, event, sourcePid, cwd, editor, pidChain
   }
 
   const existing = sessions.get(sessionId);
+  // Trigger daily reflection on first new session of the day
+  if (!existing) _checkDailyReflection();
   const srcPid = sourcePid || (existing && existing.sourcePid) || null;
   const srcCwd = cwd || (existing && existing.cwd) || "";
   const srcEditor = editor || (existing && existing.editor) || null;

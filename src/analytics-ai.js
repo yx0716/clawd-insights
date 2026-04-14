@@ -90,6 +90,7 @@ function buildSessionContext(detail) {
 }
 
 module.exports = function initAnalyticsAI(ctx) {
+  const analysisCachePath = ctx.analysisCachePath || path.join(os.homedir(), ".clawd", "analysis-cache.json");
   const isWin = process.platform === "win32";
   let cachedInsights = null;
   let cacheExpiry = 0;
@@ -1494,7 +1495,63 @@ module.exports = function initAnalyticsAI(ctx) {
     result._cacheable = !isTransientAnalysisFailure(result);
     if (result._cacheable) sessionAnalysisCache.set(cacheKey, result);
     else sessionAnalysisCache.delete(cacheKey);
+    // Persist cacheable results to disk so daily reflection can read them after restart
+    if (result._cacheable) _persistAnalysisResult(cacheKey, result);
     return result;
+  }
+
+  // ── Disk persistence for daily reflection ──
+
+  let _diskCacheDebounce = null;
+
+  function _persistAnalysisResult(cacheKey, result) {
+    // Debounce writes — multiple analyses may run in quick succession (batch mode)
+    if (_diskCacheDebounce) clearTimeout(_diskCacheDebounce);
+    _diskCacheDebounce = setTimeout(() => {
+      _diskCacheDebounce = null;
+      try {
+        const dir = path.dirname(analysisCachePath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        let cache = {};
+        try { cache = JSON.parse(fs.readFileSync(analysisCachePath, "utf8")); } catch { /* fresh */ }
+        if (!cache.sessions) cache.sessions = {};
+        // Strip internal fields, keep only what daily reflection needs
+        const slim = {
+          summary: result.summary || "",
+          keyTopics: result.keyTopics || [],
+          outcomes: result.outcomes || [],
+          timeBreakdown: result.timeBreakdown || [],
+          suggestions: result.suggestions || [],
+          _mode: result._mode || "brief",
+          _provider: result._provider || "",
+          _ts: Date.now(),
+        };
+        cache.sessions[cacheKey] = slim;
+        // Prune entries older than 7 days to prevent unbounded growth
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        for (const [k, v] of Object.entries(cache.sessions)) {
+          if (v._ts && v._ts < cutoff) delete cache.sessions[k];
+        }
+        fs.writeFileSync(analysisCachePath, JSON.stringify(cache));
+      } catch (err) {
+        console.warn("Clawd: failed to persist analysis cache:", err.message);
+      }
+    }, 500);
+  }
+
+  function loadPersistedAnalyses(startTs, endTs) {
+    try {
+      if (!fs.existsSync(analysisCachePath)) return [];
+      const cache = JSON.parse(fs.readFileSync(analysisCachePath, "utf8"));
+      if (!cache.sessions) return [];
+      const results = [];
+      for (const [key, entry] of Object.entries(cache.sessions)) {
+        if (entry._ts && entry._ts >= startTs && entry._ts < endTs) {
+          results.push({ cacheKey: key, ...entry });
+        }
+      }
+      return results;
+    } catch { return []; }
   }
 
   function clearAnalysisCaches() {
@@ -1934,7 +1991,7 @@ module.exports = function initAnalyticsAI(ctx) {
     return null;
   }
 
-  return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches };
+  return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses };
 };
 
 module.exports.__test = {
