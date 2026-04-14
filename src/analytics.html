@@ -417,6 +417,7 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      cursor: grab;
     }
 
     .timeline-lane {
@@ -2076,7 +2077,7 @@
         onboardingPoint2: "2. 时间轴可滚轮缩放",
         onboardingPoint3: "3. 默认 provider 去设置里改",
         onboardingDismiss: "知道了",
-        timelineHint: "提示：把鼠标放在时间轴上滚轮缩放，快速展开某一块；按 <kbd>←</kbd> / <kbd>→</kbd> 可左右移动。",
+        timelineHint: "提示：滚轮缩放时间轴，拖拽或 <kbd>←</kbd> / <kbd>→</kbd> 左右平移。",
         analysisPlaceholder: "← 点击左侧 Session 查看 AI 分析",
         analyzing: "分析中...",
         distribution: "分布",
@@ -2212,7 +2213,7 @@
         onboardingPoint2: "2. Use the wheel to zoom the timeline",
         onboardingPoint3: "3. Change the default provider in Settings",
         onboardingDismiss: "Got it",
-        timelineHint: "Tip: hover the timeline and use the wheel to zoom into a segment; press <kbd>←</kbd> / <kbd>→</kbd> to pan left or right.",
+        timelineHint: "Tip: scroll to zoom the timeline; drag or press <kbd>←</kbd> / <kbd>→</kbd> to pan.",
         analysisPlaceholder: "← Click a session on the left to view AI analysis",
         analyzing: "Analyzing...",
         distribution: "Distribution",
@@ -3059,6 +3060,67 @@
       renderTimeline(currentData);
     }
 
+    // ── Mouse Drag Pan ──
+    // pointermove/up live on document so they survive innerHTML rebuilds inside renderTimeline().
+    // trackWidth is cached at drag-start because the original track element gets destroyed mid-drag.
+    let dragState = null;
+
+    function handleTimelinePointerDown(e) {
+      if (e.button !== 0 || e.target.closest(".time-block")) return;
+      const track = e.target.closest(".timeline-tracks");
+      if (!track) return;
+      dragState = {
+        startX: e.clientX,
+        startRange: { ...timelineRange },
+        trackWidth: track.getBoundingClientRect().width,
+        moved: false,
+        rafPending: false,
+      };
+      document.body.style.cursor = "grabbing";
+      e.preventDefault();
+    }
+
+    document.addEventListener("pointermove", (e) => {
+      if (!dragState) return;
+      const dx = e.clientX - dragState.startX;
+      if (!dragState.moved && Math.abs(dx) < 3) return;
+      dragState.moved = true;
+
+      const { startHour, endHour } = dragState.startRange;
+      const span = endHour - startHour;
+      const hourDelta = -(dx / dragState.trackWidth) * span;
+
+      let newStart = startHour + hourDelta;
+      let newEnd = endHour + hourDelta;
+      if (newStart < 0) { newEnd -= newStart; newStart = 0; }
+      if (newEnd > 24) { newStart -= (newEnd - 24); newEnd = 24; }
+      newStart = Math.max(0, newStart);
+      newEnd = Math.min(24, newEnd);
+
+      timelineRange = { startHour: newStart, endHour: newEnd };
+      userOverrideRange = true;
+
+      if (!dragState.rafPending) {
+        dragState.rafPending = true;
+        requestAnimationFrame(() => {
+          if (!dragState) return;
+          dragState.rafPending = false;
+          renderTimeAxis();
+          renderTimeline(currentData);
+        });
+      }
+    });
+
+    document.addEventListener("pointerup", (e) => {
+      if (!dragState) return;
+      document.body.style.cursor = "";
+      if (dragState.moved) {
+        renderTimeAxis();
+        renderTimeline(currentData);
+      }
+      dragState = null;
+    });
+
     // ── Keyboard Pan (arrow keys) ──
     document.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -3193,7 +3255,10 @@
       c.innerHTML = html;
       c.querySelectorAll(".time-block").forEach(el => { el.addEventListener("mouseenter", showTip); el.addEventListener("mouseleave", hideTip); el.addEventListener("click", onBlockClick); });
       // Wheel zoom on timeline tracks
-      c.querySelectorAll(".timeline-tracks").forEach(el => { el.addEventListener("wheel", handleTimelineWheel, { passive: false }); });
+      c.querySelectorAll(".timeline-tracks").forEach(el => {
+        el.addEventListener("wheel", handleTimelineWheel, { passive: false });
+        el.addEventListener("pointerdown", handleTimelinePointerDown);
+      });
     }
 
     // ── Distribution (by project) ──
