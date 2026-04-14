@@ -1,5 +1,8 @@
 "use strict";
 
+// Portrait displays tend to be physically narrower, so the pet at ratio% of the long edge
+// still reads as small. 1.6× lifts it back to a visually comparable size, while the 0.6
+// cap on width prevents a tall narrow screen from being swallowed by the pet.
 const PORTRAIT_BOOST = 1.6;
 const PORTRAIT_MAX_WIDTH_RATIO = 0.6;
 
