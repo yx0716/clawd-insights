@@ -138,15 +138,9 @@ function _scanThemesDir(dir, builtin, themes, seen) {
 /**
  * Load and activate a theme by ID.
  *
- * Two modes:
- *   - default (lenient): missing or invalid theme falls back to "clawd"
- *     so startup can always produce an active theme even if prefs point
- *     at a deleted/corrupt theme. Callers that took this branch can
- *     detect it via `theme._fellBack === true` on the returned object
- *     and then hydrate prefs back to truth.
- *   - { strict: true }: missing or invalid theme throws. Used by the
- *     user-initiated switch path so prefs never commits a theme id that
- *     can't actually render.
+ * Strict mode throws on missing/invalid; lenient falls back to "clawd".
+ * Callers detect fallback by comparing the requested id against
+ * `returnedTheme._id` — no synthetic flag needed.
  *
  * @param {string} themeId
  * @param {{ strict?: boolean }} [opts]
@@ -154,19 +148,13 @@ function _scanThemesDir(dir, builtin, themes, seen) {
  */
 function loadTheme(themeId, opts = {}) {
   const strict = !!opts.strict;
-  // Try built-in first, then user themes dir
   const { raw, isBuiltin, themeDir } = _readThemeJson(themeId);
 
   if (!raw) {
     const msg = `Theme "${themeId}" not found`;
     if (strict) throw new Error(msg);
     console.error(`[theme-loader] ${msg}`);
-    if (themeId !== "clawd") {
-      const fallback = loadTheme("clawd");
-      fallback._fellBack = true;
-      fallback._fallbackFrom = themeId;
-      return fallback;
-    }
+    if (themeId !== "clawd") return loadTheme("clawd");
     throw new Error("Default theme 'clawd' not found");
   }
 
@@ -175,12 +163,7 @@ function loadTheme(themeId, opts = {}) {
     const msg = `Theme "${themeId}" validation errors: ${errors.join("; ")}`;
     if (strict) throw new Error(msg);
     console.error(`[theme-loader] ${msg}`);
-    if (themeId !== "clawd") {
-      const fallback = loadTheme("clawd");
-      fallback._fellBack = true;
-      fallback._fallbackFrom = themeId;
-      return fallback;
-    }
+    if (themeId !== "clawd") return loadTheme("clawd");
   }
 
   // Merge defaults for optional fields
@@ -739,64 +722,74 @@ function getSoundUrl(soundName) {
   return null;
 }
 
+// basename() strips any path segments in theme.json so a malicious
+// `preview: "../../foo"` can't escape the theme dir.
+function _buildPreviewUrl(raw, themeDir, isBuiltin) {
+  const previewFile = (typeof raw.preview === "string" && raw.preview)
+    || (raw.states && Array.isArray(raw.states.idle) && raw.states.idle[0])
+    || null;
+  if (!previewFile) return null;
+  const filename = path.basename(previewFile);
+  // clawd reuses assets/svg/ at repo root; calico + user themes have their own.
+  let absPath = null;
+  const themeLocal = path.join(themeDir, "assets", filename);
+  if (fs.existsSync(themeLocal)) {
+    absPath = themeLocal;
+  } else if (isBuiltin && assetsSvgDir) {
+    const central = path.join(assetsSvgDir, filename);
+    if (fs.existsSync(central)) absPath = central;
+  }
+  if (!absPath) return null;
+  try { return pathToFileURL(absPath).href; } catch { return null; }
+}
+
 /**
- * Read metadata for a single theme WITHOUT activating it — used by the
- * settings panel to show thumbnails for every known theme side-by-side.
- * Resolves `theme.json.preview` (if present) or falls back to the first
- * entry of `states.idle` per the Phase 3a contract.
- *
- * Returns `null` if the theme is missing/malformed (settings panel just
- * hides the entry rather than crashing).
- *
- * @param {string} themeId
- * @returns {{
- *   id: string,
- *   name: string,
- *   builtin: boolean,
- *   previewFileUrl: string|null,
- * }|null}
+ * Read metadata for a single theme WITHOUT activating it.
+ * Returns null for missing/malformed themes.
  */
 function getThemeMetadata(themeId) {
   const { raw, isBuiltin, themeDir } = _readThemeJson(themeId);
   if (!raw) return null;
-
-  const previewFile = (typeof raw.preview === "string" && raw.preview)
-    || (raw.states && Array.isArray(raw.states.idle) && raw.states.idle[0])
-    || null;
-
-  let previewFileUrl = null;
-  if (previewFile) {
-    // Security: basename() strips any path segments in theme.json — a
-    // malicious theme can't escape the theme dir via `preview: "../../foo"`.
-    const filename = path.basename(previewFile);
-    let absPath = null;
-    if (isBuiltin) {
-      // Built-in themes with their own assets dir (calico) put files there;
-      // clawd reuses assets/svg/ at the repo root. Try theme-local first,
-      // fall back to central assets dir.
-      const themeLocal = path.join(themeDir, "assets", filename);
-      if (fs.existsSync(themeLocal)) {
-        absPath = themeLocal;
-      } else if (assetsSvgDir) {
-        const central = path.join(assetsSvgDir, filename);
-        if (fs.existsSync(central)) absPath = central;
-      }
-    } else {
-      // User theme: always under the theme's own assets dir.
-      const themeLocal = path.join(themeDir, "assets", filename);
-      if (fs.existsSync(themeLocal)) absPath = themeLocal;
-    }
-    if (absPath) {
-      try { previewFileUrl = pathToFileURL(absPath).href; } catch { /* bad path */ }
-    }
-  }
-
   return {
     id: themeId,
     name: raw.name || themeId,
     builtin: !!isBuiltin,
-    previewFileUrl,
+    previewFileUrl: _buildPreviewUrl(raw, themeDir, isBuiltin),
   };
+}
+
+/**
+ * Single-pass scan + metadata build — used by the settings panel.
+ * Avoids the O(2N) read that `discoverThemes() + getThemeMetadata() per id`
+ * would incur since this path fires on every theme-tab open and on every
+ * `theme` / `themeOverrides` broadcast.
+ */
+function listThemesWithMetadata() {
+  const themes = [];
+  const seen = new Set();
+  if (builtinThemesDir) _scanMetadata(builtinThemesDir, true, themes, seen);
+  if (userThemesDir) _scanMetadata(userThemesDir, false, themes, seen);
+  return themes;
+}
+
+function _scanMetadata(dir, builtin, themes, seen) {
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || seen.has(entry.name)) continue;
+      const jsonPath = path.join(dir, entry.name, "theme.json");
+      if (!fs.existsSync(jsonPath)) continue;
+      let raw;
+      try { raw = JSON.parse(fs.readFileSync(jsonPath, "utf8")); } catch { continue; }
+      const themeDir = path.join(dir, entry.name);
+      themes.push({
+        id: entry.name,
+        name: raw.name || entry.name,
+        builtin,
+        previewFileUrl: _buildPreviewUrl(raw, themeDir, builtin),
+      });
+      seen.add(entry.name);
+    }
+  } catch { /* dir missing */ }
 }
 
 module.exports = {
@@ -805,6 +798,7 @@ module.exports = {
   loadTheme,
   getActiveTheme,
   getThemeMetadata,
+  listThemesWithMetadata,
   resolveHint,
   getAssetPath,
   getRendererAssetsPath,

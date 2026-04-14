@@ -66,7 +66,6 @@ const STRINGS = {
     themeDeleteLabel: "Delete theme",
     toastThemeDeleted: "Theme deleted.",
     toastThemeDeleteFailed: "Couldn't delete theme: ",
-    themeOpenFolderLabel: "Open user themes folder",
   },
   zh: {
     settingsTitle: "设置",
@@ -119,7 +118,6 @@ const STRINGS = {
     themeDeleteLabel: "删除主题",
     toastThemeDeleted: "主题已删除。",
     toastThemeDeleteFailed: "删除主题失败：",
-    themeOpenFolderLabel: "打开用户主题目录",
   },
 };
 
@@ -233,9 +231,6 @@ function renderThemeTab(parent) {
   subtitle.textContent = t("themeSubtitle");
   parent.appendChild(subtitle);
 
-  // First render: kick off an async fetch, show an empty shell in the
-  // meantime. Subsequent renders use the cached list so tab-flip stays
-  // instant.
   if (themeList === null) {
     const loading = document.createElement("div");
     loading.className = "placeholder-desc";
@@ -268,9 +263,6 @@ function buildThemeCard(theme) {
   card.setAttribute("aria-checked", theme.active ? "true" : "false");
   if (theme.active) card.classList.add("active");
 
-  // Thumbnail — img with file:// URL if preview resolved, otherwise a
-  // neutral glyph. APNG thumbnails animate inside the <img>; acceptable
-  // as a "degraded but working" behavior per Phase 3a decision.
   const thumb = document.createElement("div");
   thumb.className = "theme-thumb";
   if (theme.previewFileUrl) {
@@ -287,7 +279,6 @@ function buildThemeCard(theme) {
   }
   card.appendChild(thumb);
 
-  // Name + builtin badge on same row.
   const name = document.createElement("div");
   name.className = "theme-card-name";
   const nameText = document.createElement("span");
@@ -302,67 +293,39 @@ function buildThemeCard(theme) {
   }
   card.appendChild(name);
 
-  // Footer: active indicator on the left, delete button on the right.
-  // Delete is hidden for built-ins (safety) and for the active theme
-  // (must switch away first). Those two rules are also enforced by the
-  // settings-actions removeTheme gate — the UI just avoids offering
-  // the button in the first place.
-  const footer = document.createElement("div");
-  footer.className = "theme-card-footer";
-  const indicator = document.createElement("span");
-  indicator.className = "theme-card-check";
-  indicator.textContent = theme.active ? t("themeActiveIndicator") : "";
-  footer.appendChild(indicator);
-  if (!theme.builtin && !theme.active) {
-    const btn = document.createElement("button");
-    btn.className = "theme-delete-btn";
-    btn.type = "button";
-    btn.textContent = "\u{1F5D1}";
-    btn.title = t("themeDeleteLabel");
-    btn.setAttribute("aria-label", t("themeDeleteLabel"));
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      handleDeleteTheme(theme);
-    });
-    footer.appendChild(btn);
-  }
-  card.appendChild(footer);
-
-  // Click / keyboard anywhere on the card (except the delete button, which
-  // stopPropagation'd) selects the theme.
-  const select = () => {
-    if (theme.active) return;
-    if (card.classList.contains("pending")) return;
-    card.classList.add("pending");
-    Promise.resolve()
-      .then(() => window.settingsAPI.update("theme", theme.id))
-      .then((result) => {
-        card.classList.remove("pending");
-        if (!result || result.status !== "ok") {
-          const msg = (result && result.message) || "unknown error";
-          showToast(t("toastSaveFailed") + msg, { error: true });
-        }
-        // On success the broadcast re-renders and marks this card active.
-      })
-      .catch((err) => {
-        card.classList.remove("pending");
-        showToast(t("toastSaveFailed") + (err && err.message), { error: true });
+  const canDelete = !theme.builtin && !theme.active;
+  if (theme.active || canDelete) {
+    const footer = document.createElement("div");
+    footer.className = "theme-card-footer";
+    const indicator = document.createElement("span");
+    indicator.className = "theme-card-check";
+    indicator.textContent = theme.active ? t("themeActiveIndicator") : "";
+    footer.appendChild(indicator);
+    if (canDelete) {
+      const btn = document.createElement("button");
+      btn.className = "theme-delete-btn";
+      btn.type = "button";
+      btn.textContent = "\u{1F5D1}";
+      btn.title = t("themeDeleteLabel");
+      btn.setAttribute("aria-label", t("themeDeleteLabel"));
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        handleDeleteTheme(theme);
       });
-  };
-  card.addEventListener("click", select);
-  card.addEventListener("keydown", (ev) => {
-    if (ev.key === " " || ev.key === "Enter") {
-      ev.preventDefault();
-      select();
+      footer.appendChild(btn);
     }
+    card.appendChild(footer);
+  }
+
+  attachActivation(card, () => {
+    if (theme.active) return { status: "ok", noop: true };
+    return window.settingsAPI.update("theme", theme.id);
   });
   return card;
 }
 
 function handleDeleteTheme(theme) {
   if (!window.settingsAPI) return;
-  // Main-process native dialog — renderer never owns the confirmation
-  // decision. Returns { confirmed: boolean }.
   window.settingsAPI
     .confirmRemoveTheme(theme.id)
     .then((res) => {
@@ -370,15 +333,13 @@ function handleDeleteTheme(theme) {
       return window.settingsAPI.command("removeTheme", theme.id);
     })
     .then((result) => {
-      if (result == null) return; // dialog cancelled
+      if (result == null) return;
       if (result.status !== "ok") {
         const msg = (result && result.message) || "unknown error";
         showToast(t("toastThemeDeleteFailed") + msg, { error: true });
         return;
       }
       showToast(t("toastThemeDeleted"));
-      // Re-fetch since the deleted theme won't show up in discoverThemes
-      // anymore. Then re-render if still on this tab.
       fetchThemes().then(() => {
         if (activeTab === "theme") renderContent();
       });
@@ -483,7 +444,7 @@ function buildAgentSwitchRow({ agent, flag, extraClass, buildText }) {
   const on = readFlag();
   if (on) sw.classList.add("on");
   sw.setAttribute("aria-checked", on ? "true" : "false");
-  attachSwitchToggle(sw, () =>
+  attachActivation(sw, () =>
     window.settingsAPI.command("setAgentFlag", {
       agentId: agent.id,
       flag,
@@ -577,31 +538,28 @@ function buildSection(title, rows) {
   return section;
 }
 
-// Wire click + Space/Enter keydown on a `.switch` to an async invoker that
-// returns a `Promise<{status, message?}>`. Handles pending state, error
-// toasts, and keyboard activation identically across all rows — so
-// `buildSwitchRow` (pure prefs) and `buildAgentRow` (command-backed) share
-// a single toggle behavior.
-function attachSwitchToggle(sw, invoke) {
+// Wire click + Space/Enter keydown on any element to an async invoker that
+// returns a `Promise<{status, message?}>`. Shared by switches and cards.
+function attachActivation(el, invoke) {
   const run = () => {
-    if (sw.classList.contains("pending")) return;
-    sw.classList.add("pending");
+    if (el.classList.contains("pending")) return;
+    el.classList.add("pending");
     Promise.resolve()
       .then(invoke)
       .then((result) => {
-        sw.classList.remove("pending");
+        el.classList.remove("pending");
         if (!result || result.status !== "ok") {
           const msg = (result && result.message) || "unknown error";
           showToast(t("toastSaveFailed") + msg, { error: true });
         }
       })
       .catch((err) => {
-        sw.classList.remove("pending");
+        el.classList.remove("pending");
         showToast(t("toastSaveFailed") + (err && err.message), { error: true });
       });
   };
-  sw.addEventListener("click", run);
-  sw.addEventListener("keydown", (ev) => {
+  el.addEventListener("click", run);
+  el.addEventListener("keydown", (ev) => {
     if (ev.key === " " || ev.key === "Enter") {
       ev.preventDefault();
       run();
@@ -627,7 +585,7 @@ function buildSwitchRow({ key, labelKey, descKey, invert = false }) {
   sw.setAttribute("aria-checked", visualOn ? "true" : "false");
   // No optimistic update — visual state flips on broadcast, not on click.
   // If the action fails, the broadcast never fires and the switch stays.
-  attachSwitchToggle(sw, () => {
+  attachActivation(sw, () => {
     const currentRaw = !!(snapshot && snapshot[key]);
     const currentVisual = invert ? !currentRaw : currentRaw;
     const nextRaw = invert ? currentVisual : !currentVisual;
@@ -691,16 +649,19 @@ window.settingsAPI.onChanged((payload) => {
   // resolves — rendering with a null snapshot blanks the UI and the
   // initial render later would need to re-fetch static language state.
   if (!snapshot) return;
-  // If the theme changed (menu-side switch, startup fallback hydrate, etc.)
-  // the list's `active` flags are stale — refetch then re-render. Cheap:
-  // discoverThemes + getThemeMetadata is just a handful of fs stats.
+  // Patch `active` in place when only `theme` changed — cheaper than
+  // a full refetch. `themeOverrides` changes (e.g. removeTheme cleanup)
+  // can alter the list shape, so those still refetch.
   const changes = payload && payload.changes;
-  if (changes && ("theme" in changes || "themeOverrides" in changes)) {
+  if (changes && "themeOverrides" in changes) {
     fetchThemes().then(() => {
       renderSidebar();
       renderContent();
     });
     return;
+  }
+  if (changes && "theme" in changes && themeList) {
+    themeList = themeList.map((t) => ({ ...t, active: t.id === changes.theme }));
   }
   renderSidebar();
   renderContent();

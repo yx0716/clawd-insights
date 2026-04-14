@@ -66,17 +66,14 @@ describe("theme-loader strict mode", () => {
   });
   after(() => fixture && fixture.cleanup());
 
-  it("lenient load falls back to clawd and marks _fellBack when theme missing", () => {
+  it("lenient load falls back to clawd when theme missing", () => {
     const theme = themeLoader.loadTheme("doesNotExist");
     assert.strictEqual(theme._id, "clawd");
-    assert.strictEqual(theme._fellBack, true);
-    assert.strictEqual(theme._fallbackFrom, "doesNotExist");
   });
 
   it("lenient load falls back when theme validation fails", () => {
     const theme = themeLoader.loadTheme("broken");
     assert.strictEqual(theme._id, "clawd");
-    assert.strictEqual(theme._fellBack, true);
   });
 
   it("strict load throws when theme is missing", () => {
@@ -93,10 +90,9 @@ describe("theme-loader strict mode", () => {
     );
   });
 
-  it("strict load succeeds on a valid theme and does not mark _fellBack", () => {
+  it("strict load succeeds on a valid theme", () => {
     const theme = themeLoader.loadTheme("good", { strict: true });
     assert.strictEqual(theme._id, "good");
-    assert.strictEqual(theme._fellBack, undefined);
   });
 });
 

@@ -219,18 +219,8 @@ const updateRegistry = {
     return { status: "ok" };
   },
 
-  // ── Theme ──
-  //
-  // Object-form pre-commit gate: the user selects a theme, the effect loads
-  // and activates it in strict mode (no silent fallback to "clawd"). If the
-  // theme is missing or its JSON is malformed, the effect returns error,
-  // the commit is rejected, the UI stays on the previously-selected theme,
-  // and the caller surfaces a toast. Keeps the "store is always truth"
-  // invariant: we never commit a theme id that can't actually render.
-  //
-  // Startup recovery takes a different path: main.js calls the lenient
-  // loadTheme() first, and if it falls back, hydrates prefs back to "clawd"
-  // via controller.hydrate() — which skips this effect on purpose.
+  // Strict activation gate. Startup uses the lenient path + hydrate() so
+  // a deleted theme can't brick boot without polluting this effect.
   theme: {
     validate: requireString("theme"),
     effect(value, deps) {
@@ -346,20 +336,6 @@ function setAgentFlag(payload, deps) {
   return { status: "ok", commit: { agents: nextAgents } };
 }
 
-// removeTheme — delete a user-installed theme directory from disk.
-//
-// Guarantees three defensive checks before touching the filesystem:
-//   1. payload is a non-empty string theme id
-//   2. the theme is NOT built-in (clawd / calico ship with the app — deleting
-//      them would leave fallback broken on next startup)
-//   3. the theme is NOT currently active (must be switched away first so the
-//      renderer isn't holding file handles + user sees what they're about to
-//      delete goes offline first)
-//
-// All three checks happen BEFORE fs.rm so the UI can give a precise error
-// without any filesystem mutation. The commit clears
-// themeOverrides[themeId] too so orphan override entries don't linger after
-// the theme is gone.
 const _validateRemoveThemeId = requireString("removeTheme.themeId");
 async function removeTheme(payload, deps) {
   const themeId = typeof payload === "string" ? payload : (payload && payload.themeId);

@@ -198,12 +198,12 @@ function stopMonitorForAgent(agentId) {
 const themeLoader = require("./theme-loader");
 themeLoader.init(__dirname, app.getPath("userData"));
 
-// Startup: lenient loadTheme so a missing/corrupt user-selected theme can't
-// brick the app. If loadTheme fell back to "clawd", the store still thinks
-// the old theme is active — hydrate it back to "clawd" so the "store is
-// truth" invariant holds and the next menu render shows the right check.
-let activeTheme = themeLoader.loadTheme(_settingsController.get("theme") || "clawd");
-if (activeTheme && activeTheme._fellBack) {
+// Lenient load so a missing/corrupt user-selected theme can't brick boot.
+// If lenient fell back to "clawd", hydrate prefs to match so the store
+// stays truth.
+const _requestedThemeId = _settingsController.get("theme") || "clawd";
+let activeTheme = themeLoader.loadTheme(_requestedThemeId);
+if (activeTheme._id !== _requestedThemeId) {
   const result = _settingsController.hydrate({ theme: activeTheme._id });
   if (result && result.status === "error") {
     console.warn("Clawd: theme hydrate after fallback failed:", result.message);
@@ -892,58 +892,48 @@ ipcMain.handle("settings:command", async (_event, payload) => {
 // row per agent. Static because it comes from agents/registry.js — no runtime
 // state involved — so the renderer can cache the result and never has to
 // re-fetch.
-// Theme list for the Phase 3a Theme tab. Pulls discover + getThemeMetadata
-// per id + flags the active one. Static-ish (no snapshot field), so the
-// renderer re-fetches on demand (after command removeTheme + on broadcasts
-// that touch `theme` or `themeOverrides`). Not in the snapshot because the
-// on-disk theme list is unbounded and prefs shouldn't carry derived state.
 ipcMain.handle("settings:list-themes", () => {
   try {
     const activeId = activeTheme ? activeTheme._id : "clawd";
-    const list = themeLoader.discoverThemes();
-    return list.map((t) => {
-      const meta = themeLoader.getThemeMetadata(t.id) || {};
-      return {
-        id: t.id,
-        name: meta.name || t.name,
-        builtin: !!t.builtin,
-        active: t.id === activeId,
-        previewFileUrl: meta.previewFileUrl || null,
-      };
-    });
+    return themeLoader.listThemesWithMetadata().map((t) => ({
+      ...t,
+      active: t.id === activeId,
+    }));
   } catch (err) {
     console.warn("Clawd: settings:list-themes failed:", err && err.message);
     return [];
   }
 });
 
-// Native "are you sure?" dialog for theme deletion. Kept in main because
-// `dialog.showMessageBox` takes a BrowserWindow reference the renderer can't
-// hand over. Returns `{ confirmed: boolean }`. Renderer calls this before
-// issuing `settings:command removeTheme`.
+// Kept in main so `dialog.showMessageBox` can take a BrowserWindow ref.
+const REMOVE_THEME_DIALOG_STRINGS = {
+  en: {
+    delete: "Delete",
+    cancel: "Cancel",
+    message: (name) => `Delete theme "${name}"?`,
+    detail: "This cannot be undone. All files for this theme will be removed from disk.",
+  },
+  zh: {
+    delete: "删除",
+    cancel: "取消",
+    message: (name) => `确认删除主题 "${name}"？`,
+    detail: "此操作不可撤销。主题的所有文件将从磁盘移除。",
+  },
+};
 ipcMain.handle("settings:confirm-remove-theme", async (event, themeId) => {
-  if (typeof themeId !== "string" || !themeId) {
-    return { confirmed: false };
-  }
+  if (typeof themeId !== "string" || !themeId) return { confirmed: false };
   const meta = themeLoader.getThemeMetadata(themeId);
   const displayName = (meta && meta.name) || themeId;
   const parent = BrowserWindow.fromWebContents(event.sender) || settingsWindow || null;
-  const primaryLabel = lang === "zh" ? "删除" : "Delete";
-  const cancelLabel = lang === "zh" ? "取消" : "Cancel";
-  const message = lang === "zh"
-    ? `确认删除主题 "${displayName}"？`
-    : `Delete theme "${displayName}"?`;
-  const detail = lang === "zh"
-    ? "此操作不可撤销。主题的所有文件将从磁盘移除。"
-    : "This cannot be undone. All files for this theme will be removed from disk.";
+  const s = REMOVE_THEME_DIALOG_STRINGS[lang] || REMOVE_THEME_DIALOG_STRINGS.en;
   try {
     const { response } = await dialog.showMessageBox(parent, {
       type: "warning",
-      buttons: [primaryLabel, cancelLabel],
+      buttons: [s.delete, s.cancel],
       defaultId: 1,
       cancelId: 1,
-      message,
-      detail,
+      message: s.message(displayName),
+      detail: s.detail,
       noLink: true,
     });
     return { confirmed: response === 0 };
@@ -1447,53 +1437,40 @@ Object.defineProperties(this || {}, {}); // no-op placeholder
 
 // ── Theme switching ──
 //
-// `activateTheme` is the pre-commit effect invoked by the `theme` settings
-// action. It MUST throw on failure — the controller treats a thrown effect
-// as commit rejection, so a bad theme id never lands in prefs and the UI
-// stays on the previously-selected theme + surfaces a toast.
-//
-// Strict load (no silent fallback to "clawd"): if the user picks theme X
-// and X is malformed, they must see the error, not have the pet quietly
-// render clawd while prefs say X. Startup recovery takes the lenient path
-// elsewhere.
-//
-// This function does NOT write `theme` back to prefs — the controller
-// commits after the effect returns ok. Persisting here would infinite-loop.
+// The `theme` settings effect calls this. MUST throw on failure so the
+// controller rejects the commit — otherwise prefs would record a theme id
+// that can't actually render. Does NOT write `theme` back to prefs; the
+// controller commits after this returns (writing here would infinite-loop).
 function activateTheme(themeId) {
   if (!win || win.isDestroyed()) {
     throw new Error("theme switch requires ready windows");
   }
   if (activeTheme && activeTheme._id === themeId) return;
 
-  // Strict load FIRST — if it throws, nothing downstream has mutated yet.
+  // Strict load first: if it throws, nothing downstream has mutated yet.
   const newTheme = themeLoader.loadTheme(themeId, { strict: true });
 
-  // 1. Cleanup timers in all modules
   _state.cleanup();
   _tick.cleanup();
   _mini.cleanup();
-  // ⚠️ Don't clear pendingPermissions — permission bubbles are independent BrowserWindows
+  // ⚠️ Don't clear pendingPermissions — bubbles are independent BrowserWindows
   // ⚠️ Don't clear sessions — keep active session tracking
   // ⚠️ Don't clear displayHint — semantic tokens resolve through new theme's map
 
-  // 2. If currently in mini mode and new theme doesn't support mini, exit first
   if (_mini.getMiniMode() && !newTheme.miniMode.supported) {
     _mini.exitMiniMode();
   }
 
-  // 3. Update active theme
   activeTheme = newTheme;
   _mini.refreshTheme();
   _state.refreshTheme();
   _tick.refreshTheme();
   if (_mini.getMiniMode()) _mini.handleDisplayChange();
 
-  // 4. Reload both windows
   themeReloadInProgress = true;
   win.webContents.reload();
   hitWin.webContents.reload();
 
-  // 5. After both reloads complete, re-sync state with the new theme.
   let ready = 0;
   const onReady = () => {
     if (++ready < 2) return;
@@ -1506,8 +1483,6 @@ function activateTheme(themeId) {
   win.webContents.once("did-finish-load", onReady);
   hitWin.webContents.once("did-finish-load", onReady);
 
-  // Flush runtime state (window bounds, mini) — the theme key itself is
-  // committed by the controller after this effect returns.
   flushRuntimeStateToPrefs();
 }
 
