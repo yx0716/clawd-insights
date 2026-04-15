@@ -265,6 +265,24 @@ module.exports = function initAnalytics(ctx) {
     return results;
   });
 
+  ipcMain.handle("analytics-knowledge-compound", async (_event, sessionIds, options) => {
+    if (!ctx.analyticsScan || !ctx.analyticsAI) return { error: true, summary: "模块未加载" };
+    const details = [];
+    for (const { id, agent } of sessionIds) {
+      const detail = ctx.analyticsScan.getSessionDetail(id, agent);
+      if (detail) details.push(detail);
+    }
+    if (!details.length) return { error: true, summary: "未找到对话数据" };
+    // Sanitize options: only pass through known fields to avoid forwarding renderer-controlled data blindly
+    const safeOptions = options && typeof options === "object" ? {
+      systemPrompt: typeof options.systemPrompt === "string" ? options.systemPrompt : undefined,
+      provider: typeof options.provider === "string" ? options.provider : undefined,
+    } : {};
+    const result = await ctx.analyticsAI.analyzeKnowledgeCompound(details, safeOptions);
+    try { return result ? JSON.parse(JSON.stringify(result)) : result; }
+    catch { return result; }
+  });
+
   function cleanup() {
     if (dashWin && !dashWin.isDestroyed()) {
       dashWin.destroy();

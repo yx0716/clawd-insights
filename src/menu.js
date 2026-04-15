@@ -138,6 +138,10 @@ module.exports = function initMenu(ctx) {
         label: t("theme"),
         submenu: buildThemeSubmenu(),
       },
+      {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
       { type: "separator" },
       {
         label: t("startOnLogin"),
@@ -475,6 +479,10 @@ module.exports = function initMenu(ctx) {
       {
         label: t("theme"),
         submenu: buildThemeSubmenu(),
+      },
+      {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
       },
     ];
     // macOS: Dock and Menu Bar visibility toggles

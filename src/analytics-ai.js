@@ -261,7 +261,7 @@ module.exports = function initAnalyticsAI(ctx) {
 
   // ── Provider-specific request builders ──
 
-  async function callClaude(apiKey, model, prompt) {
+  async function callClaude(apiKey, model, prompt, maxTokens = 500) {
     const cfg = getConfig() || {};
     const baseUrl = cfg.baseUrl || PROVIDERS.claude.baseUrl;
     const response = await fetch(`${baseUrl}/v1/messages`, {
@@ -273,7 +273,7 @@ module.exports = function initAnalyticsAI(ctx) {
       },
       body: JSON.stringify({
         model: model || PROVIDERS.claude.defaultModel,
-        max_tokens: 500,
+        max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -287,7 +287,7 @@ module.exports = function initAnalyticsAI(ctx) {
     return data.content && data.content[0] && data.content[0].text;
   }
 
-  async function callOpenAICompat(apiKey, model, prompt, baseUrl) {
+  async function callOpenAICompat(apiKey, model, prompt, baseUrl, maxTokens = 500) {
     const url = baseUrl || PROVIDERS.openai.baseUrl;
     const headers = { "Content-Type": "application/json" };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -297,7 +297,7 @@ module.exports = function initAnalyticsAI(ctx) {
       headers,
       body: JSON.stringify({
         model: model || PROVIDERS.openai.defaultModel,
-        max_tokens: 500,
+        max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       }),
     });
@@ -1108,6 +1108,50 @@ module.exports = function initAnalyticsAI(ctx) {
     required: ["summary", "keyTopics", "outcomes", "timeBreakdown", "suggestions"],
   };
 
+  // Knowledge compound output schema — passed to codex via --output-schema so
+  // strict mode produces topAssets/unlinkedConnections/behaviorObservation
+  // (matches the renderer in analytics.html). Without this, codex returns the
+  // session-analysis schema (summary/keyTopics/outcomes) and the renderer is
+  // empty.
+  const KNOWLEDGE_COMPOUND_OUTPUT_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      topAssets: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            sessions: { type: "array", items: { type: "string" } },
+            why: { type: "string" },
+          },
+          required: ["title", "sessions", "why"],
+        },
+      },
+      unlinkedConnections: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            a: { type: "string" },
+            b: { type: "string" },
+            insight: { type: "string" },
+          },
+          required: ["a", "b", "insight"],
+        },
+      },
+      behaviorObservation: { type: "string" },
+    },
+    required: ["topAssets", "unlinkedConnections", "behaviorObservation"],
+  };
+
+  // callCodexCLI(codexPath, prompt, options?)
+  //   options.cwd          — working dir for codex
+  //   options.outputSchema — override default ANALYSIS_OUTPUT_SCHEMA;
+  //                          pass `null` to omit --output-schema entirely.
   async function callCodexCLI(codexPath, prompt, options = {}) {
     const env = await sanitizeCliProxyEnv(buildCliEnv(), "codex");
     return new Promise((resolve, reject) => {
@@ -1115,7 +1159,13 @@ module.exports = function initAnalyticsAI(ctx) {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-codex-"));
       const outputFile = path.join(tmpDir, "last-message.txt");
       const schemaFile = path.join(tmpDir, "output-schema.json");
-      try { fs.writeFileSync(schemaFile, JSON.stringify(ANALYSIS_OUTPUT_SCHEMA)); } catch { /* ignore */ }
+      // Resolve schema: explicit null = skip; undefined = default; object = use as-is
+      const effectiveSchema = options && Object.prototype.hasOwnProperty.call(options, "outputSchema")
+        ? options.outputSchema
+        : ANALYSIS_OUTPUT_SCHEMA;
+      if (effectiveSchema) {
+        try { fs.writeFileSync(schemaFile, JSON.stringify(effectiveSchema)); } catch { /* ignore */ }
+      }
       // Probe the installed codex once for the long-flags it supports — older
       // codex (≤ 0.117) doesn't recognize --ephemeral or --output-schema and
       // hard-fails with "error: unexpected argument" if we hand it the
@@ -1140,7 +1190,7 @@ module.exports = function initAnalyticsAI(ctx) {
       );
       // codex 0.118+ only — without strict schema we rely on the prompt
       // wording + extractFirstJsonObject() fallback to recover usable JSON.
-      if (caps.has("--output-schema")) args.push("--output-schema", schemaFile);
+      if (caps.has("--output-schema") && effectiveSchema) args.push("--output-schema", schemaFile);
       args.push(
         "-o", outputFile,
         "-",
@@ -1991,7 +2041,230 @@ module.exports = function initAnalyticsAI(ctx) {
     return null;
   }
 
-  return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses };
+  // ── Knowledge Compound Interest (multi-session cross-analysis) ──
+
+  const KNOWLEDGE_COMPOUND_SYSTEM_PROMPT =
+    "你的任务是分析一组对话记录，从中提炼出对话者的「知识复利资产」。\n\n" +
+    "分析分三个层次：\n\n" +
+    "1. 原子知识点：对话中明确学到或讨论过的具体事实、技术细节、方法论。\n" +
+    "   列出每个知识点及其来源对话。\n\n" +
+    "2. 隐含模式：\n" +
+    "   - 跨对话反复出现的主题和关注点\n" +
+    "   - 对话者做判断/决策时的隐含偏好和思维框架\n" +
+    "   - 不同对话中的知识点之间存在但尚未被显式建立的连接\n" +
+    "   - 对话者擅长但可能自己没意识到的思维能力\n\n" +
+    "3. 复利潜力评估：\n" +
+    "   对上述发现按「复利潜力」排序。高复利的标准是：\n" +
+    "   - 跨领域可迁移（不只在一个场景有用）\n" +
+    "   - 半衰期长（一年后还有用）\n" +
+    "   - 已有多次复现（在不同对话中反复出现）\n" +
+    "   - 可以形成网络效应（与其他知识点连接越多价值越大）\n\n" +
+    "最终输出 JSON，格式如下：\n" +
+    '{"topAssets":[{"title":"资产名","sessions":["会话标题1","会话标题2"],"why":"为什么有高复利潜力"}],' +
+    '"unlinkedConnections":[{"a":"知识点A","b":"知识点B","insight":"为什么应该关联"}],' +
+    '"behaviorObservation":"对话者在习惯层面可以调整的一件事"}\n\n' +
+    "要求：\n" +
+    "- topAssets：3-5 条最高复利资产\n" +
+    "- unlinkedConnections：2-3 条未建立的连接\n" +
+    "- behaviorObservation：1 条行为模式观察\n" +
+    "- 所有字段用中文\n" +
+    "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
+
+  function buildKnowledgeCompoundPrompt(details) {
+    let p = "以下是用户与 AI agent 的多段对话记录。请综合分析。\n\n";
+    for (let i = 0; i < details.length; i++) {
+      const d = details[i];
+      p += `--- 对话 ${i + 1}`;
+      if (d.title) p += `: ${d.title}`;
+      p += " ---\n";
+      p += buildSessionContext(d);
+      p += "\n";
+    }
+    p += "\n请返回 JSON（不要 markdown code block）。";
+    return p;
+  }
+
+  // analyzeKnowledgeCompound(details, options?)
+  //   options.systemPrompt: override default system prompt
+  //   options.provider: "claude-code" | "codex" | "api:claude" | "api:openai" | "api:ollama"
+  //                     when omitted, auto-pick first available CLI, then config API.
+  async function analyzeKnowledgeCompound(details, options = {}) {
+    if (!details || !details.length) return null;
+    const startTime = Date.now();
+    const systemPrompt = (options && typeof options.systemPrompt === "string" && options.systemPrompt.trim())
+      ? options.systemPrompt
+      : KNOWLEDGE_COMPOUND_SYSTEM_PROMPT;
+    const prompt = buildKnowledgeCompoundPrompt(details);
+
+    // Resolve preferred provider
+    let preferred = options && typeof options.provider === "string" ? options.provider : "";
+    if (!preferred) {
+      const available = getAvailableAnalysisProviders();
+      const firstCli = available.find((p) => p.id === "claude-code" || p.id === "codex");
+      if (firstCli) preferred = firstCli.id;
+      else {
+        const cfg = getConfig();
+        preferred = cfg && cfg.provider ? `api:${cfg.provider}` : "claude-code";
+      }
+    }
+
+    // Route 1: Claude CLI with --append-system-prompt (preserves system/user separation)
+    if (preferred === "claude-code") {
+      const claudePath = findClaudeBinary();
+      if (!claudePath) return { error: true, summary: "Claude CLI 未找到。请安装 Claude Code 或改用其他 provider。" };
+      try {
+        const { text, usage, model, costUsd } = await callClaudeCLIWithSystem(claudePath, prompt, systemPrompt);
+        const parsed = extractFirstJsonObject(text);
+        if (parsed) {
+          parsed._provider = "claude-code";
+          parsed._model = model || getClaudeDefaultModel() || "unknown";
+          parsed._analysisMs = Date.now() - startTime;
+          if (usage) parsed._usage = usage;
+          if (typeof costUsd === "number") parsed._cost = { usd: costUsd, source: "cli" };
+          return parsed;
+        }
+        return { error: true, summary: "Claude CLI 返回内容无法解析为 JSON。" };
+      } catch (err) {
+        console.warn("Clawd knowledge-compound claude-code error:", err.message);
+        return { error: true, summary: `Claude CLI 执行失败：${err.message}` };
+      }
+    }
+
+    // Route 2: Codex CLI — no --append-system-prompt; fold system prompt into user prompt
+    if (preferred === "codex") {
+      const codexPath = findCodexBinary();
+      if (!codexPath) return { error: true, summary: "Codex CLI 未找到。请安装 Codex 或改用其他 provider。" };
+      try {
+        const combined = systemPrompt + "\n\n" + prompt;
+        // Override default analysis schema so codex returns
+        // topAssets/unlinkedConnections/behaviorObservation; otherwise
+        // strict-mode coerces output into summary/keyTopics/outcomes and the
+        // renderer shows an empty card.
+        const cliResult = await callCodexCLI(codexPath, combined, {
+          outputSchema: KNOWLEDGE_COMPOUND_OUTPUT_SCHEMA,
+        });
+        const parsed = extractFirstJsonObject(cliResult.text);
+        if (parsed) {
+          parsed._provider = "codex-cli";
+          parsed._model = cliResult.model || getCodexDefaultModel() || "unknown";
+          parsed._analysisMs = Date.now() - startTime;
+          if (cliResult.usage) parsed._usage = cliResult.usage;
+          if (typeof cliResult.costUsd === "number") {
+            parsed._cost = { usd: cliResult.costUsd, source: "cli" };
+          } else if (cliResult.usage) {
+            const est = estimateCost(cliResult.usage, parsed._model);
+            if (est) parsed._cost = { usd: est.usd, source: "estimate", pricingKey: est.pricingKey };
+          }
+          return parsed;
+        }
+        return { error: true, summary: "Codex CLI 返回内容无法解析为 JSON。" };
+      } catch (err) {
+        console.warn("Clawd knowledge-compound codex error:", err.message);
+        return { error: true, summary: `Codex CLI 执行失败：${err.message}` };
+      }
+    }
+
+    // Route 3: API provider (claude / openai / ollama)
+    let apiProviderId = preferred;
+    if (apiProviderId.startsWith("api:")) apiProviderId = apiProviderId.slice(4);
+    const cfg = getConfig();
+    const provider = (PROVIDERS[apiProviderId] ? apiProviderId : (cfg && cfg.provider) || "claude");
+    const apiKey = cfg && cfg.apiKey;
+    if (PROVIDERS[provider] && PROVIDERS[provider].needsKey && !apiKey) {
+      return { error: true, summary: "未配置 API Key，请先在设置中配置。" };
+    }
+    try {
+      const model = (cfg && cfg.model) || (PROVIDERS[provider] && PROVIDERS[provider].defaultModel);
+      const baseUrl = (cfg && cfg.baseUrl) || (PROVIDERS[provider] && PROVIDERS[provider].baseUrl);
+      const fullPrompt = systemPrompt + "\n\n" + prompt;
+      // Knowledge compound output is larger than brief analysis; bump max_tokens to 2000.
+      const MAX_TOKENS = 2000;
+      let text;
+      if (provider === "claude") text = await callClaude(apiKey, model, fullPrompt, MAX_TOKENS);
+      else if (provider === "ollama") text = await callOllama(model, fullPrompt, baseUrl);
+      else text = await callOpenAICompat(apiKey, model, fullPrompt, baseUrl, MAX_TOKENS);
+      const parsed = extractFirstJsonObject(text);
+      if (parsed) {
+        parsed._provider = provider;
+        parsed._model = model;
+        parsed._analysisMs = Date.now() - startTime;
+        return parsed;
+      }
+      return { error: true, summary: "API 返回内容无法解析为 JSON。" };
+    } catch (err) {
+      console.warn("Clawd knowledge-compound API error:", err.message);
+      return { error: true, summary: `API 调用失败：${err.message}` };
+    }
+  }
+
+  // callClaudeCLI variant with custom system prompt for knowledge compound
+  function callClaudeCLIWithSystem(claudePath, prompt, systemPrompt) {
+    return new Promise((resolve, reject) => {
+      const fullPrompt = buildInternalCliAnalysisPrompt(prompt);
+      const args = [
+        "-p", fullPrompt,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--tools", "",
+        "--disable-slash-commands",
+        "--append-system-prompt", systemPrompt,
+      ];
+      const child = spawnCli(claudePath, args, {
+        env: buildCliEnv({ CLAUDE_CODE_ENTRYPOINT: "cli" }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const timeoutMs = 120000; // longer timeout for multi-session
+      const maxBytes = 4 * 1024 * 1024;
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+
+      function fail(message) {
+        if (settled) return;
+        settled = true;
+        reject(new Error(message));
+        try { child.kill(); } catch {}
+      }
+
+      const timer = setTimeout(() => fail("knowledge-compound CLI timed out"), timeoutMs);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        if (stdout.length > maxBytes) fail("output too large");
+      });
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.on("error", (err) => fail(err.message));
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        if (settled) return;
+        if (code !== 0 && !stdout) { fail(`CLI exited ${code}: ${stderr.slice(0, 200)}`); return; }
+        // Parse stream-json the same way as callClaudeCLI
+        let text = "", usage = null, model = null, costUsd = null;
+        try {
+          for (const line of stdout.split("\n")) {
+            if (!line.trim()) continue;
+            const evt = JSON.parse(line);
+            if (evt.type === "assistant" && Array.isArray(evt.message && evt.message.content)) {
+              for (const block of evt.message.content) {
+                if (block.type === "text") text += block.text;
+              }
+              usage = evt.message.usage || usage;
+              model = evt.message.model || model;
+            } else if (evt.type === "result") {
+              if (typeof evt.cost_usd === "number") costUsd = evt.cost_usd;
+              if (evt.result) text = evt.result;
+            }
+          }
+        } catch {
+          text = stdout;
+        }
+        if (!text) text = stdout;
+        settled = true;
+        resolve({ text, usage, model, costUsd });
+      });
+    });
+  }
+
+  return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses, analyzeKnowledgeCompound };
 };
 
 module.exports.__test = {

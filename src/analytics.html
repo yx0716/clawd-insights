@@ -1036,6 +1036,66 @@
       max-height: 70vh;
       overflow-y: auto;
       align-self: start;
+      position: relative;
+    }
+
+    /* Icon-only copy button; injected inline next to the analysis summary
+       or knowledge-compound title. Sits on the right of a flex row so it
+       hugs the far edge of the content (see .analysis-summary-row /
+       .kc-title-row wrappers). */
+    .analysis-copy-btn {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-card);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s, transform .1s;
+    }
+
+    .analysis-copy-btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .analysis-copy-btn:active {
+      transform: scale(0.94);
+    }
+
+    .analysis-copy-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .analysis-copy-btn svg {
+      display: block;
+      width: 14px;
+      height: 14px;
+    }
+
+    /* Flex row wrapping the summary text / kc-title + copy button so
+       the button aligns with the first content line. */
+    .analysis-summary-row,
+    .kc-title-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .analysis-summary-row > .analysis-summary {
+      flex: 1 1 auto;
+      margin-bottom: 0;
+    }
+
+    .kc-title-row > .kc-title {
+      flex: 1 1 auto;
     }
 
     .toast-stack {
@@ -1074,6 +1134,34 @@
       border-color: #F3C7C4;
       background: #FFF5F4;
       color: #9F2D24;
+    }
+
+    /* ── Knowledge Compound ── */
+    .knowledge-compound { font-size: 12px; line-height: 1.7; }
+    .kc-title { font-size: 14px; font-weight: 600; margin: 0 0 4px; color: var(--text); }
+    .kc-meta { font-size: 10px; color: var(--text-muted); margin-bottom: 12px; }
+    .kc-section { font-size: 12px; font-weight: 600; margin: 14px 0 6px; color: var(--accent); border-bottom: 1px solid var(--border-light); padding-bottom: 3px; }
+    .kc-label { font-weight: 500; color: var(--text-muted); }
+    .kc-asset-card, .kc-conn-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+    }
+    .kc-asset-title { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .kc-asset-sessions { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+    .kc-asset-why { font-size: 11px; color: var(--text); }
+    .kc-conn-pair { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    .kc-conn-insight { font-size: 11px; color: var(--text); }
+    .kc-behavior {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text);
     }
 
     .analysis-panel .placeholder {
@@ -1924,6 +2012,7 @@
           <span class="evt-selection-count" id="evtSelectedCount" style="display:none"></span>
           <button class="events-action-btn" id="evtSelectAllBtn" type="button">全选可见</button>
           <button class="events-action-btn" id="evtClearSelectionBtn" type="button">清空</button>
+          <button class="events-action-btn primary" id="evtKnowledgeBtn" type="button" disabled>知识复利</button>
           <button class="events-action-btn primary" id="evtExportBtn" type="button" disabled>导出 AI 分析</button>
         </div>
       </div>
@@ -2087,6 +2176,28 @@
         selectVisibleSessions: "全选可见",
         clearSelection: "清空",
         selectedSessionsCount: "已选 {count}",
+        knowledgeCompound: "知识复利",
+        knowledgeCompoundRunning: "提炼中…",
+        knowledgeCompoundTitle: "知识复利沉淀",
+        knowledgeCompoundTopAssets: "最高复利资产",
+        knowledgeCompoundConnections: "未建立的连接",
+        knowledgeCompoundBehavior: "行为模式观察",
+        knowledgeCompoundEmpty: "请先选择 2 个以上 Session",
+        knowledgeCompoundError: "分析失败：{message}",
+        knowledgeCompoundSessions: "来源对话",
+        knowledgeCompoundWhy: "复利潜力",
+        knowledgeCompoundInsight: "关联洞察",
+        knowledgeCompoundConfigTitle: "知识复利沉淀 — 配置",
+        knowledgeCompoundConfigSub: "选择预置分析角度、调整系统 prompt、或切换模型。",
+        knowledgeCompoundPreset: "预置分析",
+        knowledgeCompoundPresetCustom: "自定义（基于上一次）",
+        knowledgeCompoundSystemPromptLabel: "系统 Prompt",
+        knowledgeCompoundSystemPromptHint: "将作为 system / append-system-prompt 注入；JSON 输出格式已在预置中约束，修改请注意保持可解析。",
+        knowledgeCompoundProviderLabel: "分析模型",
+        knowledgeCompoundProviderAuto: "（自动选择第一个可用）",
+        knowledgeCompoundRunBtn: "开始分析",
+        knowledgeCompoundResetBtn: "恢复默认",
+        knowledgeCompoundSessionsSelected: "将分析 {count} 个 session",
         exportAnalyses: "导出 AI 分析",
         exportingAnalyses: "导出中...",
         exportProgress: "导出 {current}/{total}",
@@ -2223,6 +2334,28 @@
         selectVisibleSessions: "Select Visible",
         clearSelection: "Clear",
         selectedSessionsCount: "{count} selected",
+        knowledgeCompound: "Knowledge Compound",
+        knowledgeCompoundRunning: "Extracting…",
+        knowledgeCompoundTitle: "Knowledge Compound Interest",
+        knowledgeCompoundTopAssets: "Top Compound Assets",
+        knowledgeCompoundConnections: "Unlinked Connections",
+        knowledgeCompoundBehavior: "Behavior Observation",
+        knowledgeCompoundEmpty: "Select 2+ sessions first",
+        knowledgeCompoundError: "Analysis failed: {message}",
+        knowledgeCompoundSessions: "Source sessions",
+        knowledgeCompoundWhy: "Compound potential",
+        knowledgeCompoundInsight: "Connection insight",
+        knowledgeCompoundConfigTitle: "Knowledge Compound — Config",
+        knowledgeCompoundConfigSub: "Pick a preset angle, tweak the system prompt, or switch models.",
+        knowledgeCompoundPreset: "Preset Angle",
+        knowledgeCompoundPresetCustom: "Custom (based on last run)",
+        knowledgeCompoundSystemPromptLabel: "System Prompt",
+        knowledgeCompoundSystemPromptHint: "Injected as system / append-system-prompt. JSON output schema is embedded in presets — keep it intact or results may not parse.",
+        knowledgeCompoundProviderLabel: "Analysis Model",
+        knowledgeCompoundProviderAuto: "(auto — first available)",
+        knowledgeCompoundRunBtn: "Run Analysis",
+        knowledgeCompoundResetBtn: "Reset to default",
+        knowledgeCompoundSessionsSelected: "Will analyze {count} sessions",
         exportAnalyses: "Export AI Analyses",
         exportingAnalyses: "Exporting...",
         exportProgress: "Exporting {current}/{total}",
@@ -2358,6 +2491,7 @@
     let currentRenderedAnalysis = null;
     let analysisModeLoading = null;
     let exportRunning = false;
+    let knowledgeRunning = false;
     let exportStatusTimer = null;
     let panelResizeCleanup = null;
     const analysisPrefetchInFlight = new Set();
@@ -2413,6 +2547,7 @@
       document.getElementById("evtSelectAllBtn").textContent = t("selectVisibleSessions");
       document.getElementById("evtClearSelectionBtn").textContent = t("clearSelection");
       document.getElementById("evtExportBtn").textContent = exportRunning ? t("exportingAnalyses") : t("exportAnalyses");
+      document.getElementById("evtKnowledgeBtn").textContent = knowledgeRunning ? t("knowledgeCompoundRunning") : t("knowledgeCompound");
       document.getElementById("reportSub").textContent = t("reportSub");
       document.getElementById("reportCopyBtn").textContent = t("copy");
       document.getElementById("reportCloseBtn").textContent = t("close");
@@ -2720,6 +2855,11 @@
       if (exportBtn) {
         exportBtn.disabled = exportRunning || !selectedCount;
         exportBtn.textContent = exportRunning ? t("exportingAnalyses") : t("exportAnalyses");
+      }
+      const knowledgeBtn = document.getElementById("evtKnowledgeBtn");
+      if (knowledgeBtn) {
+        knowledgeBtn.disabled = knowledgeRunning || selectedCount < 2;
+        knowledgeBtn.textContent = knowledgeRunning ? t("knowledgeCompoundRunning") : t("knowledgeCompound");
       }
     }
 
@@ -3515,16 +3655,43 @@
     function onBlockClick(e) { selectSession(e.currentTarget.dataset.sid, e.currentTarget.dataset.agent); }
     function onCardClick(e) { const c = e.currentTarget; selectSession(c.dataset.sid, c.dataset.agent); }
 
+    // Holds plain-text/markdown copy of whatever's currently rendered in the
+    // analysis panel. Set by renderAnalysis() and the knowledge-compound flow;
+    // cleared by showAnalysisPlaceholder/showAnalysisLoading. The copy button
+    // is rendered inline inside the analysis content (next to the summary /
+    // kc-title), so this function just stores the text — the button's
+    // visibility is driven by whether renderAnalysis / renderKnowledgeCompoundResult
+    // chose to inject it. Click handling uses event delegation on #analysisPanel.
+    let currentAnalysisCopyText = "";
+
+    function setAnalysisCopyText(text) {
+      currentAnalysisCopyText = (text && typeof text === "string") ? text : "";
+    }
+
+    // Inline HTML for the icon-only copy button. Uses a Feather-style
+    // two-rectangles clipboard icon so it reads as "copy" at 14×14. The
+    // button has no text — hover tooltip (title) provides the label for
+    // accessibility + mouse users.
+    function copyAnalysisBtnHtml() {
+      return `<button class="analysis-copy-btn" type="button" title="${escapeHtml(t("copy"))}" aria-label="${escapeHtml(t("copy"))}">`
+        + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
+        + `<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>`
+        + `<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>`
+        + `</svg></button>`;
+    }
+
     function showAnalysisPlaceholder() {
       const ph = document.getElementById("analysisPlaceholder"), ld = document.getElementById("analysisLoading"), ct = document.getElementById("analysisContent");
       currentRenderedAnalysis = null;
       analysisModeLoading = null;
+      setAnalysisCopyText("");
       ph.style.display = "block"; ld.style.display = "none"; ct.style.display = "none";
     }
     function showAnalysisLoading() {
       const ph = document.getElementById("analysisPlaceholder"), ld = document.getElementById("analysisLoading"), ct = document.getElementById("analysisContent");
       currentRenderedAnalysis = null;
       analysisModeLoading = null;
+      setAnalysisCopyText("");
       ph.style.display = "none"; ld.style.display = "block"; ct.style.display = "none";
     }
     function showAnalysisContent() {
@@ -3745,6 +3912,384 @@
       }
     }
 
+    // ── Knowledge Compound Interest ──
+
+    // Preset angles. All presets share the same output schema so the renderer
+    // (renderKnowledgeCompoundResult) can consume any of them. Inner quotes
+    // use 「」 not ASCII " to dodge JS string-literal conflicts.
+    const KNOWLEDGE_COMPOUND_PRESETS = [
+      {
+        id: "wealth",
+        labels: { zh: "知识复利资产（默认）", en: "Compound Assets (default)" },
+        systemPrompt:
+          "你的任务是分析一组对话记录，从中提炼出对话者的「知识复利资产」。\n\n" +
+          "分析分三个层次：\n\n" +
+          "1. 原子知识点：对话中明确学到或讨论过的具体事实、技术细节、方法论。\n" +
+          "   列出每个知识点及其来源对话。\n\n" +
+          "2. 隐含模式：\n" +
+          "   - 跨对话反复出现的主题和关注点\n" +
+          "   - 对话者做判断/决策时的隐含偏好和思维框架\n" +
+          "   - 不同对话中的知识点之间存在但尚未被显式建立的连接\n" +
+          "   - 对话者擅长但可能自己没意识到的思维能力\n\n" +
+          "3. 复利潜力评估：\n" +
+          "   对上述发现按「复利潜力」排序。高复利的标准是：\n" +
+          "   - 跨领域可迁移（不只在一个场景有用）\n" +
+          "   - 半衰期长（一年后还有用）\n" +
+          "   - 已有多次复现（在不同对话中反复出现）\n" +
+          "   - 可以形成网络效应（与其他知识点连接越多价值越大）\n\n" +
+          "最终输出 JSON，格式如下：\n" +
+          '{"topAssets":[{"title":"资产名","sessions":["会话标题1","会话标题2"],"why":"为什么有高复利潜力"}],' +
+          '"unlinkedConnections":[{"a":"知识点A","b":"知识点B","insight":"为什么应该关联"}],' +
+          '"behaviorObservation":"对话者在习惯层面可以调整的一件事"}\n\n' +
+          "要求：\n" +
+          "- topAssets：3-5 条最高复利资产\n" +
+          "- unlinkedConnections：2-3 条未建立的连接\n" +
+          "- behaviorObservation：1 条行为模式观察\n" +
+          "- 所有字段用中文\n" +
+          "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。",
+      },
+      {
+        id: "skillMap",
+        labels: { zh: "技能图谱", en: "Skill Map" },
+        systemPrompt:
+          "你的任务是从一组对话中绘制对话者的「技能图谱」——他们实际演示出来的能力，而不是他们声称拥有的。\n\n" +
+          "观察维度：\n" +
+          "1. 技术能力：熟练使用的工具/框架/语言/库、debug 套路、系统设计偏好\n" +
+          "2. 工作方式：如何拆解复杂问题、怎么验证假设、何时寻求帮助、怎样记录决策\n" +
+          "3. 思维模式：抽象能力、跨域类比、对权衡的敏感度、对失败模式的预判\n" +
+          "4. 元技能：如何学习、如何复盘、如何让 AI 成为杠杆（prompting、迭代、验证）\n\n" +
+          "请以 JSON 返回：\n" +
+          '{"topAssets":[{"title":"技能名","sessions":["对话1","对话2"],"why":"这个技能展示出的熟练程度或独特之处"}],' +
+          '"unlinkedConnections":[{"a":"技能A","b":"技能B","insight":"两个技能结合起来能产生什么新能力"}],' +
+          '"behaviorObservation":"关于对话者技能结构的一个洞察（比如某种不对称、某个被低估的长板、可补足的短板）"}\n\n' +
+          "要求：\n" +
+          "- topAssets：3-5 条最有代表性的技能\n" +
+          "- unlinkedConnections：2-3 条潜在的技能组合\n" +
+          "- behaviorObservation：1 条关于技能结构的观察\n" +
+          "- 所有字段用中文，引用对话标题或技能名时使用「」或『』代替双引号。",
+      },
+      {
+        id: "decision",
+        labels: { zh: "决策模式", en: "Decision Patterns" },
+        systemPrompt:
+          "你的任务是从一组对话中抽取对话者的「决策模式」——他们在面对权衡时反复表现出的偏好、启发式、和盲区。\n\n" +
+          "关注点：\n" +
+          "1. 权衡偏好：速度 vs 正确、简单 vs 可扩展、显式 vs 自动、乐观 vs 保守\n" +
+          "2. 启发式：反复使用的思考套路（如「先让它跑起来」「先写测试」「先读代码再动手」）\n" +
+          "3. 风险态度：面对不确定性的应对方式、fallback 的设置习惯、回滚思路\n" +
+          "4. 决策的盲区：什么因素他很少考虑、哪些权衡经常被忽略\n\n" +
+          "请以 JSON 返回：\n" +
+          '{"topAssets":[{"title":"决策模式名","sessions":["对话1","对话2"],"why":"这个模式在什么情境下出现、为什么有效或值得关注"}],' +
+          '"unlinkedConnections":[{"a":"模式A","b":"模式B","insight":"两个模式之间的张力或互补关系"}],' +
+          '"behaviorObservation":"一条关于决策风格的元观察——比如某个隐含假设、某个值得挑战的默认"}\n\n' +
+          "要求：\n" +
+          "- topAssets：3-5 条最显著的决策模式\n" +
+          "- unlinkedConnections：2-3 条模式之间的关系\n" +
+          "- behaviorObservation：1 条可以用来调整决策风格的观察\n" +
+          "- 所有字段用中文，引用对话或模式名时使用「」或『』代替双引号。",
+      },
+      {
+        id: "blindSpot",
+        labels: { zh: "盲点发现", en: "Blind Spots" },
+        systemPrompt:
+          "你的任务是从一组对话中找到对话者的「盲点」——他们反复避开的话题、没意识到的假设、缺失的权衡。\n\n" +
+          "寻找线索：\n" +
+          "1. 缺席的维度：在讨论技术方案时什么关注点从没被提起（测试？监控？成本？安全？用户感受？）\n" +
+          "2. 未被质疑的默认：反复出现但从没被审视的偏好或选择\n" +
+          "3. 一面倒的权衡：某个方向的利弊被讨论得多、反方向几乎不谈\n" +
+          "4. 快速下结论的地方：本应多停留思考但被迅速绕过的决策点\n\n" +
+          "请以 JSON 返回：\n" +
+          '{"topAssets":[{"title":"盲点主题","sessions":["对话1","对话2"],"why":"这个盲点体现在什么对话场景、为什么值得关注"}],' +
+          '"unlinkedConnections":[{"a":"盲点A","b":"盲点B","insight":"两个盲点之间的共同根源"}],' +
+          '"behaviorObservation":"一条建议——对话者可以在下一次对话中加入的一个问题或检查点"}\n\n' +
+          "要求：\n" +
+          "- topAssets：3-5 条最明显的盲点\n" +
+          "- unlinkedConnections：2-3 条盲点之间的共性\n" +
+          "- behaviorObservation：1 条可立即尝试的校正建议\n" +
+          "- 所有字段用中文，引用对话或主题名时使用「」或『』代替双引号。",
+      },
+    ];
+
+    const KNOWLEDGE_COMPOUND_CONFIG_KEY = "knowledgeCompoundConfig_v1";
+
+    function getKnowledgeCompoundPreset(id) {
+      return KNOWLEDGE_COMPOUND_PRESETS.find(p => p.id === id) || KNOWLEDGE_COMPOUND_PRESETS[0];
+    }
+
+    function loadKnowledgeCompoundConfig() {
+      try {
+        const raw = localStorage.getItem(KNOWLEDGE_COMPOUND_CONFIG_KEY);
+        if (!raw) return null;
+        const cfg = JSON.parse(raw);
+        if (!cfg || typeof cfg !== "object") return null;
+        return {
+          preset: typeof cfg.preset === "string" ? cfg.preset : "wealth",
+          systemPrompt: typeof cfg.systemPrompt === "string" ? cfg.systemPrompt : "",
+          provider: typeof cfg.provider === "string" ? cfg.provider : "",
+        };
+      } catch { return null; }
+    }
+
+    function saveKnowledgeCompoundConfig(cfg) {
+      try { localStorage.setItem(KNOWLEDGE_COMPOUND_CONFIG_KEY, JSON.stringify(cfg)); } catch {}
+    }
+
+    // Opens the knowledge compound config modal. Resolves with
+    // { systemPrompt, provider } on Run, or null on Cancel.
+    async function openKnowledgeCompoundConfig(sessionCount) {
+      // Ensure providers loaded
+      if (!analysisOptions.length) {
+        try { analysisOptions = await window.analyticsAPI.getAnalysisOptions(); } catch {}
+      }
+      const saved = loadKnowledgeCompoundConfig() || { preset: "wealth", systemPrompt: "", provider: "" };
+      const initialPreset = getKnowledgeCompoundPreset(saved.preset);
+      const initialPrompt = saved.systemPrompt && saved.systemPrompt.trim()
+        ? saved.systemPrompt
+        : initialPreset.systemPrompt;
+
+      return new Promise(resolve => {
+        const o = document.createElement("div");
+        o.className = "confirm-overlay";
+        const presetOptions = KNOWLEDGE_COMPOUND_PRESETS.map(p =>
+          `<option value="${escapeHtml(p.id)}">${escapeHtml(p.labels[currentLang] || p.labels.en)}</option>`
+        ).join("");
+        // Provider options: empty = auto; then each analysisOption id with label.
+        const providerOptions = [`<option value="">${escapeHtml(t("knowledgeCompoundProviderAuto"))}</option>`]
+          .concat((analysisOptions || []).map(opt => {
+            const id = opt.id || opt.provider;
+            if (!id) return "";
+            // api: prefix for configured API providers (id === "claude" | "openai" | "ollama")
+            const value = (id === "claude-code" || id === "codex") ? id : `api:${id}`;
+            return `<option value="${escapeHtml(value)}">${escapeHtml(formatAnalysisProviderShort(opt))}</option>`;
+          })).join("");
+
+        o.innerHTML = `<div class="confirm-dialog" style="max-width:560px;width:92%;text-align:left;padding:22px 24px">
+      <h2 style="margin:0 0 4px 0;font-size:16px;font-weight:700;color:var(--text)">${escapeHtml(t("knowledgeCompoundConfigTitle"))}</h2>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">${escapeHtml(t("knowledgeCompoundConfigSub"))}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">${escapeHtml(t("knowledgeCompoundSessionsSelected", { count: sessionCount }))}</div>
+
+      <div style="margin-bottom:12px">
+        <label for="kcPresetSelect" style="display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">${escapeHtml(t("knowledgeCompoundPreset"))}</label>
+        <select id="kcPresetSelect" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text);font-size:12px">${presetOptions}</select>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <label for="kcSystemPrompt" style="font-size:12px;font-weight:600;color:var(--text)">${escapeHtml(t("knowledgeCompoundSystemPromptLabel"))}</label>
+          <button type="button" id="kcResetBtn" style="border:none;background:none;color:var(--accent);font-size:11px;font-weight:600;cursor:pointer;padding:0">${escapeHtml(t("knowledgeCompoundResetBtn"))}</button>
+        </div>
+        <textarea id="kcSystemPrompt" spellcheck="false" style="width:100%;min-height:200px;max-height:40vh;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:11px;font-family:var(--font-mono,ui-monospace,'SFMono-Regular',Menlo,monospace);line-height:1.5;resize:vertical;box-sizing:border-box"></textarea>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">${escapeHtml(t("knowledgeCompoundSystemPromptHint"))}</div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <label for="kcProviderSelect" style="display:block;font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">${escapeHtml(t("knowledgeCompoundProviderLabel"))}</label>
+        <select id="kcProviderSelect" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text);font-size:12px">${providerOptions}</select>
+      </div>
+
+      <div class="confirm-btns" style="justify-content:flex-end">
+        <button class="btn-cancel" type="button">${escapeHtml(t("cancel"))}</button>
+        <button class="btn-ok" type="button">${escapeHtml(t("knowledgeCompoundRunBtn"))}</button>
+      </div>
+    </div>`;
+        document.body.appendChild(o);
+
+        const presetSel = o.querySelector("#kcPresetSelect");
+        const promptTa = o.querySelector("#kcSystemPrompt");
+        const providerSel = o.querySelector("#kcProviderSelect");
+        const resetBtn = o.querySelector("#kcResetBtn");
+
+        // Initialize fields from saved config
+        presetSel.value = initialPreset.id;
+        promptTa.value = initialPrompt;
+        // Match saved provider if still in options; else fall back to auto
+        if (saved.provider) {
+          const hasProvider = Array.from(providerSel.options).some(opt => opt.value === saved.provider);
+          providerSel.value = hasProvider ? saved.provider : "";
+        }
+
+        // Changing preset overwrites the textarea with the preset's default
+        presetSel.onchange = () => {
+          const p = getKnowledgeCompoundPreset(presetSel.value);
+          promptTa.value = p.systemPrompt;
+        };
+        // Reset button restores current preset's default
+        resetBtn.onclick = () => {
+          const p = getKnowledgeCompoundPreset(presetSel.value);
+          promptTa.value = p.systemPrompt;
+        };
+
+        function close(result) { o.remove(); resolve(result); }
+        o.querySelector(".btn-cancel").onclick = () => close(null);
+        o.querySelector(".btn-ok").onclick = () => {
+          const systemPrompt = promptTa.value.trim();
+          const provider = providerSel.value || "";
+          const preset = presetSel.value || "wealth";
+          if (!systemPrompt) { promptTa.focus(); return; }
+          saveKnowledgeCompoundConfig({ preset, systemPrompt, provider });
+          close({ systemPrompt, provider });
+        };
+      });
+    }
+
+    async function runKnowledgeCompound() {
+      if (knowledgeRunning || !currentData || !Array.isArray(currentData.sessions)) return;
+      syncSelectedExportSessionsWithCurrentData();
+      const sessions = currentData.sessions.filter(s => selectedExportSessionIds.has(s.id));
+      if (sessions.length < 2) {
+        setEventsStatus(t("knowledgeCompoundEmpty"), "error");
+        return;
+      }
+
+      // Open config modal first
+      const config = await openKnowledgeCompoundConfig(sessions.length);
+      if (!config) return;
+
+      knowledgeRunning = true;
+      updateExportSelectionUI();
+
+      // Show loading in analysis panel
+      showAnalysisLoading();
+      document.getElementById("analysisLoadingText").textContent = t("knowledgeCompoundRunning");
+      ensureAnalysisPanelVisible({ force: true });
+
+      try {
+        const sessionIds = sessions.map(s => ({ id: s.id, agent: s.agent }));
+        const result = await window.analyticsAPI.knowledgeCompound(sessionIds, {
+          systemPrompt: config.systemPrompt,
+          provider: config.provider || undefined,
+        });
+        if (!result || result.error) {
+          showAnalysisContent();
+          document.getElementById("analysisContent").innerHTML =
+            `<div class="analysis-error">${escapeHtml(t("knowledgeCompoundError", { message: (result && result.summary) || "unknown" }))}</div>`;
+          return;
+        }
+        showAnalysisContent();
+        document.getElementById("analysisContent").innerHTML = renderKnowledgeCompoundResult(result, sessions);
+        setAnalysisCopyText(buildKnowledgeCompoundCopyText(result, sessions));
+        ensureAnalysisPanelVisible({ force: true });
+      } catch (err) {
+        console.warn("runKnowledgeCompound failed", err);
+        showAnalysisContent();
+        document.getElementById("analysisContent").innerHTML =
+          `<div class="analysis-error">${escapeHtml(t("knowledgeCompoundError", { message: err.message || String(err) }))}</div>`;
+      } finally {
+        knowledgeRunning = false;
+        updateExportSelectionUI();
+      }
+    }
+
+    // Markdown-style copy text for a knowledge-compound result.
+    // Headings + bullets + a meta line. Designed to paste cleanly into
+    // Notion / Obsidian / 飞书文档 etc.
+    function buildKnowledgeCompoundCopyText(result, sessions) {
+      const lines = [];
+      lines.push(`# ${t("knowledgeCompoundTitle")}`);
+      lines.push("");
+      const meta = [];
+      if (result._provider) meta.push(result._provider);
+      if (result._model) meta.push(result._model);
+      if (result._analysisMs) meta.push(`${(result._analysisMs / 1000).toFixed(1)}s`);
+      if (result._cost && result._cost.usd) meta.push(`$${result._cost.usd.toFixed(4)}`);
+      if (meta.length) lines.push(`> ${meta.join(" · ")}`);
+      if (Array.isArray(sessions) && sessions.length) {
+        lines.push(`> ${t("knowledgeCompoundSessionsSelected", { count: sessions.length })}`);
+      }
+      lines.push("");
+
+      if (Array.isArray(result.topAssets) && result.topAssets.length) {
+        lines.push(`## ${t("knowledgeCompoundTopAssets")}`);
+        lines.push("");
+        for (const asset of result.topAssets) {
+          lines.push(`### ${asset.title || ""}`);
+          if (Array.isArray(asset.sessions) && asset.sessions.length) {
+            lines.push(`- **${t("knowledgeCompoundSessions")}**: ${asset.sessions.join(" / ")}`);
+          }
+          if (asset.why) lines.push(`- **${t("knowledgeCompoundWhy")}**: ${asset.why}`);
+          lines.push("");
+        }
+      }
+
+      if (Array.isArray(result.unlinkedConnections) && result.unlinkedConnections.length) {
+        lines.push(`## ${t("knowledgeCompoundConnections")}`);
+        lines.push("");
+        for (const conn of result.unlinkedConnections) {
+          lines.push(`### ${conn.a || ""} ↔ ${conn.b || ""}`);
+          if (conn.insight) lines.push(`- **${t("knowledgeCompoundInsight")}**: ${conn.insight}`);
+          lines.push("");
+        }
+      }
+
+      if (result.behaviorObservation) {
+        lines.push(`## ${t("knowledgeCompoundBehavior")}`);
+        lines.push("");
+        lines.push(result.behaviorObservation);
+        lines.push("");
+      }
+
+      return lines.join("\n").trim();
+    }
+
+    function renderKnowledgeCompoundResult(result, sessions) {
+      let html = `<div class="knowledge-compound">`;
+      // Title + copy button on the same row (matches session-analysis layout).
+      html += `<div class="kc-title-row">`
+        + `<h3 class="kc-title">${escapeHtml(t("knowledgeCompoundTitle"))}</h3>`
+        + copyAnalysisBtnHtml()
+        + `</div>`;
+
+      // Meta: provider + time
+      const meta = [];
+      if (result._provider) meta.push(result._provider);
+      if (result._model) meta.push(result._model);
+      if (result._analysisMs) meta.push(`${(result._analysisMs / 1000).toFixed(1)}s`);
+      if (result._cost && result._cost.usd) meta.push(`$${result._cost.usd.toFixed(4)}`);
+      if (meta.length) html += `<div class="kc-meta">${escapeHtml(meta.join(" · "))}</div>`;
+
+      // Top Assets
+      if (Array.isArray(result.topAssets) && result.topAssets.length) {
+        html += `<h4 class="kc-section">${escapeHtml(t("knowledgeCompoundTopAssets"))}</h4>`;
+        html += `<div class="kc-assets">`;
+        for (const asset of result.topAssets) {
+          html += `<div class="kc-asset-card">`;
+          html += `<div class="kc-asset-title">${escapeHtml(asset.title || "")}</div>`;
+          if (Array.isArray(asset.sessions) && asset.sessions.length) {
+            html += `<div class="kc-asset-sessions"><span class="kc-label">${escapeHtml(t("knowledgeCompoundSessions"))}:</span> ${escapeHtml(asset.sessions.join(" / "))}</div>`;
+          }
+          if (asset.why) {
+            html += `<div class="kc-asset-why"><span class="kc-label">${escapeHtml(t("knowledgeCompoundWhy"))}:</span> ${escapeHtml(asset.why)}</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // Unlinked Connections
+      if (Array.isArray(result.unlinkedConnections) && result.unlinkedConnections.length) {
+        html += `<h4 class="kc-section">${escapeHtml(t("knowledgeCompoundConnections"))}</h4>`;
+        html += `<div class="kc-connections">`;
+        for (const conn of result.unlinkedConnections) {
+          html += `<div class="kc-conn-card">`;
+          html += `<div class="kc-conn-pair">${escapeHtml(conn.a || "")} ↔ ${escapeHtml(conn.b || "")}</div>`;
+          if (conn.insight) {
+            html += `<div class="kc-conn-insight"><span class="kc-label">${escapeHtml(t("knowledgeCompoundInsight"))}:</span> ${escapeHtml(conn.insight)}</div>`;
+          }
+          html += `</div>`;
+        }
+        html += `</div>`;
+      }
+
+      // Behavior Observation
+      if (result.behaviorObservation) {
+        html += `<h4 class="kc-section">${escapeHtml(t("knowledgeCompoundBehavior"))}</h4>`;
+        html += `<div class="kc-behavior">${escapeHtml(result.behaviorObservation)}</div>`;
+      }
+
+      html += `</div>`;
+      return html;
+    }
+
     async function loadAnalysisForSession(sessionId, agent, mode = "brief") {
       const targetMode = mode || "brief";
       currentAnalysisMode = targetMode;
@@ -3855,6 +4400,72 @@
 
     function showConfirm(p) { return new Promise(res => { const o = document.createElement("div"); o.className = "confirm-overlay"; const pn = formatAnalysisProvider(p); o.innerHTML = `<div class="confirm-dialog"><p>${t("confirmAnalyze", { provider: pn })}</p><div class="confirm-btns"><button class="btn-ok">${escapeHtml(t("analyze"))}</button><button class="btn-cancel">${escapeHtml(t("cancel"))}</button></div></div>`; document.body.appendChild(o); o.querySelector(".btn-ok").onclick = () => { o.remove(); res(true); }; o.querySelector(".btn-cancel").onclick = () => { o.remove(); res(false); }; }); }
 
+    // Markdown-style copy text for a session analysis result.
+    // Sections mirror what renderAnalysis() draws: summary + topics + outcomes
+    // + time breakdown + suggestions + meta footer.
+    function buildSessionAnalysisCopyText(r) {
+      if (!r || typeof r !== "object") return "";
+      const lines = [];
+      const provider = r._provider || r._selectedProvider || "";
+      const model = r._model || "";
+      const mode = r._mode || "";
+      const headerBits = [];
+      if (provider) headerBits.push(provider);
+      if (model) headerBits.push(model);
+      if (mode) headerBits.push(t(mode === "detail" ? "detail" : "brief"));
+      const titleSuffix = headerBits.length ? ` · ${headerBits.join(" · ")}` : "";
+      lines.push(`# AI Analysis${titleSuffix}`);
+      lines.push("");
+
+      if (r.summary) {
+        lines.push(r.summary);
+        lines.push("");
+      }
+      if (Array.isArray(r.keyTopics) && r.keyTopics.length) {
+        lines.push(`**Topics**: ${r.keyTopics.join(" / ")}`);
+        lines.push("");
+      }
+      if (Array.isArray(r.outcomes) && r.outcomes.length) {
+        lines.push(`## ${t("outcomes")}`);
+        lines.push("");
+        for (const o of r.outcomes) {
+          if (o && typeof o === "object") {
+            const head = (o.headline || "").trim();
+            const det = (o.detail || "").trim();
+            if (head && det) lines.push(`- **${head}**: ${det}`);
+            else if (head) lines.push(`- **${head}**`);
+            else if (det) lines.push(`- ${det}`);
+          } else if (o) {
+            lines.push(`- ${String(o)}`);
+          }
+        }
+        lines.push("");
+      }
+      if (Array.isArray(r.timeBreakdown) && r.timeBreakdown.length) {
+        lines.push(`## ${t("timeBreakdown")}`);
+        lines.push("");
+        for (const item of r.timeBreakdown) {
+          lines.push(`- ${item.activity}: ${item.percent}%`);
+        }
+        lines.push("");
+      }
+      if (Array.isArray(r.suggestions) && r.suggestions.length) {
+        lines.push(`## ${t("suggestions")}`);
+        lines.push("");
+        for (const s of r.suggestions) lines.push(`- ${s}`);
+        lines.push("");
+      }
+
+      const meta = [];
+      if (r._analysisMs) meta.push(`${(r._analysisMs / 1000).toFixed(1)}s`);
+      if (r._provider) meta.push(`via ${r._provider}${r._model ? ` (${r._model})` : ""}`);
+      if (r._cost && Number.isFinite(r._cost.usd)) meta.push(`$${r._cost.usd.toFixed(4)}`);
+      if (meta.length) {
+        lines.push(`> ${meta.join(" · ")}`);
+      }
+      return lines.join("\n").trim();
+    }
+
     function renderAnalysis(r, opts = {}) {
       r = sanitizeAnalysis(r);
       const ct = document.getElementById("analysisContent"); let h = "";
@@ -3871,8 +4482,25 @@
         h += `<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border-light);font-size:11px;color:var(--text-secondary)">${escapeHtml(t("showingCachedFrom", { provider: formatAnalysisProviderShort(r._selectedProvider) }))}</div>`;
       }
 
-      // Summary + topics
-      if (r.summary) h += `<div class="analysis-summary">${escapeHtml(r.summary)}</div>`;
+      // Summary + topics. The copy button is injected next to the summary
+      // text so it aligns with the first content line (matches the mock in
+      // the user's screenshot). If there's no summary we still want the
+      // button, so we render an empty summary-row in that case — keeps the
+      // button visible for outcome-only / topics-only results.
+      // Skip the button for volatile / pending-mode renders — in those cases
+      // the content isn't the "real" analysis yet, and currentAnalysisCopyText
+      // wouldn't be updated to match what's on screen (see the matching guard
+      // around setAnalysisCopyText below), so clicking copy would grab stale
+      // text from the prior stable render.
+      const showCopyBtn = !opts.volatile && !pendingMode;
+      if (r.summary) {
+        h += `<div class="analysis-summary-row">`
+          + `<div class="analysis-summary">${escapeHtml(r.summary)}</div>`
+          + (showCopyBtn ? copyAnalysisBtnHtml() : ``)
+          + `</div>`;
+      } else if (showCopyBtn) {
+        h += `<div class="analysis-summary-row" style="justify-content:flex-end;margin-bottom:10px">${copyAnalysisBtnHtml()}</div>`;
+      }
       if (r.keyTopics && r.keyTopics.length) {
         h += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">';
         r.keyTopics.forEach(t => { h += `<span style="font-size:10px;padding:2px 8px;background:var(--accent-light);color:var(--accent);border-radius:10px;font-weight:500">${escapeHtml(t)}</span>`; });
@@ -3953,6 +4581,13 @@
         h += `<div style="margin-top:8px;font-size:11px"><a class="analysis-error-link" data-action="open-settings">${escapeHtml(t("openSettings"))}</a> ${escapeHtml(t("configureApiProviderFallback"))}</div>`;
       }
       ct.innerHTML = h;
+      // Build a clipboard-friendly markdown version of this analysis so the
+      // copy button at the top of the analysis panel has something to copy.
+      // Skipped while a mode switch is mid-flight (volatile/pending render) —
+      // the next stable render will set it.
+      if (!opts.volatile && !pendingMode) {
+        setAnalysisCopyText(buildSessionAnalysisCopyText(r));
+      }
       bindAnalysisErrorLinks(ct);
       ct.querySelectorAll("[data-analysis-mode]").forEach(btn => {
         btn.addEventListener("click", () => runAnalysisMode(btn.getAttribute("data-analysis-mode")));
@@ -4048,6 +4683,45 @@
       statusEl.textContent = ok ? t("copied") : t("copyFailed");
     }
 
+    // Copies the markdown snapshot built by setAnalysisCopyText into the
+    // clipboard. We keep the source text in a module-scoped variable so the
+    // button click is cheap — rendering already paid the cost of building the
+    // markdown once per analysis. Falls back to execCommand for older Electron
+    // / when the async clipboard API is blocked (rare but possible under
+    // privacy-restricted configs).
+    async function copyAnalysisToClipboard() {
+      const text = currentAnalysisCopyText;
+      if (!text) {
+        showToast(t("copyFailed"), "", "error");
+        return;
+      }
+      let ok = false;
+      try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        }
+      } catch { ok = false; }
+      if (!ok) {
+        // execCommand fallback: inject a hidden textarea, select all, copy.
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.left = "-1000px";
+        document.body.appendChild(ta);
+        try {
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, text.length);
+          ok = document.execCommand("copy");
+        } catch { ok = false; }
+        try { ta.remove(); } catch { /* ignore */ }
+      }
+      showToast(ok ? t("copied") : t("copyFailed"), "", ok ? "success" : "error");
+    }
+
     // ── Tabs ──
     document.querySelectorAll(".tab").forEach(tab => {
       tab.addEventListener("click", async () => {
@@ -4097,6 +4771,14 @@
     document.getElementById("evtSelectAllBtn").addEventListener("click", selectAllVisibleSessions);
     document.getElementById("evtClearSelectionBtn").addEventListener("click", clearSelectedSessions);
     document.getElementById("evtExportBtn").addEventListener("click", exportSelectedSessionAnalyses);
+    document.getElementById("evtKnowledgeBtn").addEventListener("click", runKnowledgeCompound);
+    // Copy button is rendered inside analysisContent (inline with the summary
+    // or kc-title), so we use event delegation — the button comes and goes
+    // with every renderAnalysis / renderKnowledgeCompoundResult call.
+    document.getElementById("analysisPanel").addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest(".analysis-copy-btn");
+      if (btn) copyAnalysisToClipboard();
+    });
     document.getElementById("reportCloseBtn").addEventListener("click", closeReportModal);
     document.getElementById("reportCopyBtn").addEventListener("click", copyReportText);
     document.getElementById("reportOverlay").addEventListener("click", (e) => {
