@@ -761,6 +761,22 @@
       color: #fff;
     }
 
+    /* "Distill Knowledge" gets a matte 赤土陶 (terracotta) fill — deeper
+       and more earth-toned than the accent orange next door, so the two
+       buttons stop competing. Flat color rather than gradient, to keep
+       the ceramic/pottery feel. */
+    .events-action-btn.knowledge {
+      background: #A84A2E;
+      border-color: #A84A2E;
+      color: #fff;
+    }
+
+    .events-action-btn.knowledge:hover:not(:disabled) {
+      background: #833820;
+      border-color: #833820;
+      color: #fff;
+    }
+
     /* Count pill doubles as the "clear selection" affordance: clicking it
        deselects everything (see evtSelectedCount click handler). Styled as
        a clickable pill so the hover state hints at the action. */
@@ -2168,7 +2184,7 @@
         <div class="events-actions">
           <button class="evt-selection-count" id="evtSelectedCount" type="button" style="display:none"></button>
           <button class="events-action-btn" id="evtSelectAllBtn" type="button">全选可见</button>
-          <button class="events-action-btn primary" id="evtKnowledgeBtn" type="button" disabled>知识复利</button>
+          <button class="events-action-btn knowledge" id="evtKnowledgeBtn" type="button" disabled>🌟 知识沉淀</button>
           <button class="events-action-btn primary" id="evtExportBtn" type="button" disabled>导出 AI 分析</button>
         </div>
       </div>
@@ -2333,8 +2349,8 @@
         clearSelection: "清空",
         selectedSessionsCount: "已选 {count}",
         selectDaySessions: "全选当天 session（再点取消）",
-        knowledgeCompound: "知识复利",
-        knowledgeCompoundRunning: "提炼中…",
+        knowledgeCompound: "🌟 知识沉淀",
+        knowledgeCompoundRunning: "🌟 沉淀中…",
         knowledgeCompoundTitle: "知识复利沉淀",
         knowledgeCompoundTopAssets: "最高复利资产",
         knowledgeCompoundConnections: "未建立的连接",
@@ -2492,8 +2508,8 @@
         clearSelection: "Clear",
         selectedSessionsCount: "{count} selected",
         selectDaySessions: "Select all sessions this day (click again to deselect)",
-        knowledgeCompound: "Knowledge Compound",
-        knowledgeCompoundRunning: "Extracting…",
+        knowledgeCompound: "🌟 Distill Knowledge",
+        knowledgeCompoundRunning: "🌟 Distilling…",
         knowledgeCompoundTitle: "Knowledge Compound Interest",
         knowledgeCompoundTopAssets: "Top Compound Assets",
         knowledgeCompoundConnections: "Unlinked Connections",
