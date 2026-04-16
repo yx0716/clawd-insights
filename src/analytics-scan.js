@@ -846,5 +846,10 @@ module.exports = function initAnalyticsScan(ctx) {
     return detail;
   }
 
-  return { scanRange, scanToday, scan3Days, scanWeek, scanMonthOf, getAvailableMonths, getSessionDetail };
+  function invalidateCache() {
+    cache = null;
+    cacheExpiry = 0;
+  }
+
+  return { scanRange, scanToday, scan3Days, scanWeek, scanMonthOf, getAvailableMonths, getSessionDetail, invalidateCache };
 };

@@ -27,4 +27,10 @@ contextBridge.exposeInMainWorld("analyticsAPI", {
   getLocalTitleMap: () => ipcRenderer.invoke("analytics-get-local-title-map"),
   setLocalTitle: (sessionId, title) => ipcRenderer.invoke("analytics-set-local-title", sessionId, title),
   clearLocalTitle: (sessionId) => ipcRenderer.invoke("analytics-clear-local-title", sessionId),
+  // Filesystem watcher push — fires when new sessions appear / existing ones grow.
+  onSessionsUpdated: (cb) => {
+    const listener = () => { try { cb(); } catch (e) { console.warn("onSessionsUpdated cb:", e); } };
+    ipcRenderer.on("analytics-sessions-updated", listener);
+    return () => ipcRenderer.removeListener("analytics-sessions-updated", listener);
+  },
 });

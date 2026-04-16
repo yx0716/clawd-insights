@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Timeline</title>
+  <title>Agent Insights</title>
   <style>
     :root {
       --bg: #FFF8F0;
@@ -761,23 +761,7 @@
       color: #fff;
     }
 
-    /* "Distill Knowledge" gets a matte 赤土陶 (terracotta) fill — deeper
-       and more earth-toned than the accent orange next door, so the two
-       buttons stop competing. Flat color rather than gradient, to keep
-       the ceramic/pottery feel. */
-    .events-action-btn.knowledge {
-      background: #A84A2E;
-      border-color: #A84A2E;
-      color: #fff;
-    }
-
-    .events-action-btn.knowledge:hover:not(:disabled) {
-      background: #833820;
-      border-color: #833820;
-      color: #fff;
-    }
-
-    /* Count pill doubles as the "clear selection" affordance: clicking it
+/* Count pill doubles as the "clear selection" affordance: clicking it
        deselects everything (see evtSelectedCount click handler). Styled as
        a clickable pill so the hover state hints at the action. */
     .evt-selection-count {
@@ -2050,7 +2034,7 @@
     <div class="header-block">
       <div class="header-title">
         <div class="sub" id="headerSub">Agent Usage</div>
-        <h1 id="headerTitle"><span>Timeline</span></h1>
+        <h1 id="headerTitle"><span>Insights</span></h1>
       </div>
       <div class="header-actions">
         <button class="header-report-btn" id="dailyReportBtn" type="button">日报</button>
@@ -2184,7 +2168,7 @@
         <div class="events-actions">
           <button class="evt-selection-count" id="evtSelectedCount" type="button" style="display:none"></button>
           <button class="events-action-btn" id="evtSelectAllBtn" type="button">全选可见</button>
-          <button class="events-action-btn knowledge" id="evtKnowledgeBtn" type="button" disabled>🌟 知识沉淀</button>
+          <button class="events-action-btn primary" id="evtKnowledgeBtn" type="button" disabled>🌟 知识沉淀</button>
           <button class="events-action-btn primary" id="evtExportBtn" type="button" disabled>导出 AI 分析</button>
         </div>
       </div>
@@ -2314,9 +2298,9 @@
     const SESSIONS_HEIGHT_STORAGE_KEY = "clawd-analytics-sessions-max-height-v1";
     const I18N = {
       zh: {
-        documentTitle: "Agent 时间轴",
+        documentTitle: "Agent 洞察",
         headerSub: "Agent 使用情况",
-        headerTitle: "时间轴",
+        headerTitle: "洞察",
         reportDay: "日报",
         reportWeek: "周报",
         statsActiveSpan: "活跃跨度",
@@ -2473,9 +2457,9 @@
         useFirstAvailable: "（使用第一个可用 provider）",
       },
       en: {
-        documentTitle: "Agent Timeline",
+        documentTitle: "Agent Insights",
         headerSub: "Agent Usage",
-        headerTitle: "Timeline",
+        headerTitle: "Insights",
         reportDay: "Daily",
         reportWeek: "Weekly",
         statsActiveSpan: "Active Span",
@@ -2658,6 +2642,8 @@
     let availableMonths = null; // cached list from getAvailableMonths()
     let analysisOptions = [];
     let projectColorMap = {};
+    let _inlineRenameActive = false; // suppress auto-refresh while user is editing a title
+    let _deferredRefresh = false;    // true = watcher fired during rename, replay after commit
     const batchCache = {}; // `${provider}:${sessionId}` → analysis result
     const analyzingSessionIds = new Set(); // sessionIds currently being analyzed (cross-tab persistent)
     const selectedExportSessionIds = new Set();
@@ -3833,6 +3819,7 @@
       const span = card.querySelector(".evt-title-text");
       const pencil = card.querySelector(".evt-rename-btn");
       if (!titleEl || !span) return;
+      _inlineRenameActive = true;
       // Save originals for cancel
       const originalText = span.textContent;
       const originalSource = span.dataset.source || "project";
@@ -3855,6 +3842,7 @@
       async function commit(save) {
         if (settled) return;
         settled = true;
+        _inlineRenameActive = false;
         input.removeEventListener("keydown", onKey);
         input.removeEventListener("blur", onBlur);
         if (save) {
@@ -3876,6 +3864,7 @@
             }
             // Re-render events grid + timeline so the renamed title shows everywhere.
             if (currentData) { renderTimeline(currentData); renderEvents(currentData); }
+            if (_deferredRefresh) { _deferredRefresh = false; loadData(); }
             return;
           } catch (err) {
             console.warn("setLocalTitle failed:", err);
@@ -3885,6 +3874,7 @@
         input.remove();
         span.style.display = "";
         if (pencil) pencil.style.display = "";
+        if (_deferredRefresh) { _deferredRefresh = false; loadData(); }
       }
 
       function onKey(e) {
@@ -5101,6 +5091,14 @@
     applySavedChartsHeight();
     initRowResizer();
     loadData().then(() => offerBatchAnalysis());
+    // Main-process watcher fires when JSONL files change — pull fresh data.
+    // Defer if the user is mid-rename to avoid destroying the inline input.
+    if (window.analyticsAPI.onSessionsUpdated) {
+      window.analyticsAPI.onSessionsUpdated(() => {
+        if (_inlineRenameActive) { _deferredRefresh = true; return; }
+        loadData();
+      });
+    }
     window.analyticsAPI.getAnalysisProvider().then(p => {
       analysisProvider = p;
       if (p && (p.id || p.provider)) selectedAnalysisAgent = p.id || p.provider;

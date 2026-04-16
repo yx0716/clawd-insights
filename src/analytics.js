@@ -37,7 +37,22 @@ module.exports = function initAnalytics(ctx) {
       dashWin.show();
     });
 
+    // Start filesystem watcher — pushes "analytics-sessions-updated" to the
+    // renderer when new JSONL files appear / grow / disappear. Scoped to the
+    // window lifecycle so we don't poll when no dashboard is open.
+    if (ctx.analyticsWatcher) {
+      ctx.analyticsWatcher.start(() => {
+        if (ctx.analyticsScan && ctx.analyticsScan.invalidateCache) {
+          ctx.analyticsScan.invalidateCache();
+        }
+        if (dashWin && !dashWin.isDestroyed() && dashWin.webContents && !dashWin.webContents.isDestroyed()) {
+          dashWin.webContents.send("analytics-sessions-updated");
+        }
+      });
+    }
+
     dashWin.on("closed", () => {
+      if (ctx.analyticsWatcher) ctx.analyticsWatcher.stop();
       dashWin = null;
     });
   }

@@ -205,6 +205,7 @@ let _analyticsAI = null;
 let _analyticsDash = null;
 let _analyticsScan = null;
 let _analyticsTitles = null;
+let _analyticsWatcher = null;
 
 // Lenient load so a missing/corrupt user-selected theme can't brick boot.
 // If lenient fell back to "clawd", hydrate prefs to match so the store
@@ -1713,6 +1714,7 @@ if (!gotTheLock) {
       },
     });
     _analyticsScan = require("./analytics-scan")({});
+    _analyticsWatcher = require("./analytics-watcher")();
     // Local session title overrides — stored at ~/.clawd/session-titles.json.
     // Claude Desktop's rename feature doesn't write back to jsonl, so users
     // have no way to rename sessions that show up in the dashboard. This
@@ -1726,6 +1728,7 @@ if (!gotTheLock) {
       analyticsAI: _analyticsAI,
       analyticsScan: _analyticsScan,
       analyticsTitles: _analyticsTitles,
+      analyticsWatcher: _analyticsWatcher,
     });
 
     // Register global shortcut for toggling pet visibility
@@ -1805,6 +1808,7 @@ if (!gotTheLock) {
     _mini.cleanup();
     if (_analyticsLog) _analyticsLog.cleanup();
     if (_analyticsDash) _analyticsDash.cleanup();
+    if (_analyticsWatcher) _analyticsWatcher.stop();
     if (_codexMonitor) _codexMonitor.stop();
     if (_geminiMonitor) _geminiMonitor.stop();
     stopTopmostWatchdog();
