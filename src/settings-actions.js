@@ -100,6 +100,16 @@ function requirePlainObject(key) {
   };
 }
 
+function requireNullablePlainObject(key) {
+  return function (value) {
+    if (value === null) return { status: "ok" };
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { status: "error", message: `${key} must be a plain object or null` };
+    }
+    return { status: "ok" };
+  };
+}
+
 // ── updateRegistry ──
 // Maps prefs field name → validator. Controller looks up by key and runs.
 
@@ -132,6 +142,7 @@ const updateRegistry = {
   bubbleFollowPet: requireBoolean("bubbleFollowPet"),
   hideBubbles: requireBoolean("hideBubbles"),
   showSessionId: requireBoolean("showSessionId"),
+  aiConfig: requireNullablePlainObject("aiConfig"),
 
   // ── System-backed prefs (object-form: validate + effect pre-commit gate) ──
   //
@@ -480,4 +491,5 @@ module.exports = {
   requireEnum,
   requireString,
   requirePlainObject,
+  requireNullablePlainObject,
 };

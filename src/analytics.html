@@ -4550,14 +4550,6 @@
         void prefetchAlternateAnalysisMode(sessionId, agent, targetMode, selectedAnalysisAgent);
         return;
       }
-      const alternate = findAlternateCachedAnalysis(sessionId, targetMode, selectedAnalysisAgent);
-      if (alternate) {
-        showAnalysisContent();
-        ensureAnalysisPanelVisible();
-        renderAnalysis(attachFallbackNotice(alternate.result, selectedAnalysisAgent, targetMode));
-        void prefetchAlternateAnalysisMode(sessionId, agent, targetMode, selectedAnalysisAgent);
-        return;
-      }
       const consent = await ensureAnalysisConsent(selectedAnalysisAgent);
       if (!consent) {
         if (consent === false && selectedSessionId === sessionId) {
@@ -5349,7 +5341,16 @@
       // Default analysis provider for the Pre-analyze modal. Empty string =
       // "(use first available)" — store as null so the read path falls back
       // to the auto-pick behavior. Otherwise persist the chosen provider id.
-      const defaultAnalysisProvider = document.getElementById("settingsDefaultAnalysisProvider").value;
+      let defaultAnalysisProvider = document.getElementById("settingsDefaultAnalysisProvider").value;
+      const previousApiProviderId = existing && existing.provider ? `api:${existing.provider}` : "";
+      if (providerChanged && defaultAnalysisProvider && defaultAnalysisProvider.startsWith("api:")) {
+        // The default-provider dropdown is populated from the currently saved
+        // API provider. If the user switches the API fallback provider in the
+        // same Settings save, carry that API default forward to the new id.
+        if (!previousApiProviderId || defaultAnalysisProvider === previousApiProviderId) {
+          defaultAnalysisProvider = `api:${provider}`;
+        }
+      }
       payload.defaultAnalysisProvider = defaultAnalysisProvider || null;
 
       try {
@@ -5357,7 +5358,7 @@
         setSettingsStatus(t("saved"), "success");
         // Refresh the analysis option list so the API provider shows up in
         // pickers (batch dialog, error-recovery flow, etc.) without reloading.
-        await refreshAnalysisOptions();
+        await refreshAnalysisOptions({ reloadSelected: true });
         // Re-render the diagnostic block so the user can confirm the custom
         // path is now picked up before the modal auto-closes.
         loadCliDiagnostics();
@@ -5414,10 +5415,11 @@
       }
     }
 
-    async function refreshAnalysisOptions() {
+    async function refreshAnalysisOptions(options = {}) {
       try {
-        const opts = await window.analyticsAPI.getAnalysisOptions();
-        analysisOptions = Array.isArray(opts) ? opts : [];
+        const previousSelectedProvider = selectedAnalysisAgent;
+        const providerOptions = await window.analyticsAPI.getAnalysisOptions();
+        analysisOptions = Array.isArray(providerOptions) ? providerOptions : [];
         try {
           analysisProvider = await window.analyticsAPI.getAnalysisProvider();
         } catch { }
@@ -5429,7 +5431,11 @@
         }
         // Re-render so any open analysis panel / event cards reflect the new
         // provider availability immediately.
+        const providerChanged = previousSelectedProvider !== selectedAnalysisAgent;
         if (currentData) renderEvents(currentData);
+        if (providerChanged && options.reloadSelected && selectedSessionId) {
+          void loadAnalysisForSession(selectedSessionId, getSessionAgent(selectedSessionId), currentAnalysisMode);
+        }
       } catch (e) { console.warn("refreshAnalysisOptions failed", e); }
     }
 

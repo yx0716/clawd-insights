@@ -96,6 +96,34 @@ describe("prefs.validate", () => {
     assert.strictEqual(v.theme, "calico");
   });
 
+  it("keeps dashboard AI config fields", () => {
+    const v = prefs.validate({
+      aiConfig: {
+        provider: "openai",
+        defaultAnalysisProvider: "codex",
+        apiKey: "sk-test",
+        baseUrl: "https://example.com/v1",
+        model: "gpt-test",
+        customCliPaths: {
+          claude: "/usr/local/bin/claude",
+          codex: "/usr/local/bin/codex",
+        },
+        ignored: true,
+      },
+    });
+    assert.deepStrictEqual(v.aiConfig, {
+      provider: "openai",
+      defaultAnalysisProvider: "codex",
+      apiKey: "sk-test",
+      baseUrl: "https://example.com/v1",
+      model: "gpt-test",
+      customCliPaths: {
+        claude: "/usr/local/bin/claude",
+        codex: "/usr/local/bin/codex",
+      },
+    });
+  });
+
   it("normalizes agents (drops malformed entries)", () => {
     const v = prefs.validate({
       agents: {
@@ -298,6 +326,23 @@ describe("prefs.save", () => {
     prefs.save(p, snap);
     const { snapshot } = prefs.load(p);
     assert.deepStrictEqual(snapshot.themeOverrides.clawd.sweeping, { disabled: true });
+  });
+
+  it("round-trips aiConfig through save/load", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.aiConfig = {
+      provider: "claude",
+      defaultAnalysisProvider: "codex",
+      customCliPaths: { codex: "/opt/bin/codex" },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.aiConfig, {
+      provider: "claude",
+      defaultAnalysisProvider: "codex",
+      customCliPaths: { codex: "/opt/bin/codex" },
+    });
   });
 
   it("themeOverrides: disabled wins over file when both present on same key", () => {

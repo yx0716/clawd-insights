@@ -544,6 +544,21 @@ describe("hydrate (system → prefs import, no effect)", () => {
     assert.deepStrictEqual(lastChanges, { lang: "zh", soundMuted: true });
   });
 
+  it("hydrates and persists dashboard AI config", async () => {
+    const p = makeTempPath();
+    const ctrl = createSettingsController({ prefsPath: p });
+    const aiConfig = {
+      provider: "claude",
+      defaultAnalysisProvider: "codex",
+      customCliPaths: { codex: "/opt/bin/codex" },
+    };
+    const r = await ctrl.hydrate({ aiConfig });
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(ctrl.get("aiConfig"), aiConfig);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.aiConfig, aiConfig);
+  });
+
   it("noop when value already matches", async () => {
     const ctrl = createSettingsController({ prefsPath: makeTempPath() });
     const r = await ctrl.hydrate({ lang: "en" }); // default

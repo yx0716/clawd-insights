@@ -84,6 +84,11 @@ const SCHEMA = {
     defaultFactory: () => ({}),
     normalize: normalizeThemeOverrides,
   },
+  aiConfig: {
+    type: "object",
+    default: null,
+    normalize: normalizeAIConfig,
+  },
 };
 
 const SCHEMA_KEYS = Object.freeze(Object.keys(SCHEMA));
@@ -214,6 +219,26 @@ function normalizeThemeOverrides(value, defaultsValue) {
     }
   }
   return out;
+}
+
+function normalizeAIConfig(value, defaultsValue) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return defaultsValue;
+  const out = {};
+  for (const key of ["provider", "apiKey", "baseUrl", "model", "defaultAnalysisProvider"]) {
+    if (typeof value[key] === "string" && value[key].trim()) {
+      out[key] = value[key];
+    }
+  }
+  if (value.customCliPaths && typeof value.customCliPaths === "object" && !Array.isArray(value.customCliPaths)) {
+    const customCliPaths = {};
+    for (const key of ["claude", "codex"]) {
+      if (typeof value.customCliPaths[key] === "string" && value.customCliPaths[key].trim()) {
+        customCliPaths[key] = value.customCliPaths[key];
+      }
+    }
+    if (Object.keys(customCliPaths).length) out.customCliPaths = customCliPaths;
+  }
+  return Object.keys(out).length ? out : defaultsValue;
 }
 
 // ── Disk I/O ──

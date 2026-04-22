@@ -1699,15 +1699,15 @@ if (!gotTheLock) {
     _analyticsAI = require("./analytics-ai")({
       getAIConfig: () => {
         try {
-          const p = loadPrefs();
-          return (p && p.aiConfig) || null;
+          return _settingsController.get("aiConfig") || null;
         } catch { return null; }
       },
       setAIConfig: (config) => {
         try {
-          const raw = fs.existsSync(PREFS_PATH) ? JSON.parse(fs.readFileSync(PREFS_PATH, "utf8")) : {};
-          raw.aiConfig = config;
-          fs.writeFileSync(PREFS_PATH, JSON.stringify(raw));
+          const result = _settingsController.hydrate({ aiConfig: config || null });
+          if (result && result.status !== "ok") {
+            console.warn("Clawd: failed to save AI config:", result.message);
+          }
         } catch (err) {
           console.warn("Clawd: failed to save AI config:", err.message);
         }
