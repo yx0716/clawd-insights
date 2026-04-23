@@ -3140,7 +3140,7 @@
     function toggleDaySelection(dk) {
       if (!currentData || !Array.isArray(currentData.sessions)) return;
       const daySessions = currentData.sessions.filter(s => {
-        const ts = s.firstTs || s.lastTs || 0;
+        const ts = sessionGroupTs(s);
         return dayStart(ts) === dk;
       });
       if (!daySessions.length) return;
@@ -3427,6 +3427,7 @@
     function agentLabel(a) { return AGENT_LABELS[a] || a; }
     function agentClass(a) { return (a || "unknown").replace(/[^a-z0-9-]/g, ""); }
     function dayStart(ts) { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
+    function sessionGroupTs(session) { return Number(session && (session.lastTs || session.firstTs)) || 0; }
     function sessDur(s) { return s.blocks && s.blocks.length ? s.blocks.reduce((a, b) => a + (b.end - b.start), 0) : s.firstTs && s.lastTs ? s.lastTs - s.firstTs : 0; }
     function projColor(name) { return projectColorMap[name] || "#A0AEC0"; }
     function escapeHtml(value) {
@@ -3863,16 +3864,17 @@
         return;
       }
 
-      // Group by day, sort sessions within each day by start time descending
+      // Group session cards by the latest active time. Cross-day sessions still
+      // show their full span on the card; timeline blocks remain on their real days.
       const dayMap = new Map();
       for (const s of ss) {
-        const ts = s.firstTs || s.lastTs || 0;
+        const ts = sessionGroupTs(s);
         const dk = dayStart(ts);
         if (!dayMap.has(dk)) dayMap.set(dk, []);
         dayMap.get(dk).push(s);
       }
       const sortedDays = [...dayMap.keys()].sort((a, b) => b - a);
-      for (const dk of sortedDays) dayMap.get(dk).sort((a, b) => (b.firstTs || 0) - (a.firstTs || 0));
+      for (const dk of sortedDays) dayMap.get(dk).sort((a, b) => sessionGroupTs(b) - sessionGroupTs(a));
 
       let html = "";
       for (const dk of sortedDays) {
@@ -5829,8 +5831,8 @@
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
       const threeDaysStart = todayStart - 2 * 86400000;
 
-      const todayCount = allSessions.filter(s => (s.firstTs || 0) >= todayStart).length;
-      const threeDaysCount = allSessions.filter(s => (s.firstTs || 0) >= threeDaysStart).length;
+      const todayCount = allSessions.filter(s => sessionGroupTs(s) >= todayStart).length;
+      const threeDaysCount = allSessions.filter(s => sessionGroupTs(s) >= threeDaysStart).length;
 
       const providerOptions = (analysisOptions && analysisOptions.length ? analysisOptions : (analysisProvider ? [analysisProvider] : []))
         .map(opt => `<option value="${opt.id || opt.provider}"${(opt.id || opt.provider) === selectedAnalysisAgent ? ' selected' : ''}>${formatAnalysisProvider(opt)}</option>`)
@@ -5889,9 +5891,9 @@
       // Determine which sessions to analyze
       let sessionsToAnalyze;
       if (choice.scope === "today") {
-        sessionsToAnalyze = allSessions.filter(s => (s.firstTs || 0) >= todayStart);
+        sessionsToAnalyze = allSessions.filter(s => sessionGroupTs(s) >= todayStart);
       } else if (choice.scope === "3days") {
-        sessionsToAnalyze = allSessions.filter(s => (s.firstTs || 0) >= threeDaysStart);
+        sessionsToAnalyze = allSessions.filter(s => sessionGroupTs(s) >= threeDaysStart);
       } else if (choice.scope === "custom") {
         sessionsToAnalyze = allSessions.slice(0, choice.customN);
       } else {

@@ -7,7 +7,7 @@ const os = require("os");
 const ANALYTICS_SCAN_PATH = require.resolve("../src/analytics-scan");
 const INTERNAL_ANALYTICS_SUMMARY_MARKER = "[clawd-analytics-internal-summary-task]";
 
-function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "second prompt", "third prompt"]) {
+function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "second prompt", "third prompt"], timestamps = null) {
   const dateDir = path.join(homeDir, ".codex", "sessions", "2026", "04", "06");
   fs.mkdirSync(dateDir, { recursive: true });
 
@@ -15,18 +15,27 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
     dateDir,
     `rollout-2026-04-06T19-44-02-${sessionId}.jsonl`
   );
+  const ts = timestamps || [
+    "2026-04-06T11:44:02.000Z",
+    "2026-04-06T11:44:03.000Z",
+    "2026-04-06T11:44:04.000Z",
+    "2026-04-06T11:44:05.000Z",
+    "2026-04-06T11:44:06.000Z",
+    "2026-04-06T11:44:07.000Z",
+    "2026-04-06T11:44:08.000Z",
+  ];
   const lines = [
     {
-      timestamp: "2026-04-06T11:44:02.000Z",
+      timestamp: ts[0],
       type: "session_meta",
       payload: {
         id: sessionId,
-        timestamp: "2026-04-06T11:44:02.000Z",
+        timestamp: ts[0],
         cwd,
       },
     },
     {
-      timestamp: "2026-04-06T11:44:03.000Z",
+      timestamp: ts[1],
       type: "response_item",
       payload: {
         type: "message",
@@ -35,7 +44,7 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
       },
     },
     {
-      timestamp: "2026-04-06T11:44:04.000Z",
+      timestamp: ts[2],
       type: "response_item",
       payload: {
         type: "message",
@@ -44,7 +53,7 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
       },
     },
     {
-      timestamp: "2026-04-06T11:44:05.000Z",
+      timestamp: ts[3],
       type: "response_item",
       payload: {
         type: "message",
@@ -53,7 +62,7 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
       },
     },
     {
-      timestamp: "2026-04-06T11:44:06.000Z",
+      timestamp: ts[4],
       type: "response_item",
       payload: {
         type: "message",
@@ -62,7 +71,7 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
       },
     },
     {
-      timestamp: "2026-04-06T11:44:07.000Z",
+      timestamp: ts[5],
       type: "response_item",
       payload: {
         type: "message",
@@ -71,7 +80,7 @@ function writeCodexSession(homeDir, sessionId, cwd, prompts = ["first prompt", "
       },
     },
     {
-      timestamp: "2026-04-06T11:44:08.000Z",
+      timestamp: ts[6],
       type: "response_item",
       payload: {
         type: "message",
@@ -125,6 +134,26 @@ describe("analytics scan", () => {
     assert.strictEqual(data.sessions[0].project, "project-alpha");
     assert.strictEqual(data.sessions[0].cwd, cwd);
     assert.strictEqual(data.sessions[0].messages, 6);
+  });
+
+  it("buckets session counts by latest active date", () => {
+    const sessionId = "019d629b-5f09-73f1-b73c-7fd96130fad1";
+    const cwd = "/Users/jyx/Documents/1_explore/project-alpha";
+    const base = new Date(2026, 3, 6, 23, 55).getTime();
+    const timestamps = [0, 1, 2, 10, 11, 12, 13].map(offset =>
+      new Date(base + offset * 60_000).toISOString()
+    );
+    writeCodexSession(tempHome, sessionId, cwd, undefined, timestamps);
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const startTs = new Date(2026, 3, 6).getTime();
+    const endTs = new Date(2026, 3, 8).getTime();
+    const data = analyticsScan.scanRange(startTs, endTs);
+
+    assert.strictEqual(data.sessionCount, 1);
+    assert.strictEqual(data.dailySessions["2026-04-06"] || 0, 0);
+    assert.strictEqual(data.dailySessions["2026-04-07"], 1);
   });
 
   it("filters out on-desk self-project sessions from analytics results", () => {

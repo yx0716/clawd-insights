@@ -590,8 +590,9 @@ module.exports = function initAnalyticsScan(ctx) {
       }
 
       // Daily distribution
-      if (s.firstTs) {
-        const day = dateStr(new Date(s.firstTs));
+      const sessionDayTs = s.lastTs || s.firstTs;
+      if (sessionDayTs) {
+        const day = dateStr(new Date(sessionDayTs));
         dailySessions[day] = (dailySessions[day] || 0) + 1;
       }
     }
@@ -654,7 +655,7 @@ module.exports = function initAnalyticsScan(ctx) {
     const data = scanRange(start, end);
     const buckets = new Map(); // key="YYYY-MM" → { year, month, count }
     for (const s of (data && data.sessions) || []) {
-      const ts = s.firstTs || s.lastTs;
+      const ts = s.lastTs || s.firstTs;
       if (!ts) continue;
       const d = new Date(ts);
       const y = d.getFullYear();
