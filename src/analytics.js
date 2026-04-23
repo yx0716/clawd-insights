@@ -33,6 +33,13 @@ module.exports = function initAnalytics(ctx) {
 
     dashWin.loadFile(path.join(__dirname, "analytics.html"));
 
+    dashWin.webContents.on("before-input-event", (event, input) => {
+      if (!input || input.type !== "keyDown" || input.key !== "Escape") return;
+      if (!dashWin || dashWin.isDestroyed() || !dashWin.isFullScreen()) return;
+      event.preventDefault();
+      dashWin.setFullScreen(false);
+    });
+
     dashWin.once("ready-to-show", () => {
       dashWin.show();
     });
