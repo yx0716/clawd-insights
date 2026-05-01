@@ -216,6 +216,73 @@
       flex: 1;
     }
 
+    /* Calendar week navigation — replaces tabs in calendar view */
+    .week-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--border);
+      border-radius: 8px;
+      padding: 2px;
+    }
+
+    .week-nav-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .week-nav-btn:not(:disabled):hover {
+      background: var(--bg-card);
+      color: var(--accent);
+    }
+
+    .week-nav-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .week-nav-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      padding: 0 8px;
+      min-width: 110px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .week-nav-today {
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border: none;
+      background: transparent;
+      margin-left: 2px;
+    }
+
+    .week-nav-today:hover {
+      color: var(--accent);
+    }
+
+    .week-nav-today.active {
+      background: var(--bg-card);
+      color: var(--accent);
+      box-shadow: var(--shadow);
+    }
+
     .date-label {
       font-size: 11px;
       color: var(--text-muted);
@@ -2315,11 +2382,17 @@
 
     <!-- Tabs + Legend -->
     <div class="tabs-row">
-      <div class="tabs">
+      <div class="tabs" id="tabsLanes">
         <button class="tab" data-range="today" id="tabToday">Today</button>
         <button class="tab" data-range="3days" id="tab3days">3 Days</button>
         <button class="tab active" data-range="week" id="tabWeek">Week</button>
         <button class="tab" data-range="month" id="tabMonth">Month</button>
+      </div>
+      <div class="week-nav" id="weekNavGroup" style="display:none">
+        <button class="week-nav-btn" id="weekPrevBtn" type="button" aria-label="Previous week">‹</button>
+        <span class="week-nav-label" id="weekNavLabel"></span>
+        <button class="week-nav-btn" id="weekNextBtn" type="button" aria-label="Next week">›</button>
+        <button class="week-nav-today" id="weekTodayBtn" type="button">本周</button>
       </div>
       <div class="tabs-spacer"></div>
       <div class="date-label" id="dateLabel"></div>
@@ -2564,6 +2637,7 @@
         timelineHintCalendar: "提示：滚轮上下平移，<kbd>Ctrl</kbd>+滚轮缩放，拖拽也可移动。",
         viewLanes: "横向",
         viewCalendar: "日历",
+        weekToday: "本周",
         analysisPlaceholder: "← 点击左侧 Session 查看 AI 分析",
         analyzing: "分析中...",
         distribution: "分布",
@@ -2728,6 +2802,7 @@
         timelineHintCalendar: "Tip: scroll to pan vertically; hold <kbd>Ctrl</kbd> + scroll to zoom.",
         viewLanes: "Lanes",
         viewCalendar: "Calendar",
+        weekToday: "This week",
         analysisPlaceholder: "← Click a session on the left to view AI analysis",
         analyzing: "Analyzing...",
         distribution: "Distribution",
@@ -2887,6 +2962,9 @@
       try { return localStorage.getItem("clawd-timeline-view") === "calendar" ? "calendar" : "lanes"; }
       catch { return "lanes"; }
     })();
+    // Calendar view: 0 = current week (last 7 days), -1 = previous week, etc.
+    // Lanes view ignores this — its 4 tabs cover the today/3days/week/month spectrum.
+    let weekOffset = 0;
     let analysisConsented = false, analysisProvider = null, selectedAnalysisAgent = "claude-code";
     // Month tab state — null when not on the Month tab. Lazy-loaded on first
     // Month-tab click via getAvailableMonths(), then cached for the session.
@@ -2952,6 +3030,8 @@
       document.getElementById("timelineHint").innerHTML = t(currentView === "calendar" ? "timelineHintCalendar" : "timelineHint");
       document.getElementById("viewLanesBtn").textContent = t("viewLanes");
       document.getElementById("viewCalendarBtn").textContent = t("viewCalendar");
+      const weekTodayBtn = document.getElementById("weekTodayBtn");
+      if (weekTodayBtn) weekTodayBtn.textContent = t("weekToday");
       document.getElementById("analysisPlaceholder").textContent = t("analysisPlaceholder");
       document.getElementById("analysisLoadingText").textContent = t("analyzing");
       document.getElementById("distributionTitle").textContent = t("distribution");
@@ -4082,10 +4162,17 @@
       document.querySelectorAll(".timeline-view-toggle button").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.view === currentView);
       });
+      const isCalendar = currentView === "calendar";
       const axis = document.querySelector(".time-axis");
-      if (axis) axis.style.display = currentView === "calendar" ? "none" : "";
+      if (axis) axis.style.display = isCalendar ? "none" : "";
       const hint = document.getElementById("timelineHint");
-      if (hint) hint.innerHTML = t(currentView === "calendar" ? "timelineHintCalendar" : "timelineHint");
+      if (hint) hint.innerHTML = t(isCalendar ? "timelineHintCalendar" : "timelineHint");
+      // Range control swaps between lanes tabs and calendar week navigation
+      const tabsLanes = document.getElementById("tabsLanes");
+      const weekNav = document.getElementById("weekNavGroup");
+      if (tabsLanes) tabsLanes.style.display = isCalendar ? "none" : "";
+      if (weekNav) weekNav.style.display = isCalendar ? "" : "none";
+      if (isCalendar) updateWeekNavLabel();
     }
 
     function setView(v) {
@@ -4094,10 +4181,44 @@
       currentView = v;
       try { localStorage.setItem("clawd-timeline-view", v); } catch {}
       applyInitialView();
-      if (currentData) {
-        renderTimeAxis();
-        renderTimeline(currentData);
+      // Calendar always fetches "week + offset" while lanes follows currentRange,
+      // so the underlying data differs between views — reload from backend rather
+      // than re-rendering currentData.
+      loadData();
+    }
+
+    // Update the week-nav label and prev/next disabled state based on weekOffset.
+    function updateWeekNavLabel() {
+      const label = document.getElementById("weekNavLabel");
+      if (!label) return;
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6 + weekOffset * 7);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + weekOffset * 7);
+      const fmt = (d) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+      label.textContent = `${fmt(start)} – ${fmt(end)}`;
+      const nextBtn = document.getElementById("weekNextBtn");
+      if (nextBtn) nextBtn.disabled = weekOffset >= 0;
+      const todayBtn = document.getElementById("weekTodayBtn");
+      if (todayBtn) todayBtn.classList.toggle("active", weekOffset === 0);
+    }
+
+    function navigateWeek(deltaOrToday) {
+      if (deltaOrToday === "today") {
+        if (weekOffset === 0) return;
+        weekOffset = 0;
+      } else {
+        const next = weekOffset + deltaOrToday;
+        if (next > 0) return; // future weeks don't have data
+        weekOffset = next;
       }
+      selectedSessionId = null;
+      selectedAnalysisScope = null;
+      selectedExportSessionIds.clear();
+      updateExportSelectionUI();
+      userOverrideRange = false;
+      showAnalysisPlaceholder();
+      updateWeekNavLabel();
+      loadData();
     }
 
     document.addEventListener("click", (e) => {
@@ -5695,12 +5816,23 @@
       showToast(ok ? t("copied") : t("copyFailed"), "", ok ? "success" : "error");
     }
 
+    // ── Calendar week navigation ──
+    {
+      const prev = document.getElementById("weekPrevBtn");
+      const next = document.getElementById("weekNextBtn");
+      const today = document.getElementById("weekTodayBtn");
+      if (prev) prev.addEventListener("click", () => navigateWeek(-1));
+      if (next) next.addEventListener("click", () => navigateWeek(1));
+      if (today) today.addEventListener("click", () => navigateWeek("today"));
+    }
+
     // ── Tabs ──
     document.querySelectorAll(".tab").forEach(tab => {
       tab.addEventListener("click", async () => {
         document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
         tab.classList.add("active");
         currentRange = tab.dataset.range;
+        weekOffset = 0; // tab click is a fresh range pick — drop any prior calendar nav
         selectedSessionId = null;
         selectedAnalysisScope = null;
         selectedExportSessionIds.clear();
@@ -5807,7 +5939,10 @@
     async function loadData() {
       try {
         let data;
-        if (currentRange === "month" && selectedMonth) {
+        if (currentView === "calendar") {
+          // Calendar always shows a 7-day window navigated via weekOffset
+          data = await window.analyticsAPI.getTimeline("week", undefined, undefined, weekOffset);
+        } else if (currentRange === "month" && selectedMonth) {
           data = await window.analyticsAPI.getTimeline("month", selectedMonth.year, selectedMonth.month);
         } else {
           data = await window.analyticsAPI.getTimeline(currentRange);
@@ -5821,7 +5956,13 @@
           week: t("rangePast7Days"),
           month: selectedMonth ? `${selectedMonth.year}-${String(selectedMonth.month).padStart(2, "0")}` : "",
         };
-        document.getElementById("dateLabel").textContent = rangeLabels[currentRange] || "";
+        const dateLabelEl = document.getElementById("dateLabel");
+        if (dateLabelEl) {
+          // Calendar's week-nav-label already shows the date range, so suppress
+          // the redundant top-right date label in calendar mode.
+          dateLabelEl.textContent = currentView === "calendar" ? "" : (rangeLabels[currentRange] || "");
+        }
+        if (currentView === "calendar") updateWeekNavLabel();
         renderStats(data); renderTimeAxis(); renderTimeline(data);
         renderDistribution(data); renderTrend(data); renderEvents(data);
       } catch (e) { console.error("Load failed:", e); }

@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("analyticsAPI", {
   testCliPath: (path) => ipcRenderer.invoke("analytics-test-cli-path", path),
   getProviders: () => ipcRenderer.invoke("analytics-get-providers"),
   getConversations: (range) => ipcRenderer.invoke("analytics-get-conversations", range),
-  getTimeline: (range, year, month) => ipcRenderer.invoke("analytics-get-timeline", range, year, month),
+  getTimeline: (range, year, month, weekOffset) => ipcRenderer.invoke("analytics-get-timeline", range, year, month, weekOffset),
   getAvailableMonths: () => ipcRenderer.invoke("analytics-get-available-months"),
   analyzeSession: (sessionId, agent, provider, mode, scope) => ipcRenderer.invoke("analytics-analyze-session", sessionId, agent, provider, mode, scope),
   getAnalysisProvider: () => ipcRenderer.invoke("analytics-get-analysis-provider"),

@@ -625,10 +625,14 @@ module.exports = function initAnalyticsScan(ctx) {
     return scanRange(start, endOfDay);
   }
 
-  function scanWeek() {
+  // offset = 0 → last 7 days ending today (default).
+  // offset = -1 → the 7 days before that, etc.  Future weeks (offset > 0)
+  // are accepted but typically empty since we don't have data ahead of now.
+  function scanWeek(offset = 0) {
+    const shift = Number.isFinite(offset) ? Math.trunc(offset) * 7 : 0;
     const now = new Date();
-    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() + 86400000;
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6 + shift).getTime();
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + shift).getTime() + 86400000;
     return scanRange(startOfWeek, endOfDay);
   }
 

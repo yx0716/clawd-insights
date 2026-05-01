@@ -204,16 +204,18 @@ module.exports = function initAnalytics(ctx) {
     return data;
   }
 
-  ipcMain.handle("analytics-get-timeline", async (_event, range, year, month) => {
+  ipcMain.handle("analytics-get-timeline", async (_event, range, year, month, weekOffset) => {
     if (!ctx.analyticsScan) return null;
-    // Month tab passes year + month (1-indexed). Extra args are backward-
+    // Month tab passes year + month (1-indexed). Calendar view passes weekOffset
+    // for the "week" range to navigate prev/next weeks. Extra args are backward-
     // compatible — old callers passing only `range` still hit the existing
     // branches below.
     let data;
     if (range === "month" && year && month && ctx.analyticsScan.scanMonthOf) {
       data = ctx.analyticsScan.scanMonthOf(year, month);
     } else if (range === "week") {
-      data = ctx.analyticsScan.scanWeek();
+      const offset = Number.isFinite(Number(weekOffset)) ? Math.trunc(Number(weekOffset)) : 0;
+      data = ctx.analyticsScan.scanWeek(offset);
     } else if (range === "3days") {
       data = ctx.analyticsScan.scan3Days();
     } else {
