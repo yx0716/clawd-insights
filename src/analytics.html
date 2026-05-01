@@ -620,6 +620,17 @@
       line-height: 1.25;
     }
 
+    .calendar-block .cb-path {
+      font-size: 8px;
+      font-weight: 400;
+      opacity: .82;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 1px;
+    }
+
     .calendar-block .cb-meta {
       font-size: 8px;
       opacity: .85;
@@ -1651,6 +1662,14 @@
     .tooltip .tip-detail {
       color: #CBD5E0;
       font-size: 10px;
+    }
+
+    .tooltip .tip-path {
+      color: #A0AEC0;
+      font-size: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      margin-top: 3px;
+      word-break: break-all;
     }
 
     /* Confirm dialog */
@@ -3642,6 +3661,24 @@
       return `hsl(${hsl.h.toFixed(0)}, ${s.toFixed(0)}%, ${l.toFixed(0)}%)`;
     }
 
+    // Compact filesystem path for inline display in blocks and tooltips.
+    // Replaces home dir with ~ and trims middle segments when path is long
+    // while preserving the basename so users can still identify the project.
+    function shortenPath(p) {
+      if (!p) return "";
+      let s = String(p).replace(/\\/g, "/");
+      s = s.replace(/^\/Users\/[^/]+/, "~")
+           .replace(/^\/home\/[^/]+/, "~")
+           .replace(/^[A-Za-z]:\/Users\/[^/]+/i, "~");
+      const parts = s.split("/").filter(Boolean);
+      if (parts.length > 4 && s.length > 32) {
+        const head = s.startsWith("~") ? "~" : (s.startsWith("/") ? "" : parts[0]);
+        const tail = parts.slice(-2).join("/");
+        return `${head}/…/${tail}`;
+      }
+      return s;
+    }
+
     // Surface analysis summary in calendar blocks. Iterates batchCache directly
     // and matches by sessionId regardless of which provider/mode produced the
     // cache, so an A-then-B click sequence keeps A's summary on A's block when
@@ -4109,11 +4146,12 @@
             const safeProj = escapeHtml(proj);
             const tipTitle = escapeHtml(proj);
             const tipDetail = escapeHtml(t("tooltipDetail", { agent: agentLabel(s.agent), time: `${fmtTime(b.start)}-${fmtTime(b.end)}`, duration: dur, messages: s.messages }));
+            const tipPath = (s.fullPath || s.cwd) ? escapeHtml(s.fullPath || s.cwd) : "";
             // Always show session name; CSS overflow:hidden + ellipsis handles narrow blocks
             const lbl = wp > 10 ? `${safeProj} · ${escapeHtml(dur)}` : safeProj;
             const blockScopeKey = scopeKey(b);
             const isSelectedBlock = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
-            bhtml += `<div class="time-block${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%;background:${blockColor(s)};opacity:${opacity.toFixed(2)};box-shadow:inset 0 0 0 1px ${agentColor(s.agent)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}">${lbl}</div>`;
+            bhtml += `<div class="time-block${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%;background:${blockColor(s)};opacity:${opacity.toFixed(2)};box-shadow:inset 0 0 0 1px ${agentColor(s.agent)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
           }
           return `<div class="timeline-lane">${bhtml}</div>`;
         }).join("");
@@ -4231,17 +4269,21 @@
           const blockDur = en - st;
           const opacity = maxBlockDur > 0 ? 0.55 + 0.45 * (blockDur / maxBlockDur) : 1;
           const safeTitle = escapeHtml(titleText);
+          const fullPath = s.fullPath || s.cwd || "";
+          const shortPath = shortenPath(fullPath);
           const tipTitle = escapeHtml(summary ? `${proj} — ${summary}` : proj);
           const tipDetail = escapeHtml(t("tooltipDetail", { agent: agentLabel(s.agent), time: `${fmtTime(b.start)}-${fmtTime(b.end)}`, duration: dur, messages: s.messages }));
+          const tipPath = fullPath ? escapeHtml(fullPath) : "";
           const blockScopeKey = scopeKey(b);
           const isSelected = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
           const showMeta = heightPct > 4;
+          const showPath = heightPct > 6 && shortPath;
           const titleClass = summary ? "cb-title cb-summary" : "cb-title";
-          const inner = showMeta
-            ? `<span class="${titleClass}">${safeTitle}</span><span class="cb-meta">${escapeHtml(dur)}</span>`
-            : `<span class="${titleClass}">${safeTitle}</span>`;
+          let inner = `<span class="${titleClass}">${safeTitle}</span>`;
+          if (showPath) inner += `<span class="cb-path">${escapeHtml(shortPath)}</span>`;
+          if (showMeta) inner += `<span class="cb-meta">${escapeHtml(dur)}</span>`;
 
-          blocksHtml += `<div class="calendar-block${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px);background:${blockColor(s)};opacity:${opacity.toFixed(2)};box-shadow:inset 0 0 0 1px ${agentColor(s.agent)},0 1px 2px rgba(0,0,0,.12)" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}">${inner}</div>`;
+          blocksHtml += `<div class="calendar-block${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px);background:${blockColor(s)};opacity:${opacity.toFixed(2)};box-shadow:inset 0 0 0 1px ${agentColor(s.agent)},0 1px 2px rgba(0,0,0,.12)" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${inner}</div>`;
         }
 
         cols += `<div class="calendar-day-col"><div class="calendar-day-header"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div></div><div class="calendar-day-track">${blocksHtml}</div></div>`;
@@ -4539,7 +4581,14 @@
     }
 
     // ── Tooltip ──
-    function showTip(e) { const t = document.getElementById("tooltip"), el = e.currentTarget; t.innerHTML = `<div class="tip-title">${el.dataset.tipTitle || ""}</div><div class="tip-detail">${el.dataset.tipDetail || ""}</div>`; t.style.display = "block"; posTip(e); }
+    function showTip(e) {
+      const t = document.getElementById("tooltip"), el = e.currentTarget;
+      const path = el.dataset.tipPath || "";
+      const pathLine = path ? `<div class="tip-path">${path}</div>` : "";
+      t.innerHTML = `<div class="tip-title">${el.dataset.tipTitle || ""}</div><div class="tip-detail">${el.dataset.tipDetail || ""}</div>${pathLine}`;
+      t.style.display = "block";
+      posTip(e);
+    }
     function posTip(e) { const t = document.getElementById("tooltip"); t.style.left = (e.clientX + 12) + "px"; t.style.top = (e.clientY - 10) + "px"; }
     function hideTip() { document.getElementById("tooltip").style.display = "none"; }
     document.addEventListener("mousemove", e => { const t = document.getElementById("tooltip"); if (t.style.display === "block") posTip(e); });
