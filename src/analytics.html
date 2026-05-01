@@ -2542,6 +2542,7 @@
         onboardingPoint3: "3. 默认 provider 去设置里改",
         onboardingDismiss: "知道了",
         timelineHint: "提示：滚轮缩放时间轴，拖拽或 <kbd>←</kbd> / <kbd>→</kbd> 左右平移。",
+        timelineHintCalendar: "提示：滚轮上下平移，<kbd>Ctrl</kbd>+滚轮缩放，拖拽也可移动。",
         viewLanes: "横向",
         viewCalendar: "日历",
         analysisPlaceholder: "← 点击左侧 Session 查看 AI 分析",
@@ -2705,6 +2706,7 @@
         onboardingPoint3: "3. Change the default provider in Settings",
         onboardingDismiss: "Got it",
         timelineHint: "Tip: scroll to zoom the timeline; drag or press <kbd>←</kbd> / <kbd>→</kbd> to pan.",
+        timelineHintCalendar: "Tip: scroll to pan vertically; hold <kbd>Ctrl</kbd> + scroll to zoom.",
         viewLanes: "Lanes",
         viewCalendar: "Calendar",
         analysisPlaceholder: "← Click a session on the left to view AI analysis",
@@ -2928,7 +2930,7 @@
       document.getElementById("onboardingPoint2").textContent = t("onboardingPoint2");
       document.getElementById("onboardingPoint3").textContent = t("onboardingPoint3");
       document.getElementById("onboardingDismissBtn").textContent = t("onboardingDismiss");
-      document.getElementById("timelineHint").innerHTML = t("timelineHint");
+      document.getElementById("timelineHint").innerHTML = t(currentView === "calendar" ? "timelineHintCalendar" : "timelineHint");
       document.getElementById("viewLanesBtn").textContent = t("viewLanes");
       document.getElementById("viewCalendarBtn").textContent = t("viewCalendar");
       document.getElementById("analysisPlaceholder").textContent = t("analysisPlaceholder");
@@ -3811,9 +3813,36 @@
       // and calendar (.calendar-day-track) views
       const track = e.target.closest(".timeline-tracks, .calendar-day-track");
       if (!track) return;
-      e.preventDefault();
       const isCalendar = track.classList.contains("calendar-day-track");
 
+      // Calendar mode: bare wheel pans vertically; Ctrl/Cmd + wheel zooms.
+      // Lanes mode keeps wheel = zoom (its panning lives on horizontal drag).
+      if (isCalendar && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const { startHour, endHour } = timelineRange;
+        const span = endHour - startHour;
+        const rect = track.getBoundingClientRect();
+        // deltaY can arrive in pixel/line/page modes — normalize line/page to
+        // approximate pixel equivalents so trackpad and mouse wheel feel similar.
+        let pixelDelta = e.deltaY;
+        if (e.deltaMode === 1) pixelDelta *= 16;
+        else if (e.deltaMode === 2) pixelDelta *= rect.height;
+        const panAmount = pixelDelta * (span / Math.max(rect.height, 1)) * 0.5;
+        let newStart = startHour + panAmount;
+        let newEnd = endHour + panAmount;
+        if (newStart < 0) { newEnd -= newStart; newStart = 0; }
+        if (newEnd > 24) { newStart -= (newEnd - 24); newEnd = 24; }
+        newStart = Math.max(0, newStart);
+        newEnd = Math.min(24, newEnd);
+        if (newStart === startHour && newEnd === endHour) return;
+        timelineRange = { startHour: newStart, endHour: newEnd };
+        userOverrideRange = true;
+        renderTimeAxis();
+        renderTimeline(currentData);
+        return;
+      }
+
+      e.preventDefault();
       wheelDeltaAccum += e.deltaY;
       if (Math.abs(wheelDeltaAccum) < WHEEL_THRESHOLD) return;
       const direction = wheelDeltaAccum > 0 ? 1 : -1; // positive = zoom in, negative = zoom out
@@ -4018,6 +4047,8 @@
       });
       const axis = document.querySelector(".time-axis");
       if (axis) axis.style.display = currentView === "calendar" ? "none" : "";
+      const hint = document.getElementById("timelineHint");
+      if (hint) hint.innerHTML = t(currentView === "calendar" ? "timelineHintCalendar" : "timelineHint");
     }
 
     function setView(v) {
