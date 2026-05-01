@@ -2504,7 +2504,25 @@
   <script>
     const AGENT_COLORS = { "claude-code": "#E8734A", "codex": "#5B8DEF", "cursor-agent": "#9F7AEA", "copilot-cli": "#48BB78", "gemini-cli": "#F56565" };
     const AGENT_LABELS = { "claude-code": "Claude Code", "codex": "Codex", "cursor-agent": "Cursor", "copilot-cli": "Copilot", "gemini-cli": "Gemini" };
-    const PROJECT_PALETTE = ["#E8734A", "#5B8DEF", "#9F7AEA", "#48BB78", "#F6AD55", "#4FD1C5", "#FC8181", "#B794F4"];
+    // Palette designed cool-first so a dominant project doesn't paint the whole
+    // calendar warm. Hue-spaced ~36-50° apart; saturation/lightness kept moderate
+    // so multiple blocks of the same project (with jitter) stay readable on a
+    // light background. Indices are assigned by hashing the project name (see
+    // renderStats), not insertion order — the first project doesn't claim slot 0.
+    const PROJECT_PALETTE = [
+      "#4A90E2",  // azure
+      "#48BB78",  // green
+      "#9F7AEA",  // violet
+      "#4FD1C5",  // teal
+      "#5B6BD6",  // indigo
+      "#68D391",  // mint
+      "#B794F4",  // lavender
+      "#3FA9C9",  // cyan
+      "#7BA05B",  // sage
+      "#ED8C5E",  // muted orange (only warm slot)
+      "#F687B3",  // soft pink
+      "#9CA3AF",  // slate
+    ];
     const WEEKDAYS_ZH = ["日", "一", "二", "三", "四", "五", "六"];
     const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const BREAKDOWN_COLORS = ["#E8734A", "#5B8DEF", "#9F7AEA", "#48BB78", "#F56565", "#ECC94B", "#4FD1C5"];
@@ -3625,7 +3643,8 @@
     // Per-block color: project hue + per-session lightness/saturation jitter.
     // Avoids the "wall of one color" problem when one project dominates the view —
     // sessions of the same project still cluster in the same hue family but each
-    // gets a distinguishable shade.
+    // gets a distinguishable shade. Jitter range is tuned to be visible without
+    // blowing the project identity (lightness ±20, saturation ±15).
     function blockColor(session) {
       const baseHex = projColor(session.project || session.title || "unknown");
       const hsl = hexToHSL(baseHex);
@@ -3633,23 +3652,48 @@
       let hash = 0;
       for (let i = 0; i < seed.length; i++) hash = ((hash * 31) + seed.charCodeAt(i)) | 0;
       hash = Math.abs(hash);
-      const lOffset = (hash % 25) - 12;
-      const sOffset = ((hash >> 5) % 17) - 8;
-      const l = Math.max(35, Math.min(78, hsl.l + lOffset));
-      const s = Math.max(30, Math.min(95, hsl.s + sOffset));
+      const lOffset = (hash % 41) - 20;
+      const sOffset = ((hash >> 5) % 31) - 15;
+      const l = Math.max(32, Math.min(78, hsl.l + lOffset));
+      const s = Math.max(25, Math.min(95, hsl.s + sOffset));
       return `hsl(${hsl.h.toFixed(0)}, ${s.toFixed(0)}%, ${l.toFixed(0)}%)`;
     }
 
-    // Surface analysis summary in calendar blocks. Block-specific scope wins;
-    // falls back to full-session analysis if user analyzed at session level.
-    // Returns null when nothing cached, so callers fall back to the project label.
+    // Surface analysis summary in calendar blocks. Iterates batchCache directly
+    // and matches by sessionId (and optionally block scope) regardless of which
+    // provider/mode produced the cached analysis — this keeps a previously-shown
+    // summary on its block even after a different block is analyzed under a
+    // different scope/provider/mode in the same session. Block-specific cache
+    // wins over full-session; we pick the most recent _ts within each tier.
     function getBlockSummary(session, block) {
+      if (!session || !session.id) return null;
+      const sid = session.id;
+      const blockKey = block && Number.isFinite(Number(block.start)) && Number.isFinite(Number(block.end))
+        ? `${Math.round(Number(block.start))}-${Math.round(Number(block.end))}` : null;
+      const blockSubject = blockKey ? `${sid}@${blockKey}` : null;
+      let blockBest = null, fullBest = null;
       try {
-        const blockScope = { start: block.start, end: block.end };
-        const cached = getCachedAnalysis(session.id, selectedAnalysisAgent, "brief", blockScope)
-                    || getCachedAnalysis(session.id, selectedAnalysisAgent, "brief", null);
-        return cached && cached.summary ? String(cached.summary).trim() : null;
+        for (const [key, val] of Object.entries(batchCache)) {
+          if (!val || !val.summary) continue;
+          // key format: provider:subject  OR  provider:subject:mode
+          const firstColon = key.indexOf(":");
+          if (firstColon < 0) continue;
+          let rest = key.slice(firstColon + 1);
+          // Strip ":brief" / ":detail" suffix if present
+          const tail = rest.lastIndexOf(":");
+          if (tail > 0) {
+            const suffix = rest.slice(tail + 1);
+            if (suffix === "brief" || suffix === "detail") rest = rest.slice(0, tail);
+          }
+          if (rest === sid) {
+            if (!fullBest || (val._ts || 0) > (fullBest._ts || 0)) fullBest = val;
+          } else if (blockSubject && rest === blockSubject) {
+            if (!blockBest || (val._ts || 0) > (blockBest._ts || 0)) blockBest = val;
+          }
+        }
       } catch { return null; }
+      const best = blockBest || fullBest;
+      return best && best.summary ? String(best.summary).trim() : null;
     }
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, ch => ({
@@ -3754,8 +3798,15 @@
       document.getElementById("hMsgs").textContent = data.totalMessages || 0;
       document.getElementById("hTools").textContent = data.totalToolCalls || 0;
       document.getElementById("hAgents").textContent = agents.size;
-      // Assign project colors
-      projectColorMap = {};[...projects].forEach((p, i) => { projectColorMap[p] = PROJECT_PALETTE[i % PROJECT_PALETTE.length]; });
+      // Assign project colors by name hash (stable across loads / reorderings,
+      // and avoids the dominant project always landing on slot 0).
+      projectColorMap = {};
+      [...projects].forEach((p) => {
+        let hash = 0;
+        const name = String(p);
+        for (let i = 0; i < name.length; i++) hash = ((hash * 31) + name.charCodeAt(i)) | 0;
+        projectColorMap[p] = PROJECT_PALETTE[Math.abs(hash) % PROJECT_PALETTE.length];
+      });
     }
 
     function renderLegend(data) {
