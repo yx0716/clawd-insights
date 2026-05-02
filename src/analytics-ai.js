@@ -35,6 +35,88 @@ const PROVIDERS = {
 
 const INTERNAL_ANALYTICS_SUMMARY_MARKER = "[clawd-analytics-internal-summary-task]";
 
+// ── Provider Registry Data Structures ──
+
+/**
+ * @typedef {Object} Provider
+ * @property {string} id - Unique identifier (UUID)
+ * @property {string} name - User-friendly name (e.g., "Zhipu AI GLM-4-Flash")
+ * @property {'claude'|'openai'|'ollama'} type - Provider type
+ * @property {string} baseUrl - API endpoint (e.g., "https://api.zhipuai.com")
+ * @property {string} [apiKey] - API key (optional for ollama)
+ * @property {string} model - Model identifier (e.g., "glm-4-flash", "gpt-4o-mini")
+ * @property {boolean} enabled - Whether provider is enabled
+ * @property {Object.<string, string>} [customHeaders] - Custom headers for API requests
+ * @property {number} [createdAt] - Timestamp when provider was added
+ * @property {number} [updatedAt] - Timestamp when provider was last updated
+ */
+
+/**
+ * @typedef {Object} ProviderRegistry
+ * @property {Provider[]} providers - Array of configured providers
+ * @property {Object.<string, string>} defaultProviders - Default provider IDs by analysis mode
+ * @property {string} [defaultProviders.brief] - Default provider for brief analysis
+ * @property {string} [defaultProviders.detail] - Default provider for detail analysis
+ * @property {string} [defaultProviders.batch] - Default provider for batch analysis
+ */
+
+/**
+ * Generate a UUID v4 string
+ * @returns {string} UUID v4 format string
+ */
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
+ * Validate a provider object
+ * @param {Provider} provider - Provider to validate
+ * @returns {boolean} true if valid
+ * @throws {Error} if validation fails
+ */
+function validateProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    throw new Error('Provider must be an object');
+  }
+  
+  if (!provider.name || typeof provider.name !== 'string' || provider.name.trim().length === 0) {
+    throw new Error('Provider name is required and must be a non-empty string');
+  }
+  
+  if (!provider.type || !['claude', 'openai', 'ollama'].includes(provider.type)) {
+    throw new Error('Provider type must be one of: claude, openai, ollama');
+  }
+  
+  if (!provider.baseUrl || typeof provider.baseUrl !== 'string' || provider.baseUrl.trim().length === 0) {
+    throw new Error('Provider baseUrl is required and must be a non-empty string');
+  }
+  
+  // Validate baseUrl format (basic check)
+  try {
+    new URL(provider.baseUrl);
+  } catch {
+    throw new Error('Provider baseUrl must be a valid URL');
+  }
+  
+  if (provider.type !== 'ollama' && (!provider.apiKey || typeof provider.apiKey !== 'string')) {
+    throw new Error(`Provider type ${provider.type} requires an apiKey`);
+  }
+  
+  if (!provider.model || typeof provider.model !== 'string' || provider.model.trim().length === 0) {
+    throw new Error('Provider model is required and must be a non-empty string');
+  }
+  
+  if (provider.customHeaders && typeof provider.customHeaders !== 'object') {
+    throw new Error('Provider customHeaders must be an object');
+  }
+  
+  return true;
+}
+
 function buildInternalCliAnalysisPrompt(prompt) {
   return `${INTERNAL_ANALYTICS_SUMMARY_MARKER}
 Ignore the marker above. It is only used by Clawd to hide this internal summary session from analytics scans.
@@ -109,8 +191,6 @@ function buildSessionContext(detail) {
 module.exports = function initAnalyticsAI(ctx) {
   const analysisCachePath = ctx.analysisCachePath || path.join(os.homedir(), ".clawd", "analysis-cache.json");
   const isWin = process.platform === "win32";
-  let cachedInsights = null;
-  let cacheExpiry = 0;
   // Hoisted CLI lookup caches — keep at the top of the closure so
   // invalidateCliCaches() (called from setConfig) never trips a TDZ if a
   // hot-reload happens to invoke setConfig before the original `let` lines
@@ -122,7 +202,6 @@ module.exports = function initAnalyticsAI(ctx) {
   // skip flags the user's installed version doesn't recognize. Cleared by
   // invalidateCliCaches() when the user re-points a custom CLI path.
   const cliCapabilitiesCache = new Map();
-  const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
   const PROVIDER_COOLDOWN_MS = 5 * 60 * 1000;
   const providerCooldowns = new Map();
   const loggedCliBinaries = new Set();
@@ -135,8 +214,6 @@ module.exports = function initAnalyticsAI(ctx) {
 
   function setConfig(config) {
     if (ctx.setAIConfig) ctx.setAIConfig(config);
-    cachedInsights = null;
-    cacheExpiry = 0;
     // The custom CLI paths live in config — invalidating the binary lookup
     // cache here is what makes "Settings → Save → providers refresh" work
     // without an app restart. Without this, findClaudeBinary/findCodexBinary
@@ -161,130 +238,16 @@ module.exports = function initAnalyticsAI(ctx) {
     setConfig(cfg);
   }
 
-  function formatDuration(ms) {
-    if (ms < 60000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
-    return `${(ms / 3600000).toFixed(1)}h`;
-  }
-
-  function sortedEntries(obj) {
-    return Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
-  }
-
-  function buildPrompt(todayData, weekData) {
-    let p = "Analyze this AI coding agent usage data collected from desktop pet hooks and provide productivity insights.\n\n";
-
-    // ── Today detail ──
-    p += "## Today's Activity\n";
-    p += `- Date: ${todayData.date}\n`;
-    p += `- Active time: ${formatDuration(todayData.activeTime)} (working+thinking+juggling+sweeping+carrying)\n`;
-    p += `- Total tracked time: ${formatDuration(todayData.totalTime)}\n`;
-    p += `- Sessions: ${todayData.sessionCount}, Total events: ${todayData.totalEvents}, Errors: ${todayData.errorCount}\n`;
-
-    p += "\n### Time by State\n";
-    for (const [state, ms] of sortedEntries(todayData.stateTotals)) {
-      p += `  - ${state}: ${formatDuration(ms)}\n`;
-    }
-
-    p += "\n### Time by Agent\n";
-    for (const [agent, ms] of sortedEntries(todayData.agentTotals)) {
-      p += `  - ${agent}: ${formatDuration(ms)}\n`;
-    }
-
-    if (Object.keys(todayData.projectTotals || {}).length) {
-      p += "\n### Time by Project (working directory)\n";
-      for (const [proj, ms] of sortedEntries(todayData.projectTotals)) {
-        p += `  - ${proj}: ${formatDuration(ms)}\n`;
-      }
-    }
-
-    if (Object.keys(todayData.eventCounts || {}).length) {
-      p += "\n### Hook Event Frequency\n";
-      for (const [ev, n] of sortedEntries(todayData.eventCounts)) {
-        p += `  - ${ev}: ${n}x\n`;
-      }
-    }
-
-    if (Object.keys(todayData.toolHintCounts || {}).length) {
-      p += "\n### Tool Types Detected\n";
-      for (const [hint, n] of sortedEntries(todayData.toolHintCounts)) {
-        p += `  - ${hint}: ${n}x\n`;
-      }
-    }
-
-    // Hourly activity summary (non-zero hours only)
-    if (todayData.hourly) {
-      const activeHours = todayData.hourly
-        .map((h, i) => ({ hour: i, total: Object.values(h).reduce((a, b) => a + b, 0) }))
-        .filter(h => h.total > 0);
-      if (activeHours.length) {
-        p += "\n### Hourly Activity\n";
-        for (const { hour, total } of activeHours) {
-          const breakdown = Object.entries(todayData.hourly[hour])
-            .sort((a, b) => b[1] - a[1])
-            .map(([s, ms]) => `${s}:${formatDuration(ms)}`)
-            .join(", ");
-          p += `  - ${hour}:00: ${formatDuration(total)} (${breakdown})\n`;
-        }
-      }
-    }
-
-    // Session details
-    if (todayData.sessions && todayData.sessions.length) {
-      p += "\n### Session Details\n";
-      for (const s of todayData.sessions.slice(0, 10)) {
-        p += `  - [${s.agent}] ${s.project}: ${s.eventCount} events, ${formatDuration(s.totalActive)} active, span ${formatDuration(s.duration)}\n`;
-      }
-    }
-
-    // ── Week overview ──
-    if (weekData && weekData.days) {
-      p += "\n## This Week Overview\n";
-      p += `- Total active: ${formatDuration(weekData.weekActiveTime)}, Total tracked: ${formatDuration(weekData.weekTotalTime)}\n`;
-      p += `- Sessions: ${weekData.weekSessions}, Events: ${weekData.weekTotalEvents}, Errors: ${weekData.weekErrors}\n`;
-
-      p += "\n### Daily Breakdown\n";
-      for (const day of weekData.days) {
-        const topStates = sortedEntries(day.stateTotals).slice(0, 3).map(([s, ms]) => `${s}:${formatDuration(ms)}`).join(", ");
-        p += `  - ${day.date} (${day.dayLabel}): active ${formatDuration(day.activeTime)}, total ${formatDuration(day.totalTime)}, ${day.sessionCount} sessions [${topStates}]\n`;
-      }
-
-      if (Object.keys(weekData.weekProjectTotals || {}).length) {
-        p += "\n### Weekly Project Totals\n";
-        for (const [proj, ms] of sortedEntries(weekData.weekProjectTotals)) {
-          p += `  - ${proj}: ${formatDuration(ms)}\n`;
-        }
-      }
-
-      if (Object.keys(weekData.weekAgentTotals || {}).length) {
-        p += "\n### Weekly Agent Totals\n";
-        for (const [agent, ms] of sortedEntries(weekData.weekAgentTotals)) {
-          p += `  - ${agent}: ${formatDuration(ms)}\n`;
-        }
-      }
-    }
-
-    p += "\n请返回 JSON（不要 markdown code block），格式：\n";
-    p += '{"summary":"1-2 句中文，像朋友一样点评今天的工作节奏，带一点鼓励或幽默","highlights":["亮点1","亮点2","亮点3"],"suggestions":["一条简短建议"]}\n';
-    p += "要求：\n";
-    p += "- summary 要有情绪价值：不要只列数据，要让用户感受到'今天还不错'或'辛苦了'。可以用比喻、轻松的语气。\n";
-    p += "- highlights 提取 2-3 个今日亮点，每条 ≤ 15 字，聚焦成果而非过程。\n";
-    p += "- suggestions 最多 1 条，简短实用，不要说教。如果今天做得很好可以不给建议，返回空数组。\n";
-    p += "- 所有字段用中文。\n";
-    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
-
-    return p;
-  }
-
   // ── Provider-specific request builders ──
 
-  async function callClaude(apiKey, model, prompt, maxTokens = 500) {
+  async function callClaude(apiKey, model, prompt, maxTokens = 500, baseUrlOverride = null) {
     const cfg = getConfig() || {};
-    const baseUrl = cfg.baseUrl || PROVIDERS.claude.baseUrl;
+    const baseUrl = baseUrlOverride || cfg.baseUrl || PROVIDERS.claude.baseUrl;
     const response = await fetch(`${baseUrl}/v1/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "User-Agent": "clawd-insights/1.0",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
@@ -305,11 +268,27 @@ module.exports = function initAnalyticsAI(ctx) {
   }
 
   async function callOpenAICompat(apiKey, model, prompt, baseUrl, maxTokens = 500) {
-    const url = baseUrl || PROVIDERS.openai.baseUrl;
-    const headers = { "Content-Type": "application/json" };
+    const rawUrl = baseUrl || PROVIDERS.openai.baseUrl;
+    // Normalize the base URL to a full chat/completions endpoint.
+    // Handles several common patterns:
+    //   .../v1/chat/completions  → use as-is
+    //   .../chat/completions     → use as-is (user already gave full path)
+    //   .../v<N>  (e.g. /v1, /v4, /v2) → append /chat/completions
+    //   anything else            → append /v1/chat/completions
+    const trimmed = rawUrl.replace(/\/+$/, "");
+    let url;
+    if (trimmed.endsWith("/chat/completions")) {
+      url = trimmed;
+    } else if (/\/v\d+$/.test(trimmed)) {
+      // Ends with /v1, /v4, /v2, etc. — just append the path
+      url = `${trimmed}/chat/completions`;
+    } else {
+      url = `${trimmed}/v1/chat/completions`;
+    }
+    const headers = { "Content-Type": "application/json", "User-Agent": "clawd-insights/1.0" };
     if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
 
-    const response = await fetch(`${url}/v1/chat/completions`, {
+    const response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -347,6 +326,200 @@ module.exports = function initAnalyticsAI(ctx) {
 
     const data = await response.json();
     return data.message && data.message.content;
+  }
+
+  // ── Provider Registry Management ──
+
+  /**
+   * Get the provider registry from config
+   * @returns {Provider[]} Array of configured providers
+   */
+  function getProviderRegistry() {
+    const cfg = getConfig();
+    return (cfg && cfg.providers) || [];
+  }
+
+  /**
+   * Add a new provider to the registry
+   * @param {Omit<Provider, 'id'|'createdAt'|'updatedAt'>} provider - Provider data (without id)
+   * @returns {Provider} The created provider with id and timestamps
+   * @throws {Error} if validation fails or name already exists
+   */
+  function addProvider(provider) {
+    validateProvider(provider);
+    
+    const cfg = getConfig() || { providers: [] };
+    if (!cfg.providers) cfg.providers = [];
+    
+    // Check for duplicate names
+    if (cfg.providers.some(p => p.name === provider.name)) {
+      throw new Error(`Provider name "${provider.name}" already exists`);
+    }
+    
+    const now = Date.now();
+    const newProvider = {
+      id: generateUUID(),
+      ...provider,
+      enabled: provider.enabled !== false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    
+    // Spread to a new object so the store detects a change (avoids noop on same reference)
+    setConfig({ ...cfg, providers: [...cfg.providers, newProvider] });
+    return newProvider;
+  }
+
+  /**
+   * Update an existing provider
+   * @param {string} id - Provider ID
+   * @param {Partial<Omit<Provider, 'id'|'createdAt'>>} updates - Fields to update
+   * @returns {Provider} The updated provider
+   * @throws {Error} if provider not found or validation fails
+   */
+  function updateProvider(id, updates) {
+    const cfg = getConfig() || { providers: [] };
+    if (!cfg.providers) cfg.providers = [];
+    
+    const index = cfg.providers.findIndex(p => p.id === id);
+    if (index === -1) {
+      throw new Error(`Provider with id "${id}" not found`);
+    }
+    
+    const existing = cfg.providers[index];
+    const updated = { ...existing, ...updates, id: existing.id, createdAt: existing.createdAt };
+    
+    // Validate the updated provider
+    validateProvider(updated);
+    
+    // Check for duplicate names (excluding self)
+    if (updates.name && cfg.providers.some(p => p.id !== id && p.name === updates.name)) {
+      throw new Error(`Provider name "${updates.name}" already exists`);
+    }
+    
+    updated.updatedAt = Date.now();
+    const newProviders = cfg.providers.map((p, i) => i === index ? updated : p);
+    setConfig({ ...cfg, providers: newProviders });
+    return updated;
+  }
+
+  /**
+   * Delete a provider from the registry
+   * @param {string} id - Provider ID
+   * @throws {Error} if provider not found
+   */
+  function deleteProvider(id) {
+    const cfg = getConfig() || { providers: [] };
+    if (!cfg.providers) cfg.providers = [];
+    
+    const index = cfg.providers.findIndex(p => p.id === id);
+    if (index === -1) {
+      throw new Error(`Provider with id "${id}" not found`);
+    }
+    
+    const newProviders = cfg.providers.filter((_, i) => i !== index);
+    
+    // Clean up default provider references if this provider was set as default
+    const newDefaultProviders = { ...(cfg.defaultProviders || {}) };
+    for (const mode of ['brief', 'detail', 'batch']) {
+      if (newDefaultProviders[mode] === id) {
+        delete newDefaultProviders[mode];
+      }
+    }
+    
+    setConfig({ ...cfg, providers: newProviders, defaultProviders: newDefaultProviders });
+  }
+
+  /**
+   * Get a provider by ID
+   * @param {string} id - Provider ID
+   * @returns {Provider|null} The provider or null if not found
+   */
+  function getProvider(id) {
+    const registry = getProviderRegistry();
+    return registry.find(p => p.id === id) || null;
+  }
+
+  /**
+   * Test a provider connection
+   * @param {Omit<Provider, 'id'|'enabled'|'createdAt'|'updatedAt'>} provider - Provider to test
+   * @returns {Promise<{success: boolean, error?: string, model?: string, latencyMs?: number}>}
+   */
+  async function testProvider(provider) {
+    try {
+      validateProvider(provider);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+    
+    const startTime = Date.now();
+    const testPrompt = "Say 'OK' in one word.";
+    
+    // Build the actual URL that will be used so we can show it on failure
+    let resolvedUrl = provider.baseUrl || "";
+    if (provider.type === "openai") {
+      const trimmed = resolvedUrl.replace(/\/+$/, "");
+      if (trimmed.endsWith("/chat/completions")) resolvedUrl = trimmed;
+      else if (/\/v\d+$/.test(trimmed)) resolvedUrl = `${trimmed}/chat/completions`;
+      else resolvedUrl = `${trimmed}/v1/chat/completions`;
+    }
+    
+    try {
+      let result;
+      if (provider.type === 'claude') {
+        result = await callClaude(provider.apiKey, provider.model, testPrompt, 10, provider.baseUrl);
+      } else if (provider.type === 'ollama') {
+        result = await callOllama(provider.model, testPrompt, provider.baseUrl);
+      } else {
+        result = await callOpenAICompat(provider.apiKey, provider.model, testPrompt, provider.baseUrl, 10);
+      }
+      
+      if (!result) {
+        return { success: false, error: `No response from provider (URL: ${resolvedUrl})` };
+      }
+      
+      return {
+        success: true,
+        model: provider.model,
+        latencyMs: Date.now() - startTime,
+      };
+    } catch (err) {
+      // Attach the resolved URL to the error so the user knows what was actually called
+      const detail = err.message || "Unknown error";
+      return { success: false, error: `${detail} (URL: ${resolvedUrl})` };
+    }
+  }
+
+  /**
+   * Get the default provider for a given analysis mode
+   * @param {string} mode - Analysis mode ('brief', 'detail', 'batch')
+   * @returns {string|null} Provider ID or null if not set
+   */
+  function getDefaultProvider(mode) {
+    const cfg = getConfig();
+    if (!cfg || !cfg.defaultProviders) return null;
+    return cfg.defaultProviders[mode] || null;
+  }
+
+  /**
+   * Set the default provider for a given analysis mode
+   * @param {string} mode - Analysis mode ('brief', 'detail', 'batch')
+   * @param {string} providerId - Provider ID
+   * @throws {Error} if provider not found
+   */
+  function setDefaultProvider(mode, providerId) {
+    if (!['brief', 'detail', 'batch'].includes(mode)) {
+      throw new Error(`Invalid analysis mode: ${mode}`);
+    }
+    
+    // Verify provider exists
+    const provider = getProvider(providerId);
+    if (!provider) {
+      throw new Error(`Provider with id "${providerId}" not found`);
+    }
+    
+    const cfg = getConfig() || {};
+    setConfig({ ...cfg, defaultProviders: { ...(cfg.defaultProviders || {}), [mode]: providerId } });
   }
 
   function uniqueExistingPaths(candidates) {
@@ -573,54 +746,6 @@ module.exports = function initAnalyticsAI(ctx) {
     );
   }
 
-  async function getInsights(todayData, weekData) {
-    const cfg = getConfig();
-    const provider = (cfg && cfg.provider) || "claude";
-    const providerDef = PROVIDERS[provider];
-    const apiKey = cfg && cfg.apiKey;
-
-    // Need API key for claude/openai providers
-    if (providerDef && providerDef.needsKey && !apiKey) return null;
-
-    // Return cached if fresh
-    if (cachedInsights && Date.now() < cacheExpiry) return cachedInsights;
-
-    // Skip if no meaningful data
-    if (!todayData.totalTime && (!weekData || !weekData.days.some(d => d.totalTime > 0))) {
-      return { summary: "No agent activity recorded yet. Start using AI agents and check back!", highlights: [], suggestions: [] };
-    }
-
-    const prompt = buildPrompt(todayData, weekData);
-    const model = (cfg && cfg.model) || (providerDef && providerDef.defaultModel);
-    const baseUrl = (cfg && cfg.baseUrl) || (providerDef && providerDef.baseUrl);
-
-    try {
-      let text;
-      if (provider === "claude") {
-        text = await callClaude(apiKey, model, prompt);
-      } else if (provider === "ollama") {
-        text = await callOllama(model, prompt, baseUrl);
-      } else {
-        // openai-compatible (covers Qwen, DeepSeek, etc.)
-        text = await callOpenAICompat(apiKey, model, prompt, baseUrl);
-      }
-
-      if (!text) return null;
-
-      // Parse JSON from response (might be wrapped in markdown code block).
-      // Use balanced-brace extractor instead of greedy regex — see comment on
-      // extractFirstJsonObject() for why the old regex was broken.
-      const insights = extractFirstJsonObject(text);
-      if (!insights) return { summary: text.slice(0, 200), highlights: [], suggestions: [] };
-      cachedInsights = insights;
-      cacheExpiry = Date.now() + CACHE_TTL;
-      return insights;
-    } catch (err) {
-      console.warn("Clawd analytics AI: fetch failed:", err.message);
-      return { summary: `AI request failed: ${err.message}`, highlights: [], suggestions: [] };
-    }
-  }
-
   // ── Local Claude CLI detection ──
   // (cachedClaudePath is hoisted to the top of the closure — see comment there)
 
@@ -650,6 +775,7 @@ module.exports = function initAnalyticsAI(ctx) {
   }
 
   function findClaudeBinary() {
+    if (ctx.disableCliDiscoveryForTests) return null;
     const custom = getCustomCliPath("claude");
     if (custom) return custom;
     if (cachedClaudePath !== undefined) return cachedClaudePath;
@@ -755,6 +881,7 @@ module.exports = function initAnalyticsAI(ctx) {
   }
 
   function findCodexBinary() {
+    if (ctx.disableCliDiscoveryForTests) return null;
     const custom = getCustomCliPath("codex");
     if (custom) return custom;
     if (cachedCodexPath !== undefined) return cachedCodexPath;
@@ -1326,21 +1453,6 @@ module.exports = function initAnalyticsAI(ctx) {
     });
   }
 
-  function getConfiguredApiProviderOption() {
-    const cfg = getConfig();
-    if (!cfg) return null;
-    const provider = cfg.provider || "claude";
-    const providerDef = PROVIDERS[provider];
-    if (!providerDef) return null;
-    if (providerDef.needsKey && !cfg.apiKey) return null;
-    return {
-      id: `api:${provider}`,
-      type: "api",
-      provider,
-      label: providerDef.label,
-    };
-  }
-
   // ── Model + pricing detection ──
   //
   // Pricing table (USD per 1M tokens). Update as needed.
@@ -1529,8 +1641,24 @@ module.exports = function initAnalyticsAI(ctx) {
         pricingKey,
       });
     }
-    const apiOption = getConfiguredApiProviderOption();
-    if (apiOption) options.push(apiOption);
+    // Custom providers from the registry (added in v2)
+    const customProviders = getProviderRegistry();
+    for (const p of customProviders) {
+      if (!p.enabled) continue;
+      // Only skip if the exact same UUID id is already listed (avoid true duplicates).
+      // Don't filter by type — multiple custom providers can share the same type (e.g. openai).
+      const alreadyListed = options.some((o) => o.id === p.id);
+      if (alreadyListed) continue;
+      options.push({
+        id: p.id,
+        type: "api-custom",
+        provider: p.type,
+        label: p.name,
+        model: p.model,
+        baseUrl: p.baseUrl,
+        pricingKey: resolvePricingKey(p.model),
+      });
+    }
     return options;
   }
 
@@ -1983,6 +2111,34 @@ module.exports = function initAnalyticsAI(ctx) {
 
     // Fallback to configured API provider
     const cfg = getConfig();
+    // Check if preferredProvider is a custom registry provider UUID
+    const customProvider = getProvider(preferredProvider);
+    if (customProvider && !forcedApiProvider) {
+      try {
+        let text;
+        if (customProvider.type === "claude") {
+          text = await callClaude(customProvider.apiKey, customProvider.model, prompt, 500, customProvider.baseUrl);
+        } else if (customProvider.type === "ollama") {
+          text = await callOllama(customProvider.model, prompt, customProvider.baseUrl);
+        } else {
+          text = await callOpenAICompat(customProvider.apiKey, customProvider.model, prompt, customProvider.baseUrl);
+        }
+        if (!text) return null;
+        const result = extractFirstJsonObject(text);
+        if (!result) {
+          const fallback = { summary: text.slice(0, 300), timeBreakdown: [], insights: [], suggestions: [], _msgCount: getDetailContextEntryCount(detail), _analysisMs: Date.now() - startTime };
+          return maybeCacheAnalysisResult(cacheKey, fallback);
+        }
+        result._msgCount = getDetailContextEntryCount(detail);
+        result._analysisMs = Date.now() - startTime;
+        result._provider = customProvider.name;
+        result._model = customProvider.model;
+        return maybeCacheAnalysisResult(cacheKey, result);
+      } catch (err) {
+        return maybeCacheAnalysisResult(cacheKey, { summary: `分析失败 (${customProvider.name}): ${err.message}`, timeBreakdown: [], insights: [], suggestions: [] });
+      }
+    }
+
     const provider = forcedApiProvider || (cfg && cfg.provider) || "claude";
     const providerDef = PROVIDERS[provider];
     const apiKey = cfg && cfg.apiKey;
@@ -2057,8 +2213,26 @@ module.exports = function initAnalyticsAI(ctx) {
       } catch { /* fall through */ }
     }
 
-    // Fallback to API
+    // Fallback to API — registry-first, then legacy fields
     const cfg = getConfig();
+    // Try registry: use the "brief" default provider if set
+    const registryProvider = getProvider(getDefaultProvider("brief"));
+    if (registryProvider) {
+      try {
+        let text;
+        if (registryProvider.type === "claude") {
+          text = await callClaude(registryProvider.apiKey, registryProvider.model, prompt, 500, registryProvider.baseUrl);
+        } else if (registryProvider.type === "ollama") {
+          text = await callOllama(registryProvider.model, prompt, registryProvider.baseUrl);
+        } else {
+          text = await callOpenAICompat(registryProvider.apiKey, registryProvider.model, prompt, registryProvider.baseUrl);
+        }
+        const line = (text || "").trim().split("\n")[0].replace(/^["'""'']|["'""'']$/g, "").trim();
+        if (line) { onelinerCache.set(detail.sessionId, line); return line; }
+      } catch { /* fall through to legacy */ }
+    }
+
+    // Legacy fallback (for users not yet on v3 or with no registry provider)
     const provider = (cfg && cfg.provider) || "claude";
     const apiKey = cfg && cfg.apiKey;
     if (!apiKey && PROVIDERS[provider] && PROVIDERS[provider].needsKey) return null;
@@ -2200,10 +2374,40 @@ module.exports = function initAnalyticsAI(ctx) {
       }
     }
 
-    // Route 3: API provider (claude / openai / ollama)
+    // Route 3: API provider — registry-first, then legacy fields
     let apiProviderId = preferred;
     if (apiProviderId.startsWith("api:")) apiProviderId = apiProviderId.slice(4);
     const cfg = getConfig();
+
+    // Try registry: explicit preferred provider, then "detail" mode default
+    const registryProvider = getProvider(apiProviderId) || getProvider(getDefaultProvider("detail"));
+    if (registryProvider) {
+      try {
+        const fullPrompt = systemPrompt + "\n\n" + prompt;
+        const MAX_TOKENS = 2000;
+        let text;
+        if (registryProvider.type === "claude") {
+          text = await callClaude(registryProvider.apiKey, registryProvider.model, fullPrompt, MAX_TOKENS, registryProvider.baseUrl);
+        } else if (registryProvider.type === "ollama") {
+          text = await callOllama(registryProvider.model, fullPrompt, registryProvider.baseUrl);
+        } else {
+          text = await callOpenAICompat(registryProvider.apiKey, registryProvider.model, fullPrompt, registryProvider.baseUrl, MAX_TOKENS);
+        }
+        const parsed = extractFirstJsonObject(text);
+        if (parsed) {
+          parsed._provider = registryProvider.name;
+          parsed._model = registryProvider.model;
+          parsed._analysisMs = Date.now() - startTime;
+          return parsed;
+        }
+        return { error: true, summary: "API 返回内容无法解析为 JSON。" };
+      } catch (err) {
+        console.warn("Clawd knowledge-compound API error:", err.message);
+        return { error: true, summary: `API 调用失败：${err.message}` };
+      }
+    }
+
+    // Legacy fallback (for users not yet on v3 or with no registry provider)
     const provider = (PROVIDERS[apiProviderId] ? apiProviderId : (cfg && cfg.provider) || "claude");
     const apiKey = cfg && cfg.apiKey;
     if (PROVIDERS[provider] && PROVIDERS[provider].needsKey && !apiKey) {
@@ -2311,7 +2515,7 @@ module.exports = function initAnalyticsAI(ctx) {
     });
   }
 
-  return { getInsights, getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses, analyzeKnowledgeCompound };
+  return { getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses, analyzeKnowledgeCompound, getProviderRegistry, addProvider, updateProvider, deleteProvider, getProvider, testProvider, getDefaultProvider, setDefaultProvider, generateUUID, validateProvider };
 };
 
 module.exports.__test = {

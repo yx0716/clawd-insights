@@ -85,12 +85,6 @@ module.exports = function initAnalytics(ctx) {
     return { today, week, computed };
   });
 
-  ipcMain.handle("analytics-get-insights", async () => {
-    const today = ctx.analyticsData.aggregateToday();
-    const week = ctx.analyticsData.aggregateWeek();
-    return ctx.analyticsAI.getInsights(today, week);
-  });
-
   ipcMain.handle("analytics-generate-report", async (_event, scope) => {
     const today = ctx.analyticsData.aggregateToday();
     const week = ctx.analyticsData.aggregateWeek();
@@ -179,6 +173,54 @@ module.exports = function initAnalytics(ctx) {
 
   ipcMain.handle("analytics-get-providers", async () => {
     return ctx.analyticsAI.PROVIDERS;
+  });
+
+  // ── Custom provider registry CRUD ──
+
+  ipcMain.handle("analytics-list-custom-providers", async () => {
+    if (!ctx.analyticsAI) return [];
+    return ctx.analyticsAI.getProviderRegistry();
+  });
+
+  ipcMain.handle("analytics-get-custom-provider", async (_event, id) => {
+    if (!ctx.analyticsAI) return null;
+    return ctx.analyticsAI.getProvider(id);
+  });
+
+  ipcMain.handle("analytics-add-custom-provider", async (_event, provider) => {
+    if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
+    return ctx.analyticsAI.addProvider(provider);
+  });
+
+  ipcMain.handle("analytics-update-custom-provider", async (_event, id, updates) => {
+    if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
+    return ctx.analyticsAI.updateProvider(id, updates);
+  });
+
+  ipcMain.handle("analytics-delete-custom-provider", async (_event, id) => {
+    if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
+    ctx.analyticsAI.deleteProvider(id);
+    return { ok: true };
+  });
+
+  ipcMain.handle("analytics-test-custom-provider", async (_event, provider) => {
+    if (!ctx.analyticsAI) return { success: false, error: "analyticsAI not initialized" };
+    try {
+      return await ctx.analyticsAI.testProvider(provider);
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("analytics-get-default-provider", async (_event, mode) => {
+    if (!ctx.analyticsAI) return null;
+    return ctx.analyticsAI.getDefaultProvider(mode);
+  });
+
+  ipcMain.handle("analytics-set-default-provider", async (_event, mode, providerId) => {
+    if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
+    ctx.analyticsAI.setDefaultProvider(mode, providerId);
+    return { ok: true };
   });
 
   ipcMain.handle("analytics-get-conversations", async (_event, range) => {

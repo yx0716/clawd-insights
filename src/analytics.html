@@ -2068,6 +2068,49 @@
       margin-bottom: 8px;
     }
 
+    /* Custom provider list */
+    .btn-add-provider {
+      font-size: 11px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px dashed var(--border);
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      width: 100%;
+    }
+    .btn-add-provider:hover { background: var(--accent-light); }
+
+    .provider-card {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      background: var(--bg);
+      font-size: 11px;
+    }
+    .provider-card-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .provider-card-dot.enabled { background: #48BB78; }
+    .provider-card-dot.disabled { background: var(--text-muted); }
+    .provider-card-info { flex: 1; min-width: 0; }
+    .provider-card-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .provider-card-meta { color: var(--text-muted); font-size: 10px; }
+    .provider-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .provider-card-actions button {
+      font-size: 10px; padding: 3px 7px;
+      border-radius: 4px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-secondary); cursor: pointer;
+    }
+    .provider-card-actions button:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
+    .provider-card-actions .btn-del:hover { background: #FDECEA; color: #C62828; border-color: #C62828; }
+
     .cli-diag {
       background: var(--bg);
       border: 1px solid var(--border-light);
@@ -2508,7 +2551,7 @@
     <div class="settings-dialog">
       <h2 id="settingsTitle">AI Provider Settings</h2>
       <div class="settings-sub" id="settingsSub">Clawd will prefer locally detected CLI analyzers when available. Pick
-        the default provider here, then use the API section below only as a fallback or override.</div>
+        the default analysis backend here, or add custom API-compatible providers below.</div>
       <div class="settings-status" id="settingsStatus"></div>
 
       <!-- Section 1: Local CLI Detection + default selection -->
@@ -2553,35 +2596,14 @@
         </div>
       </div>
 
-      <!-- Section 2: API Provider (fallback) -->
-      <div class="settings-section">
-        <h3 id="apiFallbackTitle">API Provider (Fallback)</h3>
-        <div class="settings-field">
-          <label for="settingsProvider" id="settingsProviderLabel">Provider</label>
-          <select id="settingsProvider">
-            <option value="claude">Claude (Anthropic)</option>
-            <option value="openai">OpenAI-Compatible (Qwen, DeepSeek, OpenRouter, etc.)</option>
-            <option value="ollama">Ollama (Local)</option>
-          </select>
-        </div>
-        <div class="settings-field" id="settingsApiKeyField">
-          <label for="settingsApiKey" id="settingsApiKeyLabel">API Key</label>
-          <input id="settingsApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
-          <div class="field-hint" id="settingsApiKeyHint">Stored locally in your prefs file. Leave blank to keep the
-            existing key.</div>
-        </div>
-        <div class="settings-field">
-          <label for="settingsBaseUrl" id="settingsBaseUrlLabel">Endpoint <span
-              style="color:var(--text-muted);font-weight:400" id="settingsBaseUrlOptional">(optional)</span></label>
-          <input id="settingsBaseUrl" type="text" autocomplete="off" spellcheck="false" placeholder="">
-          <div class="field-hint" id="settingsBaseUrlHint"></div>
-        </div>
-        <div class="settings-field">
-          <label for="settingsModel" id="settingsModelLabel">Model <span style="color:var(--text-muted);font-weight:400"
-              id="settingsModelOptional">(optional)</span></label>
-          <input id="settingsModel" type="text" autocomplete="off" spellcheck="false" placeholder="">
-          <div class="field-hint" id="settingsModelHint"></div>
-        </div>
+      <!-- Section 3: Custom Analysis Providers -->
+      <div class="settings-section" id="customProvidersSection">
+        <h3 id="customProvidersTitle">Custom Analysis Providers</h3>
+        <div class="settings-sub" id="customProvidersSub" style="margin-bottom:10px">Add OpenAI-compatible endpoints, Zhipu AI, DeepSeek, or any local model for cheaper session analysis.</div>
+
+        <div id="customProviderList" style="margin-bottom:8px"></div>
+
+        <button type="button" class="btn-add-provider" id="addCustomProviderBtn">+ Add Provider</button>
       </div>
 
       <div class="settings-btns">
@@ -2589,6 +2611,51 @@
         <button class="btn-clear" id="settingsClearBtn" type="button">Clear</button>
         <button class="btn-cancel" id="settingsCancelBtn" type="button">Cancel</button>
         <button class="btn-save" id="settingsSaveBtn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Provider Add/Edit Dialog -->
+  <div class="confirm-overlay" id="providerDialogOverlay" style="display:none">
+    <div class="settings-dialog" style="max-width:420px">
+      <h2 id="providerDialogTitle">Add Custom Provider</h2>
+      <div class="settings-status" id="providerDialogStatus"></div>
+
+      <div class="settings-field">
+        <label for="providerName" id="providerNameLabel">Provider Name *</label>
+        <input id="providerName" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., Zhipu AI GLM-4-Flash">
+      </div>
+      <div class="settings-field">
+        <label for="providerType" id="providerTypeLabel">Type *</label>
+        <select id="providerType">
+          <option value="openai">OpenAI-Compatible (Zhipu, DeepSeek, OpenRouter…)</option>
+          <option value="claude">Claude (Anthropic)</option>
+          <option value="ollama">Ollama (Local)</option>
+        </select>
+      </div>
+      <div class="settings-field">
+        <label for="providerBaseUrl" id="providerBaseUrlLabel">API Endpoint *</label>
+        <input id="providerBaseUrl" type="text" autocomplete="off" spellcheck="false" placeholder="https://open.bigmodel.cn/api/paas/v4">
+        <div class="field-hint" id="providerBaseUrlHint">For OpenAI-compatible: <code>/v1/chat/completions</code> will be appended (unless your URL already ends with <code>/v1</code> or the full path).</div>
+        <div class="field-hint" id="providerResolvedUrl" style="color:var(--accent);display:none">→ Will call: <code id="providerResolvedUrlText"></code></div>
+      </div>
+      <div class="settings-field" id="providerApiKeyField">
+        <label for="providerApiKey" id="providerApiKeyLabel">API Key</label>
+        <input id="providerApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-...">
+      </div>
+      <div class="settings-field">
+        <label for="providerModel" id="providerModelLabel">Model *</label>
+        <input id="providerModel" type="text" autocomplete="off" spellcheck="false" placeholder="e.g., glm-4-flash, gpt-4o-mini, deepseek-chat">
+        <div class="field-hint" id="providerModelHint">Common cheap models: <code>glm-4-flash</code>, <code>gpt-4o-mini</code>, <code>deepseek-chat</code></div>
+      </div>
+      <div class="settings-field" style="display:flex;align-items:center;gap:8px">
+        <button type="button" class="btn-cancel" id="testProviderBtn" style="flex-shrink:0">Test Connection</button>
+        <span id="providerTestResult" style="font-size:11px"></span>
+      </div>
+
+      <div class="settings-btns">
+        <button class="btn-cancel" id="providerDialogCancelBtn" type="button">Cancel</button>
+        <button class="btn-save" id="providerDialogSaveBtn" type="button">Save</button>
       </div>
     </div>
   </div>
@@ -2621,7 +2688,7 @@
         statsTools: "工具调用",
         statsAgents: "Agents",
         settingsTitle: "AI Provider 设置",
-        settingsSub: "Clawd 会优先使用本地检测到的 CLI 分析器。先在这里选默认 provider，下面的 API 区域只作为 fallback 或 override。",
+        settingsSub: "Clawd 会优先使用本地检测到的 CLI 分析器。先在这里选默认分析后端，也可以在下面添加自定义 API-compatible provider。",
         tabToday: "今天",
         tab3days: "3天",
         tabWeek: "本周",
@@ -2690,12 +2757,6 @@
         codexPathLabel: "Codex 可执行路径 ",
         test: "测试",
         codexPathHint: "如果自动检测失败（比如 NVM/fnm/Volta 安装），请在终端运行 <code>which codex</code>，然后把路径贴到这里。",
-        apiFallbackTitle: "API Provider（兜底）",
-        provider: "Provider",
-        apiKey: "API Key",
-        endpoint: "Endpoint ",
-        model: "Model ",
-        optional: "（可选）",
         clear: "清除",
         clearAnalysisCache: "清理分析缓存",
         cancel: "取消",
@@ -2717,8 +2778,8 @@
         couldNotAnalyze: "暂时无法分析",
         noProviderAvailable: "当前没有可用的 AI provider。",
         openSettings: "打开设置",
-        configureApiKeyFallback: "配置 API key 作为 fallback。",
-        configureApiProviderFallback: "配置 API provider 作为 fallback。",
+        configureApiKeyFallback: "请添加或选择一个分析 provider。",
+        configureApiProviderFallback: "请添加或选择一个分析 provider。",
         confirmAnalyze: "使用 <span class=\"provider\">{provider}</span> 进行分析？<br><span style=\"font-size:11px;color:var(--text-muted)\">会消耗少量 tokens</span>",
         analyze: "开始分析",
         outcomes: "结果",
@@ -2786,7 +2847,7 @@
         statsTools: "Tool Calls",
         statsAgents: "Agents",
         settingsTitle: "AI Provider Settings",
-        settingsSub: "Clawd prefers locally detected CLI analyzers when available. Pick the default provider here, then use the API section below only as a fallback or override.",
+        settingsSub: "Clawd prefers locally detected CLI analyzers when available. Pick the default analysis backend here, or add custom API-compatible providers below.",
         tabToday: "Today",
         tab3days: "3 Days",
         tabWeek: "Week",
@@ -2855,12 +2916,6 @@
         codexPathLabel: "Codex binary path ",
         test: "Test",
         codexPathHint: "If auto-detection fails (for example NVM/fnm/Volta installs), run <code>which codex</code> in your terminal and paste the path here.",
-        apiFallbackTitle: "API Provider (Fallback)",
-        provider: "Provider",
-        apiKey: "API Key",
-        endpoint: "Endpoint ",
-        model: "Model ",
-        optional: "(optional)",
         clear: "Clear",
         clearAnalysisCache: "Clear Analysis Cache",
         cancel: "Cancel",
@@ -2882,8 +2937,8 @@
         couldNotAnalyze: "Could not analyze",
         noProviderAvailable: "No AI provider available.",
         openSettings: "Open Settings",
-        configureApiKeyFallback: "Configure an API key as a fallback.",
-        configureApiProviderFallback: "Configure an API provider as a fallback.",
+        configureApiKeyFallback: "Add or choose an analysis provider.",
+        configureApiProviderFallback: "Add or choose an analysis provider.",
         confirmAnalyze: "Use <span class=\"provider\">{provider}</span> to analyze?<br><span style=\"font-size:11px;color:var(--text-muted)\">Consumes a small amount of tokens</span>",
         analyze: "Analyze",
         outcomes: "Outcomes",
@@ -3055,13 +3110,6 @@
       document.getElementById("settingsCodexPathLabel").childNodes[0].textContent = t("codexPathLabel");
       document.getElementById("settingsCodexPathOptional").textContent = t("optionalOverride");
       document.getElementById("settingsCodexPathHint").innerHTML = t("codexPathHint");
-      document.getElementById("apiFallbackTitle").textContent = t("apiFallbackTitle");
-      document.getElementById("settingsProviderLabel").textContent = t("provider");
-      document.getElementById("settingsApiKeyLabel").textContent = t("apiKey");
-      document.getElementById("settingsBaseUrlLabel").childNodes[0].textContent = t("endpoint");
-      document.getElementById("settingsBaseUrlOptional").textContent = t("optional");
-      document.getElementById("settingsModelLabel").childNodes[0].textContent = t("model");
-      document.getElementById("settingsModelOptional").textContent = t("optional");
       document.getElementById("settingsClearCacheBtn").textContent = t("clearAnalysisCache");
       document.getElementById("settingsClearBtn").textContent = t("clear");
       document.getElementById("settingsCancelBtn").textContent = t("cancel");
@@ -3072,9 +3120,6 @@
       document.getElementById("langBtnZh").classList.toggle("active", currentLang === "zh");
       document.getElementById("langBtnEn").classList.toggle("active", currentLang === "en");
       updateExportSelectionUI();
-      if (_settingsOpen) {
-        applyProviderDefaults(document.getElementById("settingsProvider").value || "claude");
-      }
     }
 
     function setLanguage(lang) {
@@ -3642,8 +3687,13 @@
       return `<select class="analysis-scope-select" id="analysisScopeSelect" title="${escapeHtml(t("switchScope"))}" aria-label="${escapeHtml(t("switchScope"))}">${options.join("")}</select>`;
     }
 
-    function renderAnalysisHeader(providerId, mode, targetProviderId = selectedAnalysisAgent, pendingMode = null) {
+    function renderAnalysisHeader(providerId, mode, targetProviderId = selectedAnalysisAgent, pendingMode = null, modelHint = null) {
       const providerLabel = formatAnalysisProviderShort(providerId);
+      // Show model name in pill when it's a custom provider (UUID id) and a model hint is available
+      const isCustomProvider = providerId && providerId.includes("-") && providerId.length > 20;
+      const pillLabel = (modelHint && isCustomProvider)
+        ? `${providerLabel} · ${modelHint}`
+        : providerLabel;
       const effectiveMode = pendingMode || mode;
       const detailActive = effectiveMode === "detail";
       const briefPending = pendingMode === "brief";
@@ -3656,7 +3706,7 @@
         : "";
       const pillHtml = `<span class="provider-pill-wrap">`
         + `<button type="button" class="analysis-provider-pill" data-role="provider-pill" data-current-provider="${escapeHtml(providerId || "")}"${hasProviderChoices ? "" : " disabled"}${pillTitleAttr}>`
-        + `<span>${escapeHtml(providerLabel)}</span>`
+        + `<span>${escapeHtml(pillLabel)}</span>`
         + (hasProviderChoices ? `<span class="caret">&#9662;</span>` : "")
         + `</button>`
         + `<div class="provider-pill-menu" data-role="provider-pill-menu" role="listbox"></div>`
@@ -5561,7 +5611,7 @@
       analysisModeLoading = pendingMode;
       if (!opts.volatile) currentRenderedAnalysis = { ...r };
 
-      h += renderAnalysisHeader(providerId, mode, targetProviderId, pendingMode);
+      h += renderAnalysisHeader(providerId, mode, targetProviderId, pendingMode, r._model || null);
       if (r._fallbackNotice) {
         h += `<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:var(--bg);border:1px solid var(--border-light);font-size:11px;color:var(--text-secondary)">${escapeHtml(t("showingCachedFrom", { provider: formatAnalysisProviderShort(r._selectedProvider) }))}</div>`;
       }
@@ -5992,49 +6042,11 @@
     }).catch(() => { });
 
     // ── Settings modal (AI provider config) ──
-    const PROVIDER_DEFAULTS = {
-      claude: {
-        baseUrl: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001", needsKey: true,
-        keyHint: { zh: "可在 console.anthropic.com 获取 API key", en: "Get an API key from console.anthropic.com" }
-      },
-      openai: {
-        baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true,
-        keyHint: { zh: "兼容 OpenAI、Qwen、DeepSeek、OpenRouter、vLLM 等，按需设置 endpoint", en: "Works with OpenAI, Qwen, DeepSeek, OpenRouter, vLLM, etc. — set the endpoint accordingly" }
-      },
-      ollama: {
-        baseUrl: "http://localhost:11434", model: "qwen2.5:7b", needsKey: false,
-        keyHint: { zh: "Ollama 本地运行，不需要 API key", en: "Ollama runs locally — no API key required" }
-      },
-    };
 
     function setSettingsStatus(text, kind) {
       const el = document.getElementById("settingsStatus");
       el.textContent = text || "";
       el.className = "settings-status" + (kind ? " " + kind : "");
-    }
-
-    function applyProviderDefaults(provider, opts) {
-      opts = opts || {};
-      const def = PROVIDER_DEFAULTS[provider] || PROVIDER_DEFAULTS.claude;
-      const baseUrlEl = document.getElementById("settingsBaseUrl");
-      const modelEl = document.getElementById("settingsModel");
-      const apiKeyField = document.getElementById("settingsApiKeyField");
-      const apiKeyEl = document.getElementById("settingsApiKey");
-      const apiKeyHint = document.getElementById("settingsApiKeyHint");
-      const baseUrlHint = document.getElementById("settingsBaseUrlHint");
-      const modelHint = document.getElementById("settingsModelHint");
-      const keyHint = typeof def.keyHint === "string" ? def.keyHint : ((def.keyHint && def.keyHint[currentLang]) || (def.keyHint && def.keyHint.en) || "");
-
-      baseUrlEl.placeholder = def.baseUrl;
-      modelEl.placeholder = def.model;
-      baseUrlHint.textContent = `Default: ${def.baseUrl}`;
-      modelHint.textContent = `Default: ${def.model}`;
-      apiKeyHint.textContent = def.needsKey
-        ? keyHint + (currentLang === "zh" ? "。会保存在本地；留空可继续使用已保存的 key。" : ". Stored locally; leave blank to keep the existing key.")
-        : keyHint;
-      apiKeyField.style.display = def.needsKey ? "block" : "none";
-      apiKeyEl.required = !!def.needsKey;
-      if (opts.clearKey) apiKeyEl.value = "";
     }
 
     let _settingsOpen = false;
@@ -6046,11 +6058,6 @@
       let cfg = null;
       try { cfg = await window.analyticsAPI.getAIConfig(); } catch (e) { console.warn("getAIConfig failed", e); }
       _settingsLoadedConfig = cfg;
-      const provider = (cfg && cfg.provider) || "claude";
-      document.getElementById("settingsProvider").value = provider;
-      applyProviderDefaults(provider);
-      document.getElementById("settingsBaseUrl").value = (cfg && cfg.baseUrl) || "";
-      document.getElementById("settingsModel").value = (cfg && cfg.model) || "";
       // Custom CLI path overrides
       const customCli = (cfg && cfg.customCliPaths) || {};
       document.getElementById("settingsClaudePath").value = customCli.claude || "";
@@ -6059,18 +6066,6 @@
       document.getElementById("claudeTestResult").className = "cli-test-result";
       document.getElementById("codexTestResult").textContent = "";
       document.getElementById("codexTestResult").className = "cli-test-result";
-      // The main process masks the key before sending it to us, so the input
-      // is always blank — show the masked hint inline so the user knows a key
-      // is already saved and they can leave the field empty to keep it.
-      const apiKeyEl = document.getElementById("settingsApiKey");
-      apiKeyEl.value = "";
-      if (cfg && cfg.apiKeyMasked) {
-        apiKeyEl.placeholder = currentLang === "zh"
-          ? `${cfg.apiKeyMasked}（已保存，留空可继续使用）`
-          : `${cfg.apiKeyMasked} (saved — leave blank to keep)`;
-      } else {
-        apiKeyEl.placeholder = "sk-...";
-      }
       // Populate the "Default Analysis Provider" dropdown with currently
       // available providers, then set the saved value (if any). We refresh
       // analysisOptions first so users see freshly-detected CLIs without
@@ -6091,10 +6086,9 @@
       document.getElementById("settingsOverlay").style.display = "flex";
       // Kick off the diagnostic load (non-blocking — UI shows "Loading…" until done)
       loadCliDiagnostics();
-      // Focus the first empty / actionable field for keyboard users
+      // Focus the first input for keyboard users
       setTimeout(() => {
-        if (cfg && cfg.apiKeyMasked) document.getElementById("settingsProvider").focus();
-        else apiKeyEl.focus();
+        document.getElementById("settingsClaudePath").focus();
       }, 0);
     }
 
@@ -6190,58 +6184,21 @@
     }
 
     async function saveSettings() {
-      const provider = document.getElementById("settingsProvider").value;
-      const apiKey = document.getElementById("settingsApiKey").value.trim();
-      const baseUrl = document.getElementById("settingsBaseUrl").value.trim();
-      const model = document.getElementById("settingsModel").value.trim();
-      const existing = _settingsLoadedConfig || await window.analyticsAPI.getAIConfig().catch(() => null);
-      const providerChanged = !!(existing && existing.provider && existing.provider !== provider);
-
-      // Build the payload. We omit apiKey when blank — the IPC handler will
-      // preserve the previously saved key for the same provider. If the user
-      // switched API providers and left the key blank, explicitly clear the old
-      // key so local CLI analysis can continue without inheriting a mismatched
-      // fallback credential.
-      const payload = { provider };
-      if (apiKey) payload.apiKey = apiKey;
-      else if (providerChanged) payload.apiKey = null;
-
-      const existingBaseUrl = (existing && existing.baseUrl) || "";
-      const existingModel = (existing && existing.model) || "";
-      if (!baseUrl || (providerChanged && baseUrl === existingBaseUrl)) payload.baseUrl = null;
-      else payload.baseUrl = baseUrl;
-      if (!model || (providerChanged && model === existingModel)) payload.model = null;
-      else payload.model = model;
-
-      // Custom CLI overrides — only include the field when at least one path
-      // is set so we don't wipe a previously-saved override by accident.
-      // Always send the object (even if individual fields are empty) so the
-      // user can clear an override by blanking the input and saving.
+      // Custom CLI overrides
       const claudePath = document.getElementById("settingsClaudePath").value.trim();
       const codexPath = document.getElementById("settingsCodexPath").value.trim();
-      payload.customCliPaths = {};
+      const payload = { customCliPaths: {} };
       if (claudePath) payload.customCliPaths.claude = claudePath;
       if (codexPath) payload.customCliPaths.codex = codexPath;
 
-      // Default analysis provider for the Pre-analyze modal. Empty string =
-      // "(use first available)" — store as null so the read path falls back
-      // to the auto-pick behavior. Otherwise persist the chosen provider id.
-      let defaultAnalysisProvider = document.getElementById("settingsDefaultAnalysisProvider").value;
-      const previousApiProviderId = existing && existing.provider ? `api:${existing.provider}` : "";
-      if (providerChanged && defaultAnalysisProvider && defaultAnalysisProvider.startsWith("api:")) {
-        // The default-provider dropdown is populated from the currently saved
-        // API provider. If the user switches the API fallback provider in the
-        // same Settings save, carry that API default forward to the new id.
-        if (!previousApiProviderId || defaultAnalysisProvider === previousApiProviderId) {
-          defaultAnalysisProvider = `api:${provider}`;
-        }
-      }
+      // Default analysis provider for the Pre-analyze modal
+      const defaultAnalysisProvider = document.getElementById("settingsDefaultAnalysisProvider").value;
       payload.defaultAnalysisProvider = defaultAnalysisProvider || null;
 
       try {
         await window.analyticsAPI.saveAIConfig(payload);
         setSettingsStatus(t("saved"), "success");
-        // Refresh the analysis option list so the API provider shows up in
+        // Refresh the analysis option list so provider changes show up in
         // pickers (batch dialog, error-recovery flow, etc.) without reloading.
         await refreshAnalysisOptions({ reloadSelected: true });
         // Re-render the diagnostic block so the user can confirm the custom
@@ -6258,10 +6215,6 @@
       try {
         await window.analyticsAPI.clearAIConfig();
         setSettingsStatus(t("cleared"), "success");
-        document.getElementById("settingsApiKey").value = "";
-        document.getElementById("settingsApiKey").placeholder = "sk-...";
-        document.getElementById("settingsBaseUrl").value = "";
-        document.getElementById("settingsModel").value = "";
         document.getElementById("settingsClaudePath").value = "";
         document.getElementById("settingsCodexPath").value = "";
         document.getElementById("claudeTestResult").textContent = "";
@@ -6335,9 +6288,6 @@
     document.getElementById("langBtnEn").addEventListener("click", () => setLanguage("en"));
     applyLanguage();
     updateOnboardingHintVisibility();
-    document.getElementById("settingsProvider").addEventListener("change", function () {
-      applyProviderDefaults(this.value, { clearKey: true });
-    });
     // Wire the Test buttons inside the Local CLI Detection section. Using a
     // data-attribute lookup keeps the HTML declarative — adding a third CLI in
     // the future just needs a new <button data-test-cli="foo"> with a matching
@@ -6354,7 +6304,167 @@
     // Esc to close
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && _settingsOpen) closeSettings();
+      if (e.key === "Escape" && _providerDialogOpen) closeProviderDialog();
     });
+
+    // ── Custom Provider Management ──
+
+    let _providerDialogOpen = false;
+    let _editingProviderId = null;
+
+    function escHtml(s) {
+      return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    async function renderCustomProviderList() {
+      const listEl = document.getElementById("customProviderList");
+      if (!listEl) return;
+      let providers = [];
+      try { providers = await analyticsAPI.listCustomProviders(); } catch { providers = []; }
+      if (!providers.length) {
+        listEl.innerHTML = `<div style="font-size:11px;color:var(--text-muted);padding:4px 0">No custom providers yet.</div>`;
+        return;
+      }
+      listEl.innerHTML = providers.map(p => `
+        <div class="provider-card">
+          <div class="provider-card-dot ${p.enabled ? "enabled" : "disabled"}"></div>
+          <div class="provider-card-info">
+            <div class="provider-card-name">${escHtml(p.name)}</div>
+            <div class="provider-card-meta">${escHtml(p.type)} · ${escHtml(p.model)}</div>
+          </div>
+          <div class="provider-card-actions">
+            <button data-edit="${escHtml(p.id)}">Edit</button>
+            <button data-del="${escHtml(p.id)}" class="btn-del">Delete</button>
+          </div>
+        </div>
+      `).join("");
+      listEl.querySelectorAll("[data-edit]").forEach(btn => {
+        btn.addEventListener("click", () => openProviderDialog(btn.dataset.edit));
+      });
+      listEl.querySelectorAll("[data-del]").forEach(btn => {
+        btn.addEventListener("click", () => deleteCustomProvider(btn.dataset.del));
+      });
+    }
+
+    function openProviderDialog(editId = null) {
+      _editingProviderId = editId || null;
+      _providerDialogOpen = true;
+      document.getElementById("providerDialogTitle").textContent = editId ? "Edit Provider" : "Add Custom Provider";
+      document.getElementById("providerDialogStatus").textContent = "";
+      document.getElementById("providerTestResult").textContent = "";
+      document.getElementById("providerName").value = "";
+      document.getElementById("providerType").value = "openai";
+      document.getElementById("providerBaseUrl").value = "";
+      document.getElementById("providerApiKey").value = "";
+      document.getElementById("providerModel").value = "";
+      if (editId) {
+        analyticsAPI.getCustomProvider(editId).then(p => {
+          if (!p) return;
+          document.getElementById("providerName").value = p.name || "";
+          document.getElementById("providerType").value = p.type || "openai";
+          document.getElementById("providerBaseUrl").value = p.baseUrl || "";
+          document.getElementById("providerApiKey").value = p.apiKey || "";
+          document.getElementById("providerModel").value = p.model || "";
+        });
+      }
+      document.getElementById("providerDialogOverlay").style.display = "flex";
+    }
+
+    function closeProviderDialog() {
+      _providerDialogOpen = false;
+      document.getElementById("providerDialogOverlay").style.display = "none";
+    }
+
+    function getProviderFormData() {
+      return {
+        name: document.getElementById("providerName").value.trim(),
+        type: document.getElementById("providerType").value,
+        baseUrl: document.getElementById("providerBaseUrl").value.trim(),
+        apiKey: document.getElementById("providerApiKey").value.trim(),
+        model: document.getElementById("providerModel").value.trim(),
+      };
+    }
+
+    function updateResolvedUrlPreview() {
+      const type = document.getElementById("providerType").value;
+      const raw = document.getElementById("providerBaseUrl").value.trim();
+      const previewEl = document.getElementById("providerResolvedUrl");
+      const textEl = document.getElementById("providerResolvedUrlText");
+      if (!raw || type !== "openai") { previewEl.style.display = "none"; return; }
+      const trimmed = raw.replace(/\/+$/, "");
+      let resolved;
+      if (trimmed.endsWith("/chat/completions")) resolved = trimmed;
+      else if (/\/v\d+$/.test(trimmed)) resolved = `${trimmed}/chat/completions`;
+      else resolved = `${trimmed}/v1/chat/completions`;
+      textEl.textContent = resolved;
+      previewEl.style.display = "";
+    }
+
+    document.getElementById("providerBaseUrl").addEventListener("input", updateResolvedUrlPreview);
+    document.getElementById("providerType").addEventListener("change", updateResolvedUrlPreview);
+
+    async function saveProviderDialog() {
+      const statusEl = document.getElementById("providerDialogStatus");
+      const data = getProviderFormData();
+      if (!data.name) { statusEl.textContent = "Provider name is required."; statusEl.className = "settings-status error"; return; }
+      if (!data.baseUrl) { statusEl.textContent = "API endpoint is required."; statusEl.className = "settings-status error"; return; }
+      if (!data.model) { statusEl.textContent = "Model name is required."; statusEl.className = "settings-status error"; return; }
+      statusEl.textContent = "Saving…"; statusEl.className = "settings-status";
+      try {
+        if (_editingProviderId) {
+          await analyticsAPI.updateCustomProvider(_editingProviderId, data);
+        } else {
+          await analyticsAPI.addCustomProvider(data);
+        }
+        closeProviderDialog();
+        await renderCustomProviderList();
+      } catch (err) {
+        statusEl.textContent = err.message || "Save failed.";
+        statusEl.className = "settings-status error";
+      }
+    }
+
+    async function deleteCustomProvider(id) {
+      if (!confirm("Delete this provider?")) return;
+      try {
+        await analyticsAPI.deleteCustomProvider(id);
+        await renderCustomProviderList();
+      } catch (err) {
+        alert(err.message || "Delete failed.");
+      }
+    }
+
+    document.getElementById("addCustomProviderBtn").addEventListener("click", () => openProviderDialog());
+    document.getElementById("providerDialogCancelBtn").addEventListener("click", closeProviderDialog);
+    document.getElementById("providerDialogSaveBtn").addEventListener("click", saveProviderDialog);
+    document.getElementById("providerDialogOverlay").addEventListener("click", function (e) {
+      if (e.target === this) closeProviderDialog();
+    });
+    document.getElementById("testProviderBtn").addEventListener("click", async () => {
+      const resultEl = document.getElementById("providerTestResult");
+      resultEl.textContent = "Testing…";
+      const data = getProviderFormData();
+      try {
+        const r = await analyticsAPI.testCustomProvider(data);
+        if (r && r.success) {
+          resultEl.textContent = `✅ OK (${r.latencyMs}ms)`;
+          resultEl.style.color = "#2E7D32";
+        } else {
+          resultEl.textContent = `❌ ${(r && r.error) || "Failed"}`;
+          resultEl.style.color = "#C62828";
+        }
+      } catch (err) {
+        resultEl.textContent = `❌ ${err.message}`;
+        resultEl.style.color = "#C62828";
+      }
+    });
+
+    // Render provider list when settings opens
+    const _origOpenSettings = openSettings;
+    openSettings = async function () {
+      await _origOpenSettings.apply(this, arguments);
+      renderCustomProviderList();
+    };
 
     // ── Demo mode (Ctrl+Shift+D) — sanitize sensitive data for screen recording ──
     let demoMode = false;
