@@ -1,17 +1,22 @@
 // test/state.test.js — Unit tests for src/state.js core logic
 const { describe, it, beforeEach, afterEach, mock } = require("node:test");
 const assert = require("node:assert");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 // Load default theme for test ctx
 const themeLoader = require("../src/theme-loader");
-themeLoader.init(require("path").join(__dirname, "..", "src"));
+themeLoader.init(path.join(__dirname, "..", "src"));
 const _defaultTheme = themeLoader.loadTheme("clawd");
 const _calicoTheme = themeLoader.loadTheme("calico");
+const { createTranslator } = require("../src/i18n");
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeCtx(overrides = {}) {
-  return {
+  const ctx = {
+    lang: "en",
     theme: _defaultTheme,
     doNotDisturb: false,
     miniTransitioning: false,
@@ -32,14 +37,19 @@ function makeCtx(overrides = {}) {
     buildTrayMenu: () => {},
     pendingPermissions: [],
     resolvePermissionEntry: () => {},
-    t: (k) => k,
-    showSessionId: false,
+    dismissPermissionsForDnd: () => {},
     focusTerminalWindow: () => {},
     // Default: all pids dead
     processKill: () => { const e = new Error("ESRCH"); e.code = "ESRCH"; throw e; },
     getCursorScreenPoint: () => ({ x: 100, y: 100 }),
     ...overrides,
   };
+  // Real translator — reads ctx.lang at call time so tests that flip
+  // ctx.lang between assertions see different strings. Unknown keys fall
+  // back to the key itself (existing createTranslator behavior), so tests
+  // that predate C2 and still pass internal state keys get identity behavior.
+  ctx.t = createTranslator(() => ctx.lang);
+  return ctx;
 }
 
 function makePidKill(alivePids) {
@@ -49,13 +59,34 @@ function makePidKill(alivePids) {
   };
 }
 
+function cloneTheme(theme) {
+  return JSON.parse(JSON.stringify(theme));
+}
+
 /** Shorthand for updateSession with named params */
 function update(api, o = {}) {
   api.updateSession(
-    o.id || "s1", o.state || "working", o.event || "PreToolUse",
-    o.sourcePid ?? null, o.cwd || "/tmp", o.editor || null,
-    o.pidChain || null, o.agentPid ?? null, o.agentId || "claude-code",
-    o.host || null, o.headless || false, o.displayHint,
+    o.id || "s1",
+    o.state || "working",
+    o.event || "PreToolUse",
+    {
+      sourcePid: o.sourcePid ?? null,
+      wtHwnd: o.wtHwnd ?? null,
+      cwd: o.cwd || "/tmp",
+      editor: o.editor || null,
+      pidChain: o.pidChain || null,
+      agentPid: o.agentPid ?? null,
+      agentId: o.agentId || "claude-code",
+      host: o.host || null,
+      headless: o.headless || false,
+      displayHint: o.displayHint,
+      sessionTitle: o.sessionTitle ?? null,
+      platform: o.platform ?? null,
+      model: o.model ?? null,
+      provider: o.provider ?? null,
+      codexOriginator: o.codexOriginator ?? null,
+      codexSource: o.codexSource ?? null,
+    },
   );
 }
 
@@ -66,6 +97,7 @@ function rawSession(state, opts = {}) {
     updatedAt: opts.updatedAt ?? Date.now(),
     displayHint: opts.displayHint || null,
     sourcePid: opts.sourcePid || null,
+    wtHwnd: opts.wtHwnd || null,
     cwd: opts.cwd || "",
     editor: opts.editor || null,
     pidChain: opts.pidChain || null,
@@ -73,7 +105,15 @@ function rawSession(state, opts = {}) {
     agentId: opts.agentId || null,
     host: opts.host || null,
     headless: opts.headless || false,
+    platform: opts.platform || null,
+    model: opts.model || null,
+    provider: opts.provider || null,
+    codexOriginator: opts.codexOriginator || null,
+    codexSource: opts.codexSource || null,
+    sessionTitle: opts.sessionTitle ?? null,
+    recentEvents: opts.recentEvents || [],
     pidReachable: opts.pidReachable ?? false,
+    resumeState: opts.resumeState || null,
   };
 }
 
@@ -133,33 +173,98 @@ describe("resolveDisplayState()", () => {
     assert.strictEqual(api.resolveDisplayState(), "working");
 
     api.setUpdateVisualState("checking");
-    assert.strictEqual(api.resolveDisplayState(), "sweeping");
-    assert.strictEqual(api.getSvgOverride("sweeping"), "clawd-working-debugger.svg");
+    assert.strictEqual(api.resolveDisplayState(), "thinking");
+    assert.strictEqual(api.getSvgOverride("thinking"), "clawd-working-debugger.svg");
+
+    api.setUpdateVisualState("available");
+    assert.strictEqual(api.resolveDisplayState(), "notification");
+    assert.strictEqual(api.getSvgOverride("notification"), null);
 
     api.setUpdateVisualState(null);
     assert.strictEqual(api.resolveDisplayState(), "working");
   });
 
+  it("checking overlay falls back to the theme thinking visual when no update override is declared", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({ theme: _calicoTheme }));
+
+    api.setUpdateVisualState("checking");
+    assert.strictEqual(api.resolveDisplayState(), "thinking");
+    assert.strictEqual(api.getSvgOverride("thinking"), "calico-thinking.apng");
+
+    api.setUpdateVisualState("available");
+    assert.strictEqual(api.resolveDisplayState(), "notification");
+    assert.strictEqual(api.getSvgOverride("notification"), null);
+
+    api.setUpdateVisualState(null);
+    assert.strictEqual(api.resolveDisplayState(), "idle");
+  });
+
+  it("refreshes the active checking update visual override when the theme changes", () => {
+    const ctx = makeCtx();
+    api.cleanup();
+    api = require("../src/state")(ctx);
+
+    api.setUpdateVisualState("checking");
+    assert.strictEqual(api.getSvgOverride("thinking"), "clawd-working-debugger.svg");
+
+    ctx.theme = _calicoTheme;
+    api.refreshTheme();
+    assert.strictEqual(api.getSvgOverride("thinking"), "calico-thinking.apng");
+
+    ctx.theme = _defaultTheme;
+    api.refreshTheme();
+    assert.strictEqual(api.getSvgOverride("thinking"), "clawd-working-debugger.svg");
+  });
+
   it("update overlay does not override higher-priority agent states", () => {
-    // error(8) > sweeping(6) — update checking must not stomp agent error
+    // error(8) > thinking(2) — update checking must not stomp agent error
     api.sessions.set("s1", rawSession("error"));
-    api.setUpdateVisualState("checking"); // → sweeping(6)
+    api.setUpdateVisualState("checking"); // → thinking(2)
     assert.strictEqual(api.resolveDisplayState(), "error");
 
-    // notification(7) > sweeping(6)
+    // notification(7) == checking overlay priority(7) — live notification wins ties
     api.sessions.set("s1", rawSession("notification"));
     assert.strictEqual(api.resolveDisplayState(), "notification");
 
-    // carrying(4) < sweeping(6) — update checking still wins over lower
+    // notification(7) == notification(7)
+    api.setUpdateVisualState("available");
+    api.sessions.set("s1", rawSession("notification"));
+    assert.strictEqual(api.resolveDisplayState(), "notification");
+
+    // working(3) < notification(7) — available still wins over lower
     api.sessions.set("s1", rawSession("working"));
-    assert.strictEqual(api.resolveDisplayState(), "sweeping");
+    assert.strictEqual(api.resolveDisplayState(), "notification");
 
     api.setUpdateVisualState(null);
   });
 
+  it("checking overlay does not override an active Kimi permission lock", () => {
+    api.cleanup();
+    const ctx = makeCtx({
+      isAgentPermissionsEnabled: () => true,
+      showKimiNotifyBubble: () => {},
+      clearKimiNotifyBubbles: () => {},
+    });
+    api = require("../src/state")(ctx);
+
+    update(api, {
+      id: "kimi-perm",
+      state: "notification",
+      event: "PermissionRequest",
+      agentId: "kimi-cli",
+    });
+    api.setUpdateVisualState("checking");
+
+    assert.strictEqual(api.resolveDisplayState(), "notification");
+  });
+
   it("update overlay wins when no sessions exist", () => {
     api.setUpdateVisualState("checking");
-    assert.strictEqual(api.resolveDisplayState(), "sweeping");
+    assert.strictEqual(api.resolveDisplayState(), "thinking");
+    assert.strictEqual(api.getSvgOverride("thinking"), "clawd-working-debugger.svg");
+    api.setUpdateVisualState("available");
+    assert.strictEqual(api.resolveDisplayState(), "notification");
     api.setUpdateVisualState(null);
   });
 });
@@ -254,10 +359,10 @@ describe("working sub-animations", () => {
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-typing.svg");
   });
 
-  it("2 working sessions → juggling SVG", () => {
+  it("2 working sessions → headphones groove SVG", () => {
     api.sessions.set("s1", rawSession("working"));
     api.sessions.set("s2", rawSession("working"));
-    assert.strictEqual(api.getSvgOverride("working"), "clawd-working-juggling.svg");
+    assert.strictEqual(api.getSvgOverride("working"), "clawd-headphones-groove.svg");
   });
 
   it("3+ working sessions → building SVG", () => {
@@ -267,19 +372,106 @@ describe("working sub-animations", () => {
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-building.svg");
   });
 
-  it("1 juggling session → juggling SVG", () => {
+  it("1 juggling session → headphones groove SVG", () => {
     api.sessions.set("s1", rawSession("juggling"));
-    assert.strictEqual(api.getSvgOverride("juggling"), "clawd-working-juggling.svg");
+    assert.strictEqual(api.getSvgOverride("juggling"), "clawd-headphones-groove.svg");
   });
 
-  it("2+ juggling sessions → conducting SVG", () => {
+  it("2+ juggling sessions → three-ball juggling SVG", () => {
     api.sessions.set("s1", rawSession("juggling"));
     api.sessions.set("s2", rawSession("juggling"));
-    assert.strictEqual(api.getSvgOverride("juggling"), "clawd-working-conducting.svg");
+    assert.strictEqual(api.getSvgOverride("juggling"), "clawd-working-juggling.svg");
   });
 
   it("idle → follow SVG", () => {
     assert.strictEqual(api.getSvgOverride("idle"), "clawd-idle-follow.svg");
+  });
+});
+
+describe("hitbox selection", () => {
+  let api;
+
+  afterEach(() => { if (api) api.cleanup(); });
+
+  it("uses a file-specific hitbox for the displayed SVG", () => {
+    const theme = cloneTheme(_defaultTheme);
+    const fileBox = { x: 10, y: 11, w: 12, h: 13 };
+    theme.fileHitBoxes = { "clawd-working-typing.svg": fileBox };
+    api = require("../src/state")(makeCtx({ theme }));
+
+    api.applyState("working", "clawd-working-typing.svg");
+
+    assert.deepStrictEqual(api.getCurrentHitBox(), fileBox);
+  });
+
+  it("keeps wide/default fallback when no file-specific hitbox exists", () => {
+    const theme = cloneTheme(_defaultTheme);
+    theme.fileHitBoxes = {};
+    api = require("../src/state")(makeCtx({ theme }));
+
+    api.applyState("error", "clawd-error.svg");
+    assert.deepStrictEqual(api.getCurrentHitBox(), theme.hitBoxes.wide);
+
+    api.applyState("working", "clawd-working-typing.svg");
+    assert.deepStrictEqual(api.getCurrentHitBox(), theme.hitBoxes.default);
+  });
+});
+
+describe("visual fallback resolution", () => {
+  let api;
+
+  beforeEach(() => {
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+    const theme = cloneTheme(_defaultTheme);
+    theme.states.error = [];
+    theme._stateBindings.error = { files: [], fallbackTo: "attention" };
+    api = require("../src/state")(makeCtx({ theme }));
+  });
+
+  afterEach(() => {
+    api.cleanup();
+    mock.timers.reset();
+  });
+
+  it("keeps the logical state while resolving visuals through fallbackTo", () => {
+    api.applyState("error");
+    assert.strictEqual(api.getCurrentState(), "error");
+    assert.strictEqual(api.getCurrentSvg(), "clawd-happy.svg");
+
+    mock.timers.tick(5000);
+    assert.strictEqual(api.getCurrentState(), "idle");
+  });
+});
+
+describe("mini mode working routing", () => {
+  let api, ctx;
+
+  beforeEach(() => {
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+  });
+
+  afterEach(() => {
+    if (api) api.cleanup();
+    mock.timers.reset();
+  });
+
+  it("theme defines mini-working → working routes to mini-working", () => {
+    ctx = makeCtx({ miniMode: true });
+    api = require("../src/state")(ctx);
+    api.applyState("mini-idle");
+    api.applyState("working");
+    assert.strictEqual(api.getCurrentState(), "mini-working");
+  });
+
+  it("theme lacks mini-working → working stays on current mini state", () => {
+    const theme = cloneTheme(_defaultTheme);
+    delete theme.miniMode.states["mini-working"];
+    delete theme._stateBindings["mini-working"];
+    ctx = makeCtx({ miniMode: true, theme });
+    api = require("../src/state")(ctx);
+    api.applyState("mini-idle");
+    api.applyState("working");
+    assert.strictEqual(api.getCurrentState(), "mini-idle");
   });
 });
 
@@ -381,6 +573,24 @@ describe("wake poll behavior", () => {
     assert.strictEqual(api.getCurrentState(), "waking");
   });
 
+  it("direct sleep without waking art returns straight to idle on mouse move", () => {
+    const theme = cloneTheme(_defaultTheme);
+    theme.sleepSequence = { mode: "direct" };
+    theme.states.waking = [];
+    theme._stateBindings.waking = { files: [], fallbackTo: null };
+
+    api.cleanup();
+    ctx = makeCtx({ theme, getCursorScreenPoint: () => ({ ...fakeCursor }) });
+    api = require("../src/state")(ctx);
+
+    api.applyState("sleeping");
+    mock.timers.tick(500);
+    fakeCursor.x = 200;
+    mock.timers.tick(200);
+    assert.strictEqual(api.getCurrentState(), "idle");
+    assert.strictEqual(api.getCurrentSvg(), "clawd-idle-follow.svg");
+  });
+
   it("dozing + still > DEEP_SLEEP_TIMEOUT → collapsing", () => {
     ctx.mouseStillSince = Date.now() - 600000;
     api.applyState("dozing");
@@ -436,11 +646,118 @@ describe("cleanStaleSessions()", () => {
     assert.strictEqual(api.sessions.size, 0);
   });
 
-  it("last non-headless deleted → triggers yawning", () => {
+  it("detached ended idle session expires quickly when auto-clear is enabled", () => {
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "claude-code",
+      sourcePid: 9999,
+      pidReachable: true,
+      updatedAt: Date.now() - 31000,
+      recentEvents: [{ event: "Stop", state: "attention", at: Date.now() - 32000 }],
+    }));
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 0);
+  });
+
+  it("detached idle session stays by default before normal stale cleanup", () => {
+    api = require("../src/state")(makeCtx({ processKill: makePidKill(new Set()) }));
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "claude-code",
+      sourcePid: 9999,
+      pidReachable: true,
+      updatedAt: Date.now() - 31000,
+      recentEvents: [{ event: "Stop", state: "attention", at: Date.now() - 32000 }],
+    }));
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 1);
+  });
+
+  it("broadcasts HUD-hidden state before deleting detached ended session", () => {
+    const alivePids = new Set([9999]);
+    const broadcasts = [];
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(alivePids),
+      sessionHudCleanupDetached: true,
+      broadcastSessionSnapshot: (snapshot) => broadcasts.push(snapshot),
+    }));
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "claude-code",
+      sourcePid: 9999,
+      pidReachable: true,
+      updatedAt: Date.now() - 10000,
+      recentEvents: [{ event: "Stop", state: "attention", at: Date.now() - 11000 }],
+    }));
+
+    assert.strictEqual(api.emitSessionSnapshot({ force: true }).changed, true);
+    assert.strictEqual(broadcasts[0].sessions.find((s) => s.id === "s1").hiddenFromHud, false);
+
+    alivePids.delete(9999);
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 1);
+    assert.strictEqual(broadcasts.length, 2);
+    assert.strictEqual(broadcasts[1].sessions.find((s) => s.id === "s1").hiddenFromHud, true);
+  });
+
+  it("detached idle session without an ended badge does not auto-clear", () => {
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "gemini-cli",
+      sourcePid: 9999,
+      pidReachable: true,
+      updatedAt: Date.now() - 31000,
+      recentEvents: [{ event: "AfterAgent", state: "idle", at: Date.now() - 32000 }],
+    }));
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 1);
+  });
+
+  it("detached ended session does not auto-clear when pid reachability was never confirmed", () => {
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "claude-code",
+      sourcePid: 9999,
+      pidReachable: false,
+      updatedAt: Date.now() - 31000,
+      recentEvents: [{ event: "Stop", state: "attention", at: Date.now() - 32000 }],
+    }));
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 1);
+  });
+
+  it("detached ended Kimi auto-clear disposes notification state", () => {
+    const cleared = [];
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+      clearKimiNotifyBubbles: (id, reason) => cleared.push({ id, reason }),
+    }));
+    api.updateSession("k1", "notification", "PermissionRequest", { agentId: "kimi-cli" });
+    api.sessions.set("k1", rawSession("idle", {
+      agentId: "kimi-cli",
+      sourcePid: 9999,
+      pidReachable: true,
+      updatedAt: Date.now() - 31000,
+      recentEvents: [{ event: "Stop", state: "attention", at: Date.now() - 32000 }],
+    }));
+    api.cleanStaleSessions();
+    assert.strictEqual(api.sessions.size, 0);
+    assert.deepStrictEqual(cleared, [{ id: "k1", reason: "kimi-session-disposed" }]);
+  });
+
+  it("last non-headless deleted → returns to idle", () => {
     api = require("../src/state")(makeCtx({ processKill: makePidKill(new Set()) }));
     api.sessions.set("s1", rawSession("working", { agentPid: 9999, pidReachable: true }));
     api.cleanStaleSessions();
-    assert.strictEqual(api.getCurrentState(), "yawning");
+    assert.strictEqual(api.getCurrentState(), "idle");
   });
 
   it("all headless deleted → idle (not yawning)", () => {
@@ -501,10 +818,24 @@ describe("updateSession()", () => {
     assert.strictEqual(api.sessions.get("s1").state, "juggling");
   });
 
-  it("juggling + SubagentStop → downgrades to working", () => {
+  it("working + SubagentStart + SubagentStop → restores working", () => {
+    update(api, { id: "s1", state: "working", event: "PreToolUse" });
     update(api, { id: "s1", state: "juggling", event: "SubagentStart" });
     update(api, { id: "s1", state: "working", event: "SubagentStop" });
     assert.strictEqual(api.sessions.get("s1").state, "working");
+  });
+
+  it("subagent-only session is removed on SubagentStop", () => {
+    update(api, { id: "s1", state: "juggling", event: "SubagentStart" });
+    assert.ok(api.sessions.has("s1"));
+    update(api, { id: "s1", state: "working", event: "SubagentStop" });
+    assert.ok(!api.sessions.has("s1"));
+  });
+
+  it("late SubagentStop without tracked session is ignored", () => {
+    update(api, { id: "ghost", state: "working", event: "SubagentStop" });
+    assert.ok(!api.sessions.has("ghost"));
+    assert.strictEqual(api.getCurrentState(), "idle");
   });
 
   it("SessionEnd → deletes session", () => {
@@ -514,10 +845,96 @@ describe("updateSession()", () => {
     assert.ok(!api.sessions.has("s1"));
   });
 
+  it("dismissSession removes only Clawd bookkeeping for that session", () => {
+    update(api, { id: "s1", state: "working" });
+    update(api, { id: "s2", state: "thinking" });
+
+    assert.strictEqual(api.dismissSession("s1"), true);
+    assert.ok(!api.sessions.has("s1"));
+    assert.ok(api.sessions.has("s2"));
+    assert.strictEqual(api.resolveDisplayState(), "thinking");
+    assert.strictEqual(api.dismissSession("missing"), false);
+  });
+
   it("PermissionRequest → notification state, no session creation", () => {
     update(api, { id: "perm1", state: "notification", event: "PermissionRequest" });
     assert.ok(!api.sessions.has("perm1"));
     assert.strictEqual(api.getCurrentState(), "notification");
+  });
+
+  it("Codex PermissionRequest persists focus metadata for snapshots", () => {
+    update(api, {
+      id: "codex:019e115a-4df2-7ed0-b90e-8e6345aca777",
+      state: "notification",
+      event: "PermissionRequest",
+      agentId: "codex",
+      sourcePid: 456,
+      cwd: "/repo",
+      agentPid: 456,
+      pidChain: [789, 456],
+      model: "gpt-5.4",
+      codexOriginator: "Codex Desktop",
+      codexSource: "vscode",
+    });
+
+    const session = api.sessions.get("codex:019e115a-4df2-7ed0-b90e-8e6345aca777");
+    assert.ok(session);
+    assert.strictEqual(session.agentId, "codex");
+    assert.strictEqual(session.sourcePid, 456);
+    assert.strictEqual(session.cwd, "/repo");
+    assert.deepStrictEqual(session.pidChain, [789, 456]);
+    assert.strictEqual(session.codexOriginator, "Codex Desktop");
+    assert.strictEqual(session.codexSource, "vscode");
+    const entry = api.getLastSessionSnapshot().sessions.find((item) =>
+      item.id === "codex:019e115a-4df2-7ed0-b90e-8e6345aca777"
+    );
+    assert.strictEqual(entry.canFocus, true);
+    assert.deepStrictEqual(entry.focusTarget, {
+      type: "codex-thread",
+      url: "codex://threads/019e115a-4df2-7ed0-b90e-8e6345aca777",
+    });
+  });
+
+  it("keeps wtHwnd sticky when later events do not provide one", () => {
+    update(api, {
+      id: "s1",
+      state: "idle",
+      event: "SessionStart",
+      sourcePid: 100,
+      wtHwnd: "123456",
+    });
+    update(api, {
+      id: "s1",
+      state: "working",
+      event: "PostToolUse",
+      sourcePid: 100,
+    });
+
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session.wtHwnd, "123456");
+    const entry = api.getLastSessionSnapshot().sessions.find((item) => item.id === "s1");
+    assert.strictEqual(entry.wtHwnd, "123456");
+  });
+
+  it("Codex PermissionRequest focus metadata respects the session cap", () => {
+    for (let i = 0; i < 20; i++) {
+      update(api, { id: `s${i}`, state: "working" });
+      mock.timers.tick(1);
+    }
+    assert.strictEqual(api.sessions.size, 20);
+
+    update(api, {
+      id: "codex:019e115a-4df2-7ed0-b90e-8e6345aca777",
+      state: "notification",
+      event: "PermissionRequest",
+      agentId: "codex",
+      sourcePid: 456,
+      codexOriginator: "Codex Desktop",
+    });
+
+    assert.strictEqual(api.sessions.size, 20);
+    assert.ok(api.sessions.has("codex:019e115a-4df2-7ed0-b90e-8e6345aca777"));
+    assert.ok(!api.sessions.has("s0"));
   });
 
   it("SessionEnd + sweeping → plays sweeping even with other active sessions", () => {
@@ -529,11 +946,11 @@ describe("updateSession()", () => {
     assert.strictEqual(api.getCurrentState(), "sweeping");
   });
 
-  it("SessionEnd + last non-headless → sleeping", () => {
+  it("SessionEnd + last non-headless → idle", () => {
     update(api, { id: "s1", state: "working" });
     mock.timers.tick(1000);
     update(api, { id: "s1", state: "sleeping", event: "SessionEnd" });
-    assert.strictEqual(api.getCurrentState(), "sleeping");
+    assert.strictEqual(api.getCurrentState(), "idle");
   });
 
   it("headless session does not affect resolveDisplayState", () => {
@@ -558,6 +975,132 @@ describe("updateSession()", () => {
     assert.strictEqual(api.getStartupRecoveryActive(), false);
   });
 
+  it("includes hookSource in session debug logs", () => {
+    const logs = [];
+    ctx.debugLog = (msg) => logs.push(msg);
+
+    api.updateSession("s1", "working", "PreToolUse", {
+      cwd: "/tmp",
+      agentId: "codex",
+      hookSource: "codex-official",
+    });
+
+    assert.ok(logs.some((msg) => msg.includes("source=codex-official")));
+  });
+
+  it("Codex Stop schedules an exit probe and deletes when agentPid exits", () => {
+    api.cleanup();
+    const alive = new Set([1000, 2000]);
+    const logs = [];
+    ctx = makeCtx({
+      processKill: makePidKill(alive),
+      debugLog: (msg) => logs.push(msg),
+    });
+    api = require("../src/state")(ctx);
+
+    api.updateSession("c1", "thinking", "UserPromptSubmit", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+    });
+    api.updateSession("c1", "idle", "Stop", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+      hookSource: "codex-official",
+    });
+
+    assert.ok(api.sessions.has("c1"));
+    assert.ok(logs.some((msg) => msg.includes("codex-exit-probe schedule")));
+
+    alive.delete(1000);
+    mock.timers.tick(1000);
+
+    assert.ok(!api.sessions.has("c1"));
+    assert.strictEqual(api.getCurrentState(), "idle");
+    assert.ok(logs.some((msg) => msg.includes("codex-exit-probe delete reason=agent-exit")));
+  });
+
+  it("Codex exit probe keeps the session when agentPid stays alive", () => {
+    api.cleanup();
+    const alive = new Set([1000, 2000]);
+    const logs = [];
+    ctx = makeCtx({
+      processKill: makePidKill(alive),
+      debugLog: (msg) => logs.push(msg),
+    });
+    api = require("../src/state")(ctx);
+
+    api.updateSession("c1", "idle", "Stop", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+      hookSource: "codex-official",
+    });
+    mock.timers.tick(15000);
+
+    assert.ok(api.sessions.has("c1"));
+    assert.ok(logs.some((msg) => msg.includes("codex-exit-probe keep reason=agent-alive")));
+  });
+
+  it("Codex exit probe cancels when new activity arrives", () => {
+    api.cleanup();
+    const alive = new Set([1000, 2000]);
+    const logs = [];
+    ctx = makeCtx({
+      processKill: makePidKill(alive),
+      debugLog: (msg) => logs.push(msg),
+    });
+    api = require("../src/state")(ctx);
+
+    api.updateSession("c1", "idle", "Stop", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+      hookSource: "codex-official",
+    });
+    api.updateSession("c1", "thinking", "UserPromptSubmit", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+      hookSource: "codex-official",
+    });
+
+    alive.delete(1000);
+    mock.timers.tick(15000);
+
+    assert.ok(api.sessions.has("c1"));
+    assert.ok(logs.some((msg) => msg.includes("codex-exit-probe cancel sid=c1 reason=UserPromptSubmit")));
+  });
+
+  it("upgrades pidReachable when later Codex hooks provide a live pid", () => {
+    api.cleanup();
+    const alive = new Set([1000, 2000]);
+    ctx = makeCtx({ processKill: makePidKill(alive) });
+    api = require("../src/state")(ctx);
+
+    api.updateSession("c1", "thinking", "event_msg:task_started", {
+      agentId: "codex",
+      cwd: "/tmp",
+    });
+    assert.strictEqual(api.sessions.get("c1").pidReachable, false);
+
+    api.updateSession("c1", "thinking", "UserPromptSubmit", {
+      agentId: "codex",
+      agentPid: 1000,
+      sourcePid: 2000,
+      cwd: "/tmp",
+      hookSource: "codex-official",
+    });
+
+    assert.strictEqual(api.sessions.get("c1").pidReachable, true);
+  });
+
   it("attention is oneshot — stored as idle in session", () => {
     update(api, { id: "s1", state: "working" });
     mock.timers.tick(1000); // past MIN_DISPLAY_MS.working
@@ -572,6 +1115,760 @@ describe("updateSession()", () => {
     update(api, { id: "s1", state: "sleeping", event: "SessionEnd" });
     // s2 remains with thinking
     assert.strictEqual(api.resolveDisplayState(), "thinking");
+  });
+
+  // ── session title (B1) ──
+
+  it("stores sessionTitle from updateSession positional arg", () => {
+    update(api, { id: "s1", state: "working", sessionTitle: "My Task" });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "My Task");
+  });
+
+  it("stores optional platform and model metadata", () => {
+    update(api, {
+      id: "s1",
+      state: "working",
+      platform: "webui",
+      model: "gpt-5.4",
+      provider: "openai",
+    });
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session.platform, "webui");
+    assert.strictEqual(session.model, "gpt-5.4");
+    assert.strictEqual(session.provider, "openai");
+
+    update(api, { id: "s1", state: "idle", event: "Stop" });
+    assert.strictEqual(api.sessions.get("s1").platform, "webui");
+    assert.strictEqual(api.sessions.get("s1").model, "gpt-5.4");
+    assert.strictEqual(api.sessions.get("s1").provider, "openai");
+  });
+
+  it("trims whitespace on sessionTitle", () => {
+    update(api, { id: "s1", state: "working", sessionTitle: "  Spaced  " });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "Spaced");
+  });
+
+  it("strips control characters and truncates long sessionTitle values", () => {
+    update(api, {
+      id: "s1",
+      state: "working",
+      sessionTitle: `  Fix\tlogin\nbug ${"x".repeat(100)}  `,
+    });
+    const title = api.sessions.get("s1").sessionTitle;
+    assert.strictEqual(title.startsWith("Fix login bug "), true);
+    assert.strictEqual(title.length, 80);
+    assert.strictEqual(title.endsWith("…"), true);
+    assert.strictEqual(/[\u0000-\u001F\u007F-\u009F]/.test(title), false);
+  });
+
+  it("sticky sessionTitle: follow-up events without title keep existing", () => {
+    update(api, { id: "s1", state: "thinking", sessionTitle: "Persistent Title" });
+    update(api, { id: "s1", state: "working" }); // no title in this update
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "Persistent Title");
+  });
+
+  it("sticky sessionTitle: empty string does not clear existing title", () => {
+    update(api, { id: "s1", state: "thinking", sessionTitle: "Keep Me" });
+    update(api, { id: "s1", state: "working", sessionTitle: "" });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "Keep Me");
+  });
+
+  it("sticky sessionTitle: whitespace-only input does not clear existing title", () => {
+    update(api, { id: "s1", state: "thinking", sessionTitle: "Keep Me" });
+    update(api, { id: "s1", state: "working", sessionTitle: "   " });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "Keep Me");
+  });
+
+  it("sessionTitle can be updated to a new non-empty value", () => {
+    update(api, { id: "s1", state: "thinking", sessionTitle: "Old Name" });
+    update(api, { id: "s1", state: "working", sessionTitle: "New Name" });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, "New Name");
+  });
+
+  it("new session with no sessionTitle has null field", () => {
+    update(api, { id: "s1", state: "working" });
+    assert.strictEqual(api.sessions.get("s1").sessionTitle, null);
+  });
+
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Group 6b: recentEvents + deriveSessionBadge (C1)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("recentEvents tracking", () => {
+  let api;
+  beforeEach(() => { api = require("../src/state")(makeCtx()); });
+  afterEach(() => { api.cleanup(); });
+
+  it("pushes events in order, capped at 8 (RECENT_EVENT_LIMIT)", () => {
+    for (let i = 0; i < 12; i++) {
+      update(api, { id: "s1", state: "working", event: `Event${i}` });
+    }
+    const events = api.sessions.get("s1").recentEvents;
+    assert.strictEqual(events.length, 8);
+    // Oldest 4 should have been dropped (Event0..Event3), keeping Event4..Event11
+    assert.strictEqual(events[0].event, "Event4");
+    assert.strictEqual(events[7].event, "Event11");
+  });
+
+  it("does not store an i18n label on events (derived at render time)", () => {
+    update(api, { id: "s1", state: "working", event: "PreToolUse" });
+    const evt = api.sessions.get("s1").recentEvents[0];
+    assert.ok(!("label" in evt), "recentEvents entries must not persist a 'label' field");
+  });
+
+  it("records state + event + at timestamp on each entry", () => {
+    const before = Date.now();
+    update(api, { id: "s1", state: "thinking", event: "UserPromptSubmit" });
+    const after = Date.now();
+    const evt = api.sessions.get("s1").recentEvents[0];
+    assert.strictEqual(evt.event, "UserPromptSubmit");
+    assert.strictEqual(evt.state, "thinking");
+    assert.ok(evt.at >= before && evt.at <= after);
+  });
+
+  it("recentEvents survives across multiple updates to the same session", () => {
+    update(api, { id: "s1", state: "thinking", event: "UserPromptSubmit" });
+    update(api, { id: "s1", state: "working", event: "PreToolUse" });
+    update(api, { id: "s1", state: "idle", event: "Stop" });
+    const events = api.sessions.get("s1").recentEvents;
+    assert.strictEqual(events.length, 3);
+    assert.deepStrictEqual(
+      events.map((e) => e.event),
+      ["UserPromptSubmit", "PreToolUse", "Stop"]
+    );
+  });
+
+  it("updates recentEvents when an existing session receives a oneshot error", () => {
+    update(api, { id: "s1", state: "working", event: "PreToolUse" });
+    update(api, { id: "s1", state: "error", event: "PostToolUseFailure" });
+
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session.state, "idle");
+    assert.deepStrictEqual(
+      session.recentEvents.map((e) => e.event),
+      ["PreToolUse", "PostToolUseFailure"]
+    );
+    assert.strictEqual(api.deriveSessionBadge(session), "interrupted");
+  });
+
+  it("handles null event as null (not crash, not skipped)", () => {
+    // The update() helper falls back to "PreToolUse" on null event —
+    // bypass it here to test the null path directly.
+    api.updateSession("s1", "working", null, { cwd: "/tmp", agentId: "claude-code" });
+    const events = api.sessions.get("s1").recentEvents;
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].event, null);
+  });
+
+  it("records Gemini PreCompress without changing the active session state", () => {
+    update(api, { id: "g1", state: "thinking", event: "UserPromptSubmit", agentId: "gemini-cli" });
+    api.updateSession("g1", "idle", "PreCompress", {
+      cwd: "/tmp",
+      agentId: "gemini-cli",
+      preserveState: true,
+    });
+
+    const session = api.sessions.get("g1");
+    assert.strictEqual(session.state, "thinking");
+    assert.deepStrictEqual(
+      session.recentEvents.map((entry) => entry.event),
+      ["UserPromptSubmit", "PreCompress"]
+    );
+  });
+
+  it("keeps the pet display state on Gemini PreCompress while exposing the event in session snapshots", () => {
+    const stateChanges = [];
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      sendToRenderer: (...args) => stateChanges.push(args),
+      syncHitWin: () => {},
+      sendToHitWin: () => {},
+    }));
+
+    update(api, { id: "g1", state: "thinking", event: "UserPromptSubmit", agentId: "gemini-cli" });
+    const beforeCount = stateChanges.length;
+    api.updateSession("g1", "idle", "PreCompress", {
+      cwd: "/tmp",
+      agentId: "gemini-cli",
+      preserveState: true,
+    });
+
+    assert.strictEqual(api.resolveDisplayState(), "thinking");
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions[0].lastEvent.rawEvent, "PreCompress");
+    assert.strictEqual(snapshot.sessions[0].lastEvent.labelKey, "eventLabelPreCompress");
+    assert.strictEqual(stateChanges.length, beforeCount);
+    assert.ok(stateChanges.every((entry) => entry[1] !== "sweeping"));
+  });
+
+  it("returns Gemini sessions to idle on AfterAgent without marking them done", () => {
+    update(api, { id: "g1", state: "working", event: "PreToolUse", agentId: "gemini-cli" });
+    api.updateSession("g1", "idle", "AfterAgent", {
+      cwd: "/tmp",
+      agentId: "gemini-cli",
+    });
+
+    const session = api.sessions.get("g1");
+    assert.strictEqual(session.state, "idle");
+    assert.strictEqual(api.deriveSessionBadge(session), "idle");
+    assert.deepStrictEqual(
+      session.recentEvents.map((entry) => entry.event),
+      ["PreToolUse", "AfterAgent"]
+    );
+  });
+});
+
+describe("buildSessionSnapshot", () => {
+  let api, ctx;
+  const pid = process.pid;
+
+  beforeEach(() => {
+    ctx = makeCtx({ processKill: makePidKill(new Set([pid])) });
+    api = require("../src/state")(ctx);
+  });
+  afterEach(() => api.cleanup());
+
+  it("returns a JSON-serializable empty snapshot", () => {
+    const snapshot = api.buildSessionSnapshot();
+    assert.deepStrictEqual(snapshot, {
+      sessions: [],
+      groups: [],
+      orderedIds: [],
+      menuOrderedIds: [],
+      hudTotalNonIdle: 0,
+      hudLastSessionId: null,
+      hudLastTitle: null,
+      lastSessionId: null,
+      lastTitle: null,
+    });
+    assert.doesNotThrow(() => JSON.stringify(snapshot));
+  });
+
+  it("builds renderer-safe fields, groups, and both dashboard/menu orderings", () => {
+    api.sessions.set("old-working", rawSession("working", {
+      updatedAt: 1000,
+      sourcePid: pid,
+      cwd: "/tmp/old-project",
+      agentId: "claude-code",
+      sessionTitle: "Fix login",
+      recentEvents: [{ event: "PreToolUse", state: "working", at: 900 }],
+    }));
+    api.sessions.set("latest-remote", rawSession("idle", {
+      updatedAt: 3000,
+      cwd: "/tmp/latest-project",
+      agentId: "codex",
+      host: "remote-box",
+      headless: true,
+      recentEvents: [{ event: "MysteryEvent", state: "idle", at: 2900 }],
+    }));
+    api.sessions.set("error-local", rawSession("error", {
+      updatedAt: 2000,
+      cwd: "/tmp/error-project",
+      agentId: "missing-agent",
+      recentEvents: [],
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+
+    assert.doesNotThrow(() => JSON.stringify(snapshot));
+    assert.deepStrictEqual(snapshot.orderedIds, ["latest-remote", "error-local", "old-working"]);
+    assert.deepStrictEqual(snapshot.menuOrderedIds, ["error-local", "old-working", "latest-remote"]);
+    assert.deepStrictEqual(snapshot.groups, [
+      { host: "", ids: ["error-local", "old-working"] },
+      { host: "remote-box", ids: ["latest-remote"] },
+    ]);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 2);
+    assert.strictEqual(snapshot.hudLastSessionId, "error-local");
+    assert.strictEqual(snapshot.hudLastTitle, "error-project");
+    assert.strictEqual(snapshot.lastSessionId, "latest-remote");
+    assert.strictEqual(snapshot.lastTitle, "latest-project");
+
+    const oldWorking = snapshot.sessions.find((s) => s.id === "old-working");
+    assert.strictEqual(oldWorking.badge, "running");
+    assert.strictEqual(oldWorking.sessionTitle, "Fix login");
+    assert.strictEqual(oldWorking.displayTitle, "Fix login");
+    assert.strictEqual(oldWorking.iconUrl.startsWith("file:"), true);
+    assert.deepStrictEqual(oldWorking.lastEvent, {
+      labelKey: "eventLabelPreToolUse",
+      rawEvent: "PreToolUse",
+      at: 900,
+    });
+
+    const latestRemote = snapshot.sessions.find((s) => s.id === "latest-remote");
+    assert.strictEqual(latestRemote.headless, true);
+    assert.strictEqual(latestRemote.displayTitle, "latest-project");
+    assert.deepStrictEqual(latestRemote.lastEvent, {
+      labelKey: null,
+      rawEvent: "MysteryEvent",
+      at: 2900,
+    });
+
+    const errorLocal = snapshot.sessions.find((s) => s.id === "error-local");
+    assert.strictEqual(errorLocal.displayTitle, "error-project");
+    assert.strictEqual(errorLocal.iconUrl, null);
+  });
+
+  it("keeps headless sessions in Dashboard data but excludes them from HUD aggregates", () => {
+    api.sessions.set("headless-active", rawSession("working", {
+      updatedAt: 3000,
+      cwd: "/tmp/headless",
+      agentId: "claude-code",
+      headless: true,
+    }));
+    api.sessions.set("interactive-active", rawSession("thinking", {
+      updatedAt: 2000,
+      cwd: "/tmp/interactive",
+      agentId: "codex",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+
+    assert.deepStrictEqual(snapshot.orderedIds, ["headless-active", "interactive-active"]);
+    assert.strictEqual(snapshot.sessions.length, 2);
+    assert.strictEqual(snapshot.lastSessionId, "headless-active");
+    assert.strictEqual(snapshot.hudTotalNonIdle, 1);
+    assert.strictEqual(snapshot.hudLastSessionId, "interactive-active");
+    assert.strictEqual(snapshot.hudLastTitle, "interactive");
+  });
+
+  it("keeps done idle interactive sessions in HUD aggregates", () => {
+    api.sessions.set("done-local", rawSession("idle", {
+      updatedAt: 3000,
+      sourcePid: pid,
+      pidReachable: true,
+      cwd: "/tmp/done-project",
+      agentId: "claude-code",
+      recentEvents: [{ event: "Stop", state: "attention", at: 2900 }],
+    }));
+    api.sessions.set("sleeping-local", rawSession("sleeping", {
+      updatedAt: 4000,
+      sourcePid: pid,
+      cwd: "/tmp/sleeping-project",
+      agentId: "codex",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").badge, "done");
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").hiddenFromHud, false);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 1);
+    assert.strictEqual(snapshot.hudLastSessionId, "done-local");
+    assert.strictEqual(snapshot.hudLastTitle, "done-project");
+  });
+
+  it("hides detached ended idle sessions from HUD aggregates when auto-clear is enabled and source is dead", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("done-local", rawSession("idle", {
+      updatedAt: 3000,
+      sourcePid: 9999,
+      pidReachable: true,
+      cwd: "/tmp/done-project",
+      agentId: "claude-code",
+      recentEvents: [{ event: "Stop", state: "attention", at: 2900 }],
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").badge, "done");
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").hiddenFromHud, true);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 0);
+    assert.strictEqual(snapshot.hudLastSessionId, null);
+    assert.strictEqual(snapshot.hudLastTitle, null);
+  });
+
+  it("keeps detached idle sessions in HUD aggregates when auto-clear is enabled but badge is idle", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("idle-local", rawSession("idle", {
+      updatedAt: 3000,
+      sourcePid: 9999,
+      pidReachable: true,
+      cwd: "/tmp/idle-project",
+      agentId: "gemini-cli",
+      recentEvents: [{ event: "AfterAgent", state: "idle", at: 2900 }],
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "idle-local").badge, "idle");
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "idle-local").hiddenFromHud, false);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 1);
+    assert.strictEqual(snapshot.hudLastSessionId, "idle-local");
+  });
+
+  it("keeps detached ended sessions in HUD aggregates when pid reachability is unknown", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      processKill: makePidKill(new Set()),
+      sessionHudCleanupDetached: true,
+    }));
+    api.sessions.set("done-local", rawSession("idle", {
+      updatedAt: 3000,
+      sourcePid: 9999,
+      pidReachable: false,
+      cwd: "/tmp/done-project",
+      agentId: "claude-code",
+      recentEvents: [{ event: "Stop", state: "attention", at: 2900 }],
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").badge, "done");
+    assert.strictEqual(snapshot.sessions.find((s) => s.id === "done-local").hiddenFromHud, false);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 1);
+    assert.strictEqual(snapshot.hudLastSessionId, "done-local");
+  });
+
+  it("applies session aliases to displayTitle without mutating raw session fields", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      getSessionAliases: () => ({
+        "local|claude-code|claude-local": { title: "Claude review", updatedAt: 100 },
+        "local|codex|codex-local": { title: "Codex follow-up", updatedAt: 100 },
+      }),
+    }));
+    api.sessions.set("claude-local", rawSession("working", {
+      updatedAt: 2000,
+      cwd: "D:\\animation",
+      agentId: "claude-code",
+      sessionTitle: "Agent title",
+    }));
+    api.sessions.set("codex-local", rawSession("thinking", {
+      updatedAt: 1000,
+      cwd: "d:/animation/",
+      agentId: "codex",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    const claude = snapshot.sessions.find((s) => s.id === "claude-local");
+    const codex = snapshot.sessions.find((s) => s.id === "codex-local");
+
+    assert.strictEqual(claude.displayTitle, "Claude review");
+    assert.strictEqual(claude.sessionTitle, "Agent title");
+    assert.strictEqual(claude.cwd, "D:\\animation");
+    assert.strictEqual(codex.displayTitle, "Codex follow-up");
+    assert.strictEqual(codex.cwd, "d:/animation/");
+    assert.strictEqual(snapshot.hudLastTitle, "Claude review");
+  });
+
+  it("uses Codex thread_name from session_index.jsonl for local session displayTitle", () => {
+    const codexDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-index-"));
+    fs.writeFileSync(path.join(codexDir, "session_index.jsonl"), [
+      JSON.stringify({
+        id: "019d23d4-f1a9-7633-b9c7-758327137228",
+        thread_name: "요구사항개선",
+      }),
+    ].join("\n") + "\n", "utf8");
+    const oldCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexDir;
+    try {
+      api.sessions.set("codex:019d23d4-f1a9-7633-b9c7-758327137228", rawSession("thinking", {
+        updatedAt: 1000,
+        cwd: "D:\\repository\\spms",
+        agentId: "codex",
+        sessionTitle: "Auto Summary",
+      }));
+
+      const snapshot = api.buildSessionSnapshot();
+      assert.strictEqual(snapshot.sessions[0].sessionTitle, "요구사항개선");
+      assert.strictEqual(snapshot.sessions[0].displayTitle, "요구사항개선");
+    } finally {
+      if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = oldCodexHome;
+      fs.rmSync(codexDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps session aliases scoped by host, agent, and session id", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      getSessionAliases: () => ({
+        "remote-box|codex|remote": { title: "Remote Codex", updatedAt: 100 },
+        "local|claude-code|local": { title: "Local Claude", updatedAt: 100 },
+      }),
+    }));
+    api.sessions.set("local", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/home/me/project",
+      host: null,
+      agentId: "claude-code",
+    }));
+    api.sessions.set("remote", rawSession("working", {
+      updatedAt: 2000,
+      cwd: "/home/me/project",
+      host: "remote-box",
+      agentId: "codex",
+    }));
+    api.sessions.set("remote-other-agent", rawSession("working", {
+      updatedAt: 3000,
+      cwd: "/home/me/project",
+      host: "remote-box",
+      agentId: "claude-code",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(
+      snapshot.sessions.find((s) => s.id === "local").displayTitle,
+      "Local Claude"
+    );
+    assert.strictEqual(
+      snapshot.sessions.find((s) => s.id === "remote").displayTitle,
+      "Remote Codex"
+    );
+    assert.strictEqual(
+      snapshot.sessions.find((s) => s.id === "remote-other-agent").displayTitle,
+      "project"
+    );
+  });
+
+  it("scopes Kiro default-session aliases by cwd", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      getSessionAliases: () => ({
+        "local|kiro-cli|default|cwd:%2Frepo%2Fa": { title: "Kiro repo A", updatedAt: 100 },
+      }),
+    }));
+    api.sessions.set("default", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/repo/b",
+      agentId: "kiro-cli",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions[0].displayTitle, "b");
+  });
+
+  it("falls back to legacy Kiro default-session aliases when no cwd-scoped alias exists", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      getSessionAliases: () => ({
+        "local|kiro-cli|default": { title: "Legacy Kiro", updatedAt: 100 },
+      }),
+    }));
+    api.sessions.set("default", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/repo/a",
+      agentId: "kiro-cli",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions[0].displayTitle, "Legacy Kiro");
+  });
+
+  it("prefers cwd-scoped Kiro default-session aliases over legacy aliases", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx({
+      getSessionAliases: () => ({
+        "local|kiro-cli|default": { title: "Legacy Kiro", updatedAt: 100 },
+        "local|kiro-cli|default|cwd:%2Frepo%2Fa": { title: "Kiro repo A", updatedAt: 200 },
+      }),
+    }));
+    api.sessions.set("default", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/repo/a",
+      agentId: "kiro-cli",
+    }));
+
+    const snapshot = api.buildSessionSnapshot();
+    assert.strictEqual(snapshot.sessions[0].displayTitle, "Kiro repo A");
+  });
+
+  it("returns active session alias keys for all sessions including idle and headless", () => {
+    api.cleanup();
+    api = require("../src/state")(makeCtx());
+    api.sessions.set("idle-session", rawSession("idle", {
+      agentId: "codex",
+      host: null,
+    }));
+    api.sessions.set("headless-session", rawSession("working", {
+      agentId: "claude-code",
+      host: "remote-box",
+      headless: true,
+    }));
+    api.sessions.set("default", rawSession("working", {
+      agentId: "kiro-cli",
+      cwd: "/repo/a",
+    }));
+
+    assert.deepStrictEqual(
+      Array.from(api.getActiveSessionAliasKeys()).sort(),
+      [
+        "local|codex|idle-session",
+        "local|kiro-cli|default|cwd:%2Frepo%2Fa",
+        "remote-box|claude-code|headless-session",
+      ]
+    );
+  });
+});
+
+describe("emitSessionSnapshot diff", () => {
+  let api, broadcasts;
+
+  beforeEach(() => {
+    broadcasts = [];
+    api = require("../src/state")(makeCtx({
+      broadcastSessionSnapshot: (snapshot) => broadcasts.push(snapshot),
+    }));
+  });
+  afterEach(() => api.cleanup());
+
+  it("does not broadcast when only a single session updatedAt changes", () => {
+    api.sessions.set("s1", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/tmp/one",
+      agentId: "claude-code",
+      recentEvents: [{ event: "PreToolUse", state: "working", at: 900 }],
+    }));
+
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+    assert.strictEqual(broadcasts.length, 1);
+
+    api.sessions.get("s1").updatedAt = 2000;
+    assert.strictEqual(api.emitSessionSnapshot().changed, false);
+    assert.strictEqual(broadcasts.length, 1);
+  });
+
+  it("broadcasts when updatedAt changes dashboard order and last session", () => {
+    api.sessions.set("s1", rawSession("working", {
+      updatedAt: 1000,
+      cwd: "/tmp/one",
+      agentId: "claude-code",
+    }));
+    api.sessions.set("s2", rawSession("working", {
+      updatedAt: 2000,
+      cwd: "/tmp/two",
+      agentId: "codex",
+    }));
+
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+    assert.deepStrictEqual(broadcasts[broadcasts.length - 1].orderedIds, ["s2", "s1"]);
+
+    api.sessions.get("s1").updatedAt = 3000;
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+    assert.deepStrictEqual(broadcasts[broadcasts.length - 1].orderedIds, ["s1", "s2"]);
+    assert.strictEqual(broadcasts[broadcasts.length - 1].lastSessionId, "s1");
+  });
+
+  it("broadcasts when visible fields change, including cwd and agentId", () => {
+    api.sessions.set("s1", rawSession("idle", {
+      updatedAt: 1000,
+      cwd: "/tmp/one",
+      agentId: "claude-code",
+      recentEvents: [{ event: "SessionStart", state: "idle", at: 900 }],
+    }));
+
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+
+    api.sessions.get("s1").cwd = "/tmp/two";
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+
+    api.sessions.get("s1").agentId = "codex";
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+
+    api.sessions.get("s1").recentEvents.push({ event: "SessionStart", state: "idle", at: 1200 });
+    assert.strictEqual(api.emitSessionSnapshot().changed, true);
+
+    assert.strictEqual(broadcasts.length, 4);
+  });
+});
+
+describe("deriveSessionBadge", () => {
+  let api;
+  beforeEach(() => { api = require("../src/state")(makeCtx()); });
+  afterEach(() => { api.cleanup(); });
+
+  // ── reachable states (what updateSession actually keeps on session.state) ──
+  // oneshot states (attention/error/sweeping/notification/carrying) get
+  // normalized to idle by updateSession, so they aren't tested here.
+
+  it("returns 'running' for reachable active states", () => {
+    // working / thinking / juggling are what the state machine stores
+    for (const st of ["working", "thinking", "juggling"]) {
+      assert.strictEqual(
+        api.deriveSessionBadge({ state: st, recentEvents: [] }),
+        "running",
+        `state=${st}`
+      );
+    }
+  });
+
+  it("returns 'interrupted' when idle with StopFailure in recentEvents", () => {
+    const s = { state: "idle", recentEvents: [{ event: "StopFailure" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "interrupted");
+  });
+
+  it("returns 'interrupted' when idle with PostToolUseFailure in recentEvents", () => {
+    const s = { state: "idle", recentEvents: [{ event: "PostToolUseFailure" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "interrupted");
+  });
+
+  it("returns 'done' when idle with Stop in recentEvents", () => {
+    const s = { state: "idle", recentEvents: [{ event: "Stop" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "done");
+  });
+
+  it("returns 'done' when idle with PostCompact in recentEvents", () => {
+    const s = { state: "idle", recentEvents: [{ event: "PostCompact" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "done");
+  });
+
+  it("returns 'idle' when idle with Gemini AfterAgent in recentEvents", () => {
+    const s = { state: "idle", recentEvents: [{ event: "AfterAgent" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "idle");
+  });
+
+  it("returns 'idle' when sleeping (no tombstone, not 'exited')", () => {
+    // SessionEnd deletes the session from the Map so menu iteration never
+    // sees it — sleeping here comes from other paths (idle timeout etc).
+    const s = { state: "sleeping", recentEvents: [{ event: "Stop" }] };
+    assert.strictEqual(api.deriveSessionBadge(s), "idle");
+  });
+
+  it("returns 'idle' when idle with no notable recentEvents", () => {
+    assert.strictEqual(api.deriveSessionBadge({ state: "idle", recentEvents: [] }), "idle");
+  });
+
+  it("uses the LATEST event for idle disambiguation", () => {
+    // PostToolUseFailure (interrupted) comes before Stop (done)
+    // Latest = Stop, so badge should be 'done', not 'interrupted'
+    const s = {
+      state: "idle",
+      recentEvents: [
+        { event: "PreToolUse" },
+        { event: "PostToolUseFailure" },
+        { event: "Stop" },
+      ],
+    };
+    assert.strictEqual(api.deriveSessionBadge(s), "done");
+  });
+
+  // ── defensive inputs (not reachable session states but safe to pass) ──
+
+  it("is defensive against null session", () => {
+    assert.strictEqual(api.deriveSessionBadge(null), "idle");
+  });
+
+  it("is defensive against undefined session", () => {
+    assert.strictEqual(api.deriveSessionBadge(undefined), "idle");
+  });
+
+  it("treats unknown non-idle state as 'running'", () => {
+    // If the state machine ever introduces a new active state, the badge
+    // should degrade gracefully to 'running' rather than throw or return
+    // undefined.
+    assert.strictEqual(
+      api.deriveSessionBadge({ state: "bogus-future-state", recentEvents: [] }),
+      "running"
+    );
+  });
+
+  it("handles missing recentEvents field (defensive)", () => {
+    assert.strictEqual(api.deriveSessionBadge({ state: "idle" }), "idle");
   });
 });
 
@@ -600,20 +1897,55 @@ describe("DND mode", () => {
     assert.strictEqual(api.getCurrentState(), "collapsing");
   });
 
+  it("enableDoNotDisturb uses theme-specific direct sleep transition art when provided", () => {
+    const theme = cloneTheme(_defaultTheme);
+    theme.timings.dndSleepTransitionSvg = "custom-idle-to-sleeping.svg";
+    theme.timings.dndSleepTransitionDuration = 4800;
+    api.cleanup();
+    ctx = makeCtx({ theme });
+    api = require("../src/state")(ctx);
+
+    api.enableDoNotDisturb();
+
+    assert.strictEqual(api.getCurrentState(), "collapsing");
+    assert.strictEqual(api.getCurrentSvg(), "custom-idle-to-sleeping.svg");
+    mock.timers.tick(4799);
+    assert.strictEqual(api.getCurrentState(), "collapsing");
+    mock.timers.tick(1);
+    assert.strictEqual(api.getCurrentState(), "sleeping");
+  });
+
   it("enableDoNotDisturb mini → mini-sleep", () => {
     ctx.miniMode = true;
     api.enableDoNotDisturb();
     assert.strictEqual(api.getCurrentState(), "mini-sleep");
   });
 
-  it("DND denies all pending permissions", () => {
-    const denied = [];
-    ctx.resolvePermissionEntry = (perm, action) => denied.push({ perm, action });
+  it("enableDoNotDisturb direct-sleep theme → sleeping immediately", () => {
+    const theme = cloneTheme(_defaultTheme);
+    theme.sleepSequence = { mode: "direct" };
+    api.cleanup();
+    ctx = makeCtx({ theme });
+    api = require("../src/state")(ctx);
+
+    api.enableDoNotDisturb();
+    assert.strictEqual(api.getCurrentState(), "sleeping");
+  });
+
+  it("DND dismisses pending permissions without resolving deny", () => {
+    const resolved = [];
+    const dismissed = [];
+    ctx.resolvePermissionEntry = (perm, action) => resolved.push({ perm, action });
+    ctx.dismissPermissionsForDnd = () => {
+      dismissed.push([...ctx.pendingPermissions]);
+      ctx.pendingPermissions.length = 0;
+      return 2;
+    };
     ctx.pendingPermissions = ["p1", "p2"];
     api.enableDoNotDisturb();
-    assert.strictEqual(denied.length, 2);
-    assert.strictEqual(denied[0].action, "deny");
-    assert.strictEqual(denied[1].action, "deny");
+    assert.deepStrictEqual(dismissed, [["p1", "p2"]]);
+    assert.deepStrictEqual(resolved, []);
+    assert.deepStrictEqual(ctx.pendingPermissions, []);
   });
 
   it("DND clears pending and auto-return timers", () => {
@@ -633,6 +1965,22 @@ describe("DND mode", () => {
     api.enableDoNotDisturb();
     api.disableDoNotDisturb();
     assert.strictEqual(api.getCurrentState(), "waking");
+    assert.strictEqual(ctx.doNotDisturb, false);
+  });
+
+  it("disableDoNotDisturb direct-sleep theme without waking art → idle", () => {
+    const theme = cloneTheme(_defaultTheme);
+    theme.sleepSequence = { mode: "direct" };
+    theme.states.waking = [];
+    theme._stateBindings.waking = { files: [], fallbackTo: null };
+
+    api.cleanup();
+    ctx = makeCtx({ theme });
+    api = require("../src/state")(ctx);
+
+    api.enableDoNotDisturb();
+    api.disableDoNotDisturb();
+    assert.strictEqual(api.getCurrentState(), "idle");
     assert.strictEqual(ctx.doNotDisturb, false);
   });
 
@@ -687,5 +2035,229 @@ describe("refreshTheme()", () => {
 
     mock.timers.tick(1);
     assert.strictEqual(api.getCurrentState(), "idle");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Group: requiresCompletionAck lifecycle (PR2, issue #308)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("requiresCompletionAck lifecycle", () => {
+  let api;
+  beforeEach(() => { api = require("../src/state")(makeCtx()); });
+  afterEach(() => { api.cleanup(); });
+
+  it("remote Codex Stop sets requiresCompletionAck=true (via finally reconciler)", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: "ssh:example.com" });
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session && session.requiresCompletionAck, true);
+  });
+
+  it("remote Codex JSONL task_complete also sets requiresCompletionAck=true", () => {
+    update(api, { id: "s1", state: "attention", event: "event_msg:task_complete", agentId: "codex", host: "ssh:example.com" });
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session && session.requiresCompletionAck, true);
+  });
+
+  it("remote Codex task_complete after Stop preserves the ack flag", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    update(api, { id: "s1", state: "attention", event: "event_msg:task_complete", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+  });
+
+  it("remote Codex stale-cleanup preserves an unacknowledged completion", () => {
+    update(api, { id: "s1", state: "attention", event: "event_msg:task_complete", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    update(api, { id: "s1", state: "sleeping", event: "stale-cleanup", agentId: "codex", host: "ssh:example.com" });
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session.requiresCompletionAck, true);
+    assert.strictEqual(session.recentEvents.at(-1).event, "stale-cleanup");
+    const entry = api.buildSessionSnapshot().sessions.find((s) => s.id === "s1");
+    assert.strictEqual(entry.badge, "done");
+    assert.strictEqual(entry.requiresCompletionAck, true);
+  });
+
+  it("remote Codex stale-cleanup alone does not create an ack requirement", () => {
+    update(api, { id: "s1", state: "sleeping", event: "stale-cleanup", agentId: "codex", host: "ssh:example.com" });
+    assert.notStrictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+  });
+
+  it("remote Codex activity after stale-cleanup clears the previous ack requirement", () => {
+    update(api, { id: "s1", state: "attention", event: "event_msg:task_complete", agentId: "codex", host: "ssh:example.com" });
+    update(api, { id: "s1", state: "sleeping", event: "stale-cleanup", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    update(api, { id: "s1", state: "thinking", event: "UserPromptSubmit", agentId: "codex", host: "ssh:example.com" });
+    assert.notStrictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+  });
+
+  it("ackSessionCompletion works after remote Codex stale-cleanup", () => {
+    update(api, { id: "s1", state: "attention", event: "event_msg:task_complete", agentId: "codex", host: "ssh:example.com" });
+    update(api, { id: "s1", state: "sleeping", event: "stale-cleanup", agentId: "codex", host: "ssh:example.com" });
+
+    assert.strictEqual(api.ackSessionCompletion("s1"), true);
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, false);
+  });
+
+  it("LOCAL Codex Stop does NOT set the flag (host=null)", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: null });
+    const session = api.sessions.get("s1");
+    assert.notStrictEqual(session && session.requiresCompletionAck, true);
+  });
+
+  it("non-codex Stop on a remote session does NOT set the flag", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "claude-code", host: "ssh:example.com" });
+    const session = api.sessions.get("s1");
+    assert.notStrictEqual(session && session.requiresCompletionAck, true);
+  });
+
+  it("subsequent non-Stop event clears the flag without touching ackedAt", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    update(api, { id: "s1", state: "working", event: "UserPromptSubmit", agentId: "codex", host: "ssh:example.com" });
+    const session = api.sessions.get("s1");
+    // "cleared" = not true. When sessions.set rebuilds the entry the flag
+    // simply isn't carried over (undefined); when the entry is mutated
+    // in place (Object.assign / juggling-hold paths) the reconciler sets
+    // it to false. Both render identically as `!!flag === false` in
+    // snapshot payloads.
+    assert.notStrictEqual(session.requiresCompletionAck, true);
+    assert.strictEqual(session.ackedAt, undefined);
+  });
+
+  it("event === null on a flagged session clears the flag (locked semantics)", () => {
+    // §3.11: null/undefined event = state-derived refresh with no carry;
+    // must NOT preserve the flag. This test lives so any future refactor
+    // that wants to preserve the flag on null events has to update it
+    // consciously. Calls updateSession directly because the `update()`
+    // helper's `o.event || "PreToolUse"` clobbers null.
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    api.updateSession("s1", "idle", null, {
+      agentId: "codex",
+      host: "ssh:example.com",
+    });
+    assert.notStrictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+  });
+
+  it("Kimi PermissionRequest early-return still reconciles the flag", () => {
+    // §3.11 test #38: state.js:750-813 PermissionRequest path takes an
+    // early return — must still go through the finally reconciler.
+    // Pre-seed a flagged remote codex session, then deliver a Kimi
+    // PermissionRequest gated off — flag MUST clear.
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "codex",
+      host: "ssh:example.com",
+      updatedAt: Date.now(),
+    }));
+    api.sessions.get("s1").requiresCompletionAck = true;
+
+    const ctxNoKimi = makeCtx({ isAgentPermissionsEnabled: () => false });
+    const api2 = require("../src/state")(ctxNoKimi);
+    api2.sessions.set("s1", rawSession("idle", {
+      agentId: "codex",
+      host: "ssh:example.com",
+      updatedAt: Date.now(),
+    }));
+    api2.sessions.get("s1").requiresCompletionAck = true;
+    update(api2, { id: "s1", state: "notification", event: "PermissionRequest", agentId: "kimi-cli" });
+    // The Kimi gate early-returns, but flag should be cleared via finally.
+    assert.strictEqual(api2.sessions.get("s1").requiresCompletionAck, false);
+    api2.cleanup();
+  });
+
+  it("Object.assign ONESHOT path still reconciles the flag on non-Stop events", () => {
+    // §3.11 test #39: ONESHOT_STATES branch at state.js:910-916 mutates
+    // the existing entry in place via Object.assign; flag survival across
+    // that mutation must be governed by the reconciler.
+    api.sessions.set("s1", rawSession("idle", {
+      agentId: "codex",
+      host: "ssh:example.com",
+      updatedAt: Date.now(),
+    }));
+    api.sessions.get("s1").requiresCompletionAck = true;
+    // sweeping is a ONESHOT state — triggers Object.assign(existing, base).
+    update(api, { id: "s1", state: "sweeping", event: "UserPromptSubmit", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, false);
+  });
+
+  it("ackSessionCompletion: clears flag, sets ackedAt, returns true, forces snapshot", () => {
+    update(api, { id: "s1", state: "idle", event: "Stop", agentId: "codex", host: "ssh:example.com" });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, true);
+
+    const before = Date.now();
+    const result = api.ackSessionCompletion("s1");
+    assert.strictEqual(result, true);
+    const session = api.sessions.get("s1");
+    assert.strictEqual(session.requiresCompletionAck, false);
+    assert.ok(session.ackedAt >= before, "ackedAt should be set to the ack timestamp");
+  });
+
+  it("ackSessionCompletion on a missing session returns false silently", () => {
+    assert.strictEqual(api.ackSessionCompletion("does-not-exist"), false);
+  });
+
+  it("ackSessionCompletion on an unflagged session is an idempotent no-op", () => {
+    update(api, { id: "s1", state: "working", event: "PreToolUse", agentId: "codex", host: null });
+    assert.strictEqual(api.sessions.get("s1").requiresCompletionAck, undefined);
+    const result = api.ackSessionCompletion("s1");
+    assert.strictEqual(result, false);
+    assert.strictEqual(api.sessions.get("s1").ackedAt, undefined);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Group: two-phase MAX_SESSIONS evictor (PR2)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("evictOldestSessionIfNeeded two-phase", () => {
+  let api;
+  beforeEach(() => { api = require("../src/state")(makeCtx()); });
+  afterEach(() => { api.cleanup(); });
+
+  function seed(api, count, ackedIndices = new Set()) {
+    // Helper: seed N sessions with distinct, RECENT updatedAt values so the
+    // "oldest" candidate is deterministic and none of them trip the 24h
+    // ack-pending cap when cleanStaleSessions sweeps after the eviction.
+    const baseTime = Date.now() - 10_000; // ~10 s ago, well within all caps
+    for (let i = 0; i < count; i++) {
+      const id = `s${i}`;
+      api.sessions.set(id, rawSession("idle", {
+        agentId: "codex",
+        host: "ssh:example.com",
+        updatedAt: baseTime + i, // s0 oldest, sN-1 newest
+      }));
+      if (ackedIndices.has(i)) {
+        api.sessions.get(id).requiresCompletionAck = true;
+      }
+    }
+  }
+
+  it("prefers the oldest non-ack session when capacity is hit", () => {
+    // 19 ack-pending + 1 non-ack. Adding the 21st (capacity = 20) must
+    // evict the non-ack oldest, not any of the ack-pending sessions.
+    seed(api, 20, new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]));
+    // s19 is non-ack and oldest of the non-ack group (only one).
+    update(api, { id: "s-new", state: "working", event: "PreToolUse", agentId: "claude-code" });
+    assert.strictEqual(api.sessions.has("s19"), false, "s19 (non-ack) should have been evicted");
+    // All 19 ack-pending entries survived
+    for (let i = 0; i <= 18; i++) {
+      assert.strictEqual(api.sessions.has(`s${i}`), true, `s${i} ack-pending should survive`);
+    }
+  });
+
+  it("evicts the oldest ack-pending session only when every entry is ack-pending", () => {
+    seed(api, 20, new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]));
+    update(api, { id: "s-new", state: "working", event: "PreToolUse", agentId: "claude-code" });
+    // s0 is oldest ack-pending (smallest updatedAt) — must be the victim.
+    assert.strictEqual(api.sessions.has("s0"), false, "oldest ack-pending should be evicted as fallback");
+    for (let i = 1; i <= 19; i++) {
+      assert.strictEqual(api.sessions.has(`s${i}`), true);
+    }
   });
 });

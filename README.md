@@ -6,7 +6,7 @@
 > "Hello Clawd, it's time for your weekly report"
 
 [![Local-First](https://img.shields.io/badge/Local--First-8b5cf6)](#why-it-exists)
-[![License: MIT](https://img.shields.io/badge/License-MIT-3178c6)](./LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-3178c6)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20(primary)-111827)](#getting-started)
 [![Powered by Claude · Codex](https://img.shields.io/badge/Powered_by-Claude%20%C2%B7%20Codex-d97757)](#getting-started)
 [![Built on Electron](https://img.shields.io/badge/Built_on-Electron-47848f)](#lineage--credits)
@@ -254,13 +254,13 @@ While an agent works (calling tools, waiting for input, erroring out, finishing 
 
 | Mode | How it works | Latency | Agents |
 |---|---|---|---|
-| **Command hook** | Agent fires an event → automatically runs a script → script HTTP-POSTs the event to Clawd's local server (`127.0.0.1:23333`) | Near zero | Claude Code, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI |
-| **Log polling** | Clawd scans the agent's JSONL log file every ~1.5 s and detects new entries | ~1.5 s | Codex CLI, Gemini CLI (fallback) |
-| **In-process plugin** | Plugin runs inside the agent's own runtime, forwarding events with zero overhead | Zero | opencode |
+| **Command hook** | Agent fires an event → automatically runs a script → script HTTP-POSTs the event to Clawd's local server (`127.0.0.1:23333`) | Near zero | Claude Code, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, Antigravity CLI, CodeBuddy, Kimi CLI |
+| **Log polling** | Clawd scans the agent's JSONL log file every ~1.5 s and detects new entries | ~1.5 s | Codex CLI, Gemini CLI (fallback), Kimi CLI (fallback) |
+| **In-process plugin** | Plugin runs inside the agent's own runtime, forwarding events with zero overhead | Zero | opencode, openclaw, Hermes, Pi |
 
 All events map to the same state machine: `idle → thinking → working → happy / error → sleeping`. The pet plays the matching SVG animation. When multiple sessions run simultaneously, it auto-switches to juggling / building / conducting animations.
 
-> **Multi-agent coexistence**: Claude Code, Codex, Copilot, Gemini, Cursor, Kiro, and opencode can all run at the same time. Clawd tracks each session independently and displays the highest-priority state.
+> **Multi-agent coexistence**: Claude Code, Codex, Copilot, Gemini, Cursor, Kiro, opencode, Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi can all run at the same time. Clawd tracks each session independently and displays the highest-priority state.
 
 ### Path ②: Offline analysis → insights dashboard
 
@@ -275,6 +275,21 @@ Every conversation you have with an agent is saved as JSONL on your disk:
 The insights dashboard reads these files directly to generate timelines and AI summaries. **It doesn't go through hooks and doesn't require the pet to be running** — as long as chat history exists on disk, the dashboard works.
 
 > **Note**: the analytics scanner currently covers only the three agents above. Copilot CLI, Gemini CLI, Kiro CLI, and opencode still drive pet animations, but their local histories are not yet wired into the dashboard scanner.
+
+## Desktop pet capabilities (synced from upstream)
+
+Beyond the analytics layer, this fork now tracks the full desktop-pet feature set from [`clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk):
+
+- **Broader agent support** — pixel-art reactions for **Claude Code, Codex CLI, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, opencode**, plus the newly merged **Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi**.
+- **WSL & remote development** *(focus of this sync)* — Codex officially supports **WSL2**, and Clawd integrates through Codex's official hooks (with JSONL polling as a fallback). For an agent running on a remote box or inside WSL's separate Linux home, **Remote SSH** deploys the hooks over an SSH tunnel so the pet reacts to those sessions too. The remote side must use a POSIX shell — **Git Bash or WSL `bash`, not Windows `cmd.exe`**. See [docs/guides/codex-wsl-clarification.md](docs/guides/codex-wsl-clarification.md) and [docs/guides/setup-guide.md](docs/guides/setup-guide.md).
+- **GUI settings panel** — a full settings window (agents, themes, shortcuts, Remote SSH, Telegram approval) replaces hand-editing config files.
+- **Theming** — swap the crab for alternate characters (e.g. the Cloudling theme) or build your own with `npm run create-theme`.
+- **Telegram approval** — approve or deny permission requests remotely from your phone.
+- **Doctor diagnostics** — a built-in health check that verifies hook installation and per-agent integration status.
+- **Session HUD & Quick Commands** — optional on-screen session-state labels and a quick-command surface.
+- **The classics** — permission bubbles, mini mode, click reactions, eye-tracking, sleep sequences, and multi-monitor support all carried over.
+
+Platform notes (Windows terminal focus, macOS focus, known limitations) live under [docs/guides/](docs/guides/).
 
 ## FAQ
 
@@ -293,15 +308,15 @@ Clawd Insights is the **analytics layer** built on top of [`rullerzhou-afk/clawd
 
 That dashboard is the new piece. It scans your local history (Claude Code, Codex CLI, Cursor Agent today; more agents on the way), draws a timeline, and lets your own LLM write per-session summaries — all without sending a byte to a third party.
 
-Multi-agent state tracking carried over from upstream: **Claude Code**, **Codex CLI**, **Copilot CLI**, **Gemini CLI**, **Cursor Agent**, **Kiro CLI**, and **opencode**. For the desktop pet's own feature list (mini mode, click reactions, themes, remote SSH, etc.), see the [upstream README](https://github.com/rullerzhou-afk/clawd-on-desk).
+Multi-agent state tracking carried over from upstream — and this repo now stays in sync with the full upstream codebase (WSL & Remote SSH support, the expanded agent roster, the GUI settings panel, theming, Telegram approval, doctor diagnostics, and more). For the desktop pet's own feature list, see [Desktop pet capabilities](#desktop-pet-capabilities-synced-from-upstream) above.
 
 Huge thanks to [@rullerzhou-afk](https://github.com/rullerzhou-afk) and every contributor who shaped the original Clawd — this project wouldn't exist without that foundation.
 
 ## License
 
-Source code: [MIT License](LICENSE).
+Source code: [GNU AGPL-3.0-only](LICENSE) — adopted from upstream `clawd-on-desk`, whose code this repo now incorporates. See also [NOTICE.md](NOTICE.md) for third-party materials.
 
-**Artwork (assets/) is NOT covered by MIT.** All rights reserved by their respective copyright holders. See [assets/LICENSE](assets/LICENSE).
+**Artwork (assets/) is NOT covered by the AGPL.** All rights reserved by their respective copyright holders. See [assets/LICENSE](assets/LICENSE).
 
 - **Clawd** character is the property of [Anthropic](https://www.anthropic.com). Unofficial fan project, not affiliated with Anthropic.
 - **Calico cat (三花猫)** artwork by 鹿鹿 ([@rullerzhou-afk](https://github.com/rullerzhou-afk)). All rights reserved.

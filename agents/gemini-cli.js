@@ -5,21 +5,24 @@ module.exports = {
   id: "gemini-cli",
   name: "Gemini CLI",
   processNames: { win: ["gemini.exe"], mac: ["gemini"], linux: ["gemini"] },
-  eventSource: "log-poll",
-  // PascalCase event names — matches Gemini CLI hook system (retained for future use)
+  eventSource: "hook",
+  // PascalCase event names — matches Gemini CLI hook system
   eventMap: {
     SessionStart: "idle",
     SessionEnd: "sleeping",
     BeforeAgent: "thinking",
     BeforeTool: "working",
     AfterTool: "working",
-    AfterAgent: "attention",
+    AfterAgent: "idle",
     Notification: "notification",
-    PreCompress: "sweeping",
+    // Hook runtime sends preserve_state=true for this event, so state.js keeps
+    // the active visual while recording the raw PreCompress event.
+    PreCompress: "idle",
   },
   capabilities: {
     httpHook: false,
     permissionApproval: false,
+    notificationHook: true,
     sessionEnd: true,
     subagent: false,
   },
@@ -28,8 +31,4 @@ module.exports = {
   },
   stdinFormat: "geminiHookJson",
   pidField: "gemini_pid",
-  logConfig: {
-    sessionDir: "~/.gemini/tmp",
-    pollIntervalMs: 1500,
-  },
 };

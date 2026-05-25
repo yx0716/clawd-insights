@@ -1,15 +1,56 @@
 "use strict";
 
+function basenameOnly(value) {
+  return typeof value === "string" ? value.replace(/^.*[\/\\]/, "") : value;
+}
+
+function isSvgFile(file) {
+  return typeof file === "string" && file.toLowerCase().endsWith(".svg");
+}
+
+function resolveViewBox(theme, state, file) {
+  if (!theme) return null;
+  const key = basenameOnly(file);
+  if (key && theme.fileViewBoxes && theme.fileViewBoxes[key]) return theme.fileViewBoxes[key];
+  if (state && state.startsWith("mini-") && theme.miniMode && theme.miniMode.viewBox) {
+    return theme.miniMode.viewBox;
+  }
+  return theme.viewBox;
+}
+
+function viewBoxEquals(a, b) {
+  return !!(a && b
+    && a.x === b.x
+    && a.y === b.y
+    && a.width === b.width
+    && a.height === b.height);
+}
+
+function hasRootViewBoxFileOverride(theme, file) {
+  const key = basenameOnly(file);
+  return !!(
+    theme
+    && key
+    && theme.fileViewBoxes
+    && viewBoxEquals(theme.fileViewBoxes[key], theme.viewBox)
+  );
+}
+
 function usesObjectChannel(theme, state, file) {
-  if (!theme || !file || !file.endsWith(".svg")) return false;
+  if (!theme || !isSvgFile(file)) return false;
+  if (theme.rendering && theme.rendering.svgChannel === "object") return true;
   const eyeStates = theme.eyeTracking && theme.eyeTracking.enabled
     ? (theme.eyeTracking.states || [])
     : [];
-  return eyeStates.includes(state);
+  const trustedFiles = theme._builtin && theme.trustedRuntime && Array.isArray(theme.trustedRuntime.scriptedSvgFiles)
+    ? theme.trustedRuntime.scriptedSvgFiles
+    : [];
+  return eyeStates.includes(state) || trustedFiles.includes(basenameOnly(file));
 }
 
 function usesNormalizedLayout(theme, state, file) {
   if (!theme || !theme.layout || !theme.layout.contentBox) return false;
+  if (hasRootViewBoxFileOverride(theme, file)) return true;
   if ((state && state.startsWith("mini-")) || (file && file.startsWith("mini-"))) return false;
   return true;
 }
@@ -33,9 +74,10 @@ function getFileLayout(theme, file) {
   };
 }
 
-function getNormalizedLayout(theme, file) {
+function getNormalizedLayout(theme, state, file) {
   if (!theme || !theme.layout || !theme.layout.contentBox) return null;
-  const viewBox = theme.viewBox;
+  const viewBox = resolveViewBox(theme, state, file);
+  if (!viewBox) return null;
   const layout = theme.layout;
   const os = (theme && theme.objectScale) || {};
   const fileOffsets = os.fileOffsets || {};
@@ -70,10 +112,12 @@ function fitViewBoxIntoRect(outerRect, viewBox) {
 function getAssetRectScreen(theme, bounds, state, file) {
   if (!theme || !bounds) return null;
 
-  const viewBox = theme.viewBox;
+  const viewBox = resolveViewBox(theme, state, file);
+  if (!viewBox) return null;
 
   if (usesNormalizedLayout(theme, state, file)) {
-    const normalized = getNormalizedLayout(theme, file);
+    const normalized = getNormalizedLayout(theme, state, file);
+    if (!normalized) return null;
     return {
       x: bounds.x + bounds.width * normalized.leftRatio + normalized.offsetPxX,
       y: bounds.y + bounds.height
@@ -117,7 +161,8 @@ function getHitRectScreen(theme, bounds, state, file, hitBox, options = {}) {
   const artRect = getAssetRectScreen(theme, bounds, state, file);
   if (!artRect) return null;
 
-  const vb = theme.viewBox;
+  const vb = resolveViewBox(theme, state, file);
+  if (!vb) return null;
   const scaleX = artRect.w / vb.width;
   const scaleY = artRect.h / vb.height;
   const padX = options.padX || 0;
@@ -131,9 +176,49 @@ function getHitRectScreen(theme, bounds, state, file, hitBox, options = {}) {
   };
 }
 
+function getContentRectScreen(theme, bounds, state, file, options = {}) {
+  const box = options.box || (theme && theme.layout && theme.layout.contentBox);
+  if (!theme || !bounds || !box) return null;
+
+  const artRect = getAssetRectScreen(theme, bounds, state, file);
+  if (!artRect) return null;
+
+  const vb = resolveViewBox(theme, state, file);
+  if (!vb) return null;
+  const scaleX = artRect.w / vb.width;
+  const scaleY = artRect.h / vb.height;
+
+  return {
+    left: artRect.x + (box.x - vb.x) * scaleX,
+    top: artRect.y + (box.y - vb.y) * scaleY,
+    right: artRect.x + (box.x - vb.x + box.width) * scaleX,
+    bottom: artRect.y + (box.y - vb.y + box.height) * scaleY,
+  };
+}
+
+function getAssetPointerPayload(theme, bounds, state, file, point) {
+  if (!theme || !bounds || !point) return null;
+
+  const artRect = getAssetRectScreen(theme, bounds, state, file);
+  const vb = resolveViewBox(theme, state, file);
+  if (!artRect || !vb || artRect.w <= 0 || artRect.h <= 0) return null;
+
+  return {
+    x: vb.x + ((point.x - artRect.x) / artRect.w) * vb.width,
+    y: vb.y + ((point.y - artRect.y) / artRect.h) * vb.height,
+    inside: point.x >= artRect.x
+      && point.x <= artRect.x + artRect.w
+      && point.y >= artRect.y
+      && point.y <= artRect.y + artRect.h,
+  };
+}
+
 module.exports = {
   getAssetRectScreen,
+  getAssetPointerPayload,
+  getContentRectScreen,
   getHitRectScreen,
+  resolveViewBox,
   usesObjectChannel,
   usesNormalizedLayout,
 };

@@ -28,7 +28,6 @@ function makeCtx() {
     pendingPermissions: [],
     resolvePermissionEntry() {},
     t: (k) => k,
-    showSessionId: false,
     focusTerminalWindow() {},
   };
 }
@@ -41,76 +40,47 @@ describe("display_svg session hints (updateSession path)", () => {
     api = require("../src/state")(makeCtx());
   });
 
+  function baseOpts(overrides = {}) {
+    return {
+      cwd: "/tmp",
+      editor: "cursor",
+      agentPid: pid,
+      agentId: "cursor-agent",
+      ...overrides,
+    };
+  }
+
   it("uses allowlisted display_svg for working state", () => {
-    api.updateSession(
-      "c1",
-      "working",
-      "PreToolUse",
-      null,
-      "/tmp",
-      "cursor",
-      null,
-      pid,
-      "cursor-agent",
-      null,
-      false,
-      "clawd-working-building.svg"
-    );
+    api.updateSession("c1", "working", "PreToolUse", baseOpts({ displayHint: "clawd-working-building.svg" }));
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-building.svg");
   });
 
   it("falls back to getWorkingSvg when no hint", () => {
-    api.updateSession("c1", "working", "PreToolUse", null, "/tmp", "cursor", null, pid, "cursor-agent", null, false, undefined);
+    api.updateSession("c1", "working", "PreToolUse", baseOpts());
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-typing.svg");
   });
 
   it("ignores non-allowlisted svg and falls back", () => {
-    api.updateSession(
-      "c1",
-      "working",
-      "PreToolUse",
-      null,
-      "/tmp",
-      "cursor",
-      null,
-      pid,
-      "cursor-agent",
-      null,
-      false,
-      "evil.svg"
-    );
+    api.updateSession("c1", "working", "PreToolUse", baseOpts({ displayHint: "evil.svg" }));
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-typing.svg");
   });
 
   it("picks the most recently updated session among working sessions", async () => {
-    api.updateSession("a", "working", "PreToolUse", null, "/a", "cursor", null, pid, "cursor-agent", null, false, "clawd-working-building.svg");
+    api.updateSession("a", "working", "PreToolUse", baseOpts({ cwd: "/a", displayHint: "clawd-working-building.svg" }));
     await new Promise((r) => setTimeout(r, 5));
-    api.updateSession("b", "working", "PostToolUse", null, "/b", "cursor", null, pid, "cursor-agent", null, false, "clawd-idle-reading.svg");
+    api.updateSession("b", "working", "PostToolUse", baseOpts({ cwd: "/b", displayHint: "clawd-idle-reading.svg" }));
     assert.strictEqual(api.getSvgOverride("working"), "clawd-idle-reading.svg");
   });
 
   it("clears hint when display_svg is null", () => {
-    api.updateSession("c1", "working", "PreToolUse", null, "/tmp", "cursor", null, pid, "cursor-agent", null, false, "clawd-working-building.svg");
+    api.updateSession("c1", "working", "PreToolUse", baseOpts({ displayHint: "clawd-working-building.svg" }));
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-building.svg");
-    api.updateSession("c1", "working", "PostToolUse", null, "/tmp", "cursor", null, pid, "cursor-agent", null, false, null);
+    api.updateSession("c1", "working", "PostToolUse", baseOpts({ displayHint: null }));
     assert.strictEqual(api.getSvgOverride("working"), "clawd-working-typing.svg");
   });
 
   it("applies thinking hint for thinking state", () => {
-    api.updateSession(
-      "c1",
-      "thinking",
-      "AfterAgentThought",
-      null,
-      "/tmp",
-      "cursor",
-      null,
-      pid,
-      "cursor-agent",
-      null,
-      false,
-      "clawd-working-thinking.svg"
-    );
+    api.updateSession("c1", "thinking", "AfterAgentThought", baseOpts({ displayHint: "clawd-working-thinking.svg" }));
     assert.strictEqual(api.getSvgOverride("thinking"), "clawd-working-thinking.svg");
   });
 });

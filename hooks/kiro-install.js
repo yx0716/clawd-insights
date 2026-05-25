@@ -11,13 +11,15 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execFileSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const { resolveNodeBin } = require("./server-config");
-const { writeJsonAtomic, extractExistingNodeBin } = require("./json-utils");
+const { writeJsonAtomic, extractExistingNodeBin, formatNodeHookCommand } = require("./json-utils");
 const MARKER = "kiro-hook.js";
 const CLAWD_AGENT_NAME = "clawd";
 const CLAWD_AGENT_DESCRIPTION = "Clawd desktop pet hook integration";
 const BUILTIN_DEFAULT_AGENT = "kiro_default";
+const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".kiro");
+const DEFAULT_AGENTS_DIR = path.join(DEFAULT_PARENT_DIR, "agents");
 
 const KIRO_HOOK_EVENTS = [
   "agentSpawn",
@@ -64,7 +66,7 @@ function injectHooksIntoFile(filePath, options = {}) {
   const nodeBin = resolved
     || extractExistingNodeBin(settings, MARKER)
     || "node";
-  const desiredCommand = `"${nodeBin}" "${getHookScriptPath()}"`;
+  const desiredCommand = formatHookCommand(nodeBin, getHookScriptPath(), options.platform);
 
   if (!settings.hooks || typeof settings.hooks !== "object") settings.hooks = {};
 
@@ -120,7 +122,29 @@ function getHookScriptPath() {
   return hookScript;
 }
 
-function getKiroCliCandidates(homeDir = os.homedir()) {
+// PowerShell parses bare quoted strings as literals ("node" => the string
+// "node" rather than an exec), so the leading `& ` call operator is required
+// on Windows to invoke the binary. POSIX shells need no such prefix.
+function formatHookCommand(nodeBin, scriptPath, platformOverride) {
+  const platform = platformOverride || process.platform;
+  return formatNodeHookCommand(nodeBin, scriptPath, {
+    platform,
+    windowsWrapper: "powershell",
+  });
+}
+
+function getKiroCliCandidates(homeDir = os.homedir(), platformOverride, env = process.env) {
+  const platform = platformOverride || process.platform;
+  if (platform === "win32") {
+    const localAppData = env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local");
+    const programFiles = env.ProgramFiles || "C:\\Program Files";
+    return [
+      path.join(localAppData, "Kiro-Cli", "kiro-cli.exe"),
+      path.join(programFiles, "Kiro-Cli", "kiro-cli.exe"),
+      "kiro-cli.exe",
+      "kiro-cli",
+    ];
+  }
   return [
     path.join(homeDir, ".local", "bin", "kiro-cli"),
     "/opt/homebrew/bin/kiro-cli",
@@ -134,40 +158,48 @@ const EXCLUDED_KEYS = new Set(["model", "includeMcpJson", "description", "hooks"
 
 function generateClawdTemplateFromBuiltin(options = {}) {
   const homeDir = options.homeDir || os.homedir();
-  const kiroCliCandidates = options.kiroCliCandidates || getKiroCliCandidates(homeDir);
+  const platform = options.platform || process.platform;
+  const env = options.env || process.env;
+  const kiroCliCandidates = options.kiroCliCandidates || getKiroCliCandidates(homeDir, platform, env);
+  // Kiro writes the agent JSON to disk *before* invoking $EDITOR, so the no-op
+  // editor only needs to exit cleanly. `true` ships with macOS/Linux but not
+  // Windows; `cmd /c exit` is the closest portable equivalent on Windows.
+  const noopEditor = platform === "win32" ? "cmd /c exit" : "true";
   let lastError = null;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-kiro-seed-"));
   const tempName = `clawd-seed-${process.pid}-${Date.now()}`;
+  const templatePath = path.join(tempDir, `${tempName}.json`);
 
   try {
     for (const candidate of kiroCliCandidates) {
+      const result = spawnSync(
+        candidate,
+        ["agent", "create", tempName, "--directory", tempDir, "--from", BUILTIN_DEFAULT_AGENT],
+        {
+          stdio: "ignore",
+          env: { ...env, EDITOR: noopEditor },
+          windowsHide: true,
+        }
+      );
+
+      if (result.error && result.error.code === "ENOENT") {
+        lastError = result.error;
+        continue;
+      }
+      if (result.error) lastError = result.error;
+
+      // Trust the file, not the exit code: Kiro writes the JSON before $EDITOR
+      // runs, so a non-zero exit (e.g. EDITOR mis-fire on Windows) still
+      // leaves a usable template behind.
       try {
-        execFileSync(
-          candidate,
-          [
-            "agent",
-            "create",
-            tempName,
-            "--directory",
-            tempDir,
-            "--from",
-            BUILTIN_DEFAULT_AGENT,
-          ],
-          {
-            stdio: "ignore",
-            env: { ...process.env, EDITOR: "true" },
-          }
-        );
-        const templatePath = path.join(tempDir, `${tempName}.json`);
         const template = JSON.parse(fs.readFileSync(templatePath, "utf-8"));
         return { template, command: candidate };
       } catch (err) {
         lastError = err;
-        if (err && err.code === "ENOENT") continue;
       }
     }
   } finally {
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch {}
   }
 
   return { template: null, error: lastError };
@@ -309,9 +341,12 @@ function registerKiroHooks(options = {}) {
 }
 
 module.exports = {
+  DEFAULT_PARENT_DIR,
+  DEFAULT_AGENTS_DIR,
   registerKiroHooks,
   KIRO_HOOK_EVENTS,
   __test: {
+    formatHookCommand,
     generateClawdTemplateFromBuiltin,
     getKiroCliCandidates,
     injectHooksIntoFile,

@@ -1,0 +1,606 @@
+"use strict";
+
+const { BrowserWindow, screen } = require("electron");
+const path = require("path");
+const { keepOutOfTaskbar } = require("./taskbar");
+
+const isLinux = process.platform === "linux";
+const isMac = process.platform === "darwin";
+const isWin = process.platform === "win32";
+
+const HUD_BORDER_Y = 2;
+const HUD_WIDTH = 240;
+const HUD_WIDTH_COMPACT = 190;
+const HUD_WIDTH_LABELS = 320;
+const HUD_WIDTH_LABELS_COMPACT = 260;
+const HUD_ROW_HEIGHT = 28;
+const HUD_MAX_EXPANDED_ROWS = 3;
+const HUD_MAX_EXPANDED_ROWS_LABELS = 5;
+const HUD_HEIGHT = HUD_ROW_HEIGHT + HUD_BORDER_Y;
+const HUD_WINDOW_SHELL = Object.freeze({
+  top: 2,
+  right: 3,
+  bottom: 8,
+  left: 3,
+});
+const HUD_PET_GAP = 4;
+const BUBBLE_GAP = 6;
+const EDGE_MARGIN = 8;
+const WIN_TOPMOST_LEVEL = "pop-up-menu";
+const LINUX_WINDOW_TYPE = "toolbar";
+const MAC_FLOATING_TOPMOST_DELAY_MS = 120;
+const HOT_ZONE_PAD = 24;
+const AUTO_HIDE_POLL_MS = 200;
+const HIDE_GRACE_MS = 500;
+
+function clampToWorkArea(value, min, max) {
+  if (max < min) return min;
+  return Math.max(min, Math.min(value, max));
+}
+
+function isScreenRect(rect) {
+  return !!rect
+    && Number.isFinite(rect.left)
+    && Number.isFinite(rect.top)
+    && Number.isFinite(rect.right)
+    && Number.isFinite(rect.bottom);
+}
+
+function isHudSession(session) {
+  return !!session && !session.headless && session.state !== "sleeping" && !session.hiddenFromHud;
+}
+
+function snapshotHasVisibleSessions(snapshot) {
+  const sessions = Array.isArray(snapshot && snapshot.sessions) ? snapshot.sessions : [];
+  return sessions.some(isHudSession);
+}
+
+function evaluateBaseEligible({
+  snapshot,
+  sessionHudEnabled,
+  petHidden,
+  miniMode,
+  miniTransitioning,
+}) {
+  if (!snapshot) return false;
+  if (sessionHudEnabled === false) return false;
+  if (petHidden) return false;
+  if (miniMode || miniTransitioning) return false;
+  return snapshotHasVisibleSessions(snapshot);
+}
+
+function pointInExpandedRect(point, rect, pad) {
+  if (!point || !isScreenRect(rect)) return false;
+  const p = Number.isFinite(pad) ? pad : 0;
+  return point.x >= rect.left - p
+    && point.x <= rect.right + p
+    && point.y >= rect.top - p
+    && point.y <= rect.bottom + p;
+}
+
+function computeAutoHideHotZone({ petHitRect, expectedHudContentBounds, pad }) {
+  const rects = [];
+  if (isScreenRect(petHitRect)) rects.push(petHitRect);
+  if (expectedHudContentBounds) {
+    const r = expectedHudContentBounds;
+    if (Number.isFinite(r.x) && Number.isFinite(r.y)
+        && Number.isFinite(r.width) && Number.isFinite(r.height)
+        && r.width > 0 && r.height > 0) {
+      rects.push({
+        left: r.x,
+        top: r.y,
+        right: r.x + r.width,
+        bottom: r.y + r.height,
+      });
+    } else if (isScreenRect(r)) {
+      rects.push(r);
+    }
+  }
+  return { rects, pad: Number.isFinite(pad) ? pad : 0 };
+}
+
+function pointInHotZone(point, hotZone) {
+  if (!hotZone || !Array.isArray(hotZone.rects)) return false;
+  for (const rect of hotZone.rects) {
+    if (pointInExpandedRect(point, rect, hotZone.pad)) return true;
+  }
+  return false;
+}
+
+function evaluateShouldShow({
+  snapshot,
+  sessionHudEnabled,
+  sessionHudAutoHide,
+  sessionHudPinned,
+  inHotZone,
+  now,
+  visibleHoldUntil,
+  hideGraceMs,
+  petHidden,
+  miniMode,
+  miniTransitioning,
+}) {
+  const baseEligible = evaluateBaseEligible({
+    snapshot,
+    sessionHudEnabled,
+    petHidden,
+    miniMode,
+    miniTransitioning,
+  });
+  if (!baseEligible) return { show: false, nextHoldUntil: 0 };
+  if (sessionHudAutoHide !== true) return { show: true, nextHoldUntil: 0 };
+  if (sessionHudPinned === true) return { show: true, nextHoldUntil: 0 };
+
+  let nextHoldUntil = Number.isFinite(visibleHoldUntil) ? visibleHoldUntil : 0;
+  const tNow = Number.isFinite(now) ? now : 0;
+  const grace = Number.isFinite(hideGraceMs) ? hideGraceMs : 0;
+  if (inHotZone) {
+    nextHoldUntil = tNow + grace;
+  }
+  const show = inHotZone || tNow < nextHoldUntil;
+  return { show, nextHoldUntil };
+}
+
+function getHudMaxExpandedRows(showStateLabels = true) {
+  return showStateLabels === false ? HUD_MAX_EXPANDED_ROWS : HUD_MAX_EXPANDED_ROWS_LABELS;
+}
+
+function computeHudLayout(snapshot, options = {}) {
+  const sessions = (snapshot && Array.isArray(snapshot.sessions)) ? snapshot.sessions : [];
+  if (sessions.length === 0) return { expanded: [], folded: [], rowCount: 0 };
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const orderedIds = (snapshot && Array.isArray(snapshot.orderedIds))
+    ? snapshot.orderedIds
+    : sessions.map((s) => s.id);
+  const ordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+  const orderedSet = new Set(ordered.map((s) => s.id));
+  const missing = sessions.filter((s) => !orderedSet.has(s.id));
+  const visible = ordered.concat(missing).filter(isHudSession);
+  const maxExpandedRows = getHudMaxExpandedRows(options.showStateLabels);
+  const expanded = visible.slice(0, maxExpandedRows);
+  const folded = visible.slice(maxExpandedRows);
+  const rowCount = expanded.length + (folded.length > 0 ? 1 : 0);
+  return { expanded, folded, rowCount };
+}
+
+function computeHudHeight(rowCount) {
+  if (!Number.isFinite(rowCount) || rowCount <= 0) return HUD_ROW_HEIGHT;
+  return rowCount * HUD_ROW_HEIGHT + HUD_BORDER_Y;
+}
+
+function computeHudReservedOffset(cardHeight) {
+  const h = Number.isFinite(cardHeight) && cardHeight > 0 ? cardHeight : HUD_ROW_HEIGHT;
+  return HUD_PET_GAP + h + HUD_WINDOW_SHELL.bottom + BUBBLE_GAP;
+}
+
+function computeSessionHudBounds({ hitRect, anchorRect, workArea, width = HUD_WIDTH, height = HUD_HEIGHT }) {
+  const followRect = isScreenRect(anchorRect) ? anchorRect : hitRect;
+  if (!isScreenRect(followRect) || !workArea) return null;
+  const followTop = Math.round(followRect.top);
+  const followBottom = Math.round(followRect.bottom);
+  const followCx = Math.round((followRect.left + followRect.right) / 2);
+
+  const outerWidth = width + HUD_WINDOW_SHELL.left + HUD_WINDOW_SHELL.right;
+  const outerHeight = height + HUD_WINDOW_SHELL.top + HUD_WINDOW_SHELL.bottom;
+  const minX = Math.round(workArea.x);
+  const maxX = Math.round(workArea.x + workArea.width - width);
+  const x = clampToWorkArea(followCx - Math.round(width / 2), minX, maxX);
+
+  const belowY = followBottom + HUD_PET_GAP;
+  const belowMax = workArea.y + workArea.height - EDGE_MARGIN;
+  if (belowY + height <= belowMax) {
+    const contentBounds = { x, y: belowY, width, height };
+    return {
+      bounds: {
+        x: contentBounds.x - HUD_WINDOW_SHELL.left,
+        y: contentBounds.y - HUD_WINDOW_SHELL.top,
+        width: outerWidth,
+        height: outerHeight,
+      },
+      contentBounds,
+      flippedAbove: false,
+    };
+  }
+
+  const minY = Math.round(workArea.y + EDGE_MARGIN);
+  const maxY = Math.round(workArea.y + workArea.height - EDGE_MARGIN - height);
+  const aboveY = followTop - height - HUD_PET_GAP;
+  const contentBounds = {
+    x,
+    y: clampToWorkArea(aboveY, minY, maxY),
+    width,
+    height,
+  };
+  return {
+    bounds: {
+      x: contentBounds.x - HUD_WINDOW_SHELL.left,
+      y: contentBounds.y - HUD_WINDOW_SHELL.top,
+      width: outerWidth,
+      height: outerHeight,
+    },
+    contentBounds,
+    flippedAbove: true,
+  };
+}
+
+function getHudWidth(showElapsed = true, showStateLabels = true) {
+  if (showStateLabels === false) return showElapsed === false ? HUD_WIDTH_COMPACT : HUD_WIDTH;
+  return showElapsed === false ? HUD_WIDTH_LABELS_COMPACT : HUD_WIDTH_LABELS;
+}
+
+function deferMacFloatingVisibility(ctx, win) {
+  if (!isMac || !win || win.isDestroyed()) return;
+  const deferUntil = Date.now() + MAC_FLOATING_TOPMOST_DELAY_MS;
+  win.__clawdMacDeferredVisibilityUntil = deferUntil;
+  setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    if (win.__clawdMacDeferredVisibilityUntil === deferUntil) {
+      delete win.__clawdMacDeferredVisibilityUntil;
+    }
+    if (typeof ctx.reapplyMacVisibility === "function") ctx.reapplyMacVisibility();
+  }, MAC_FLOATING_TOPMOST_DELAY_MS);
+}
+
+module.exports = function initSessionHud(ctx) {
+  let hudWindow = null;
+  let didFinishLoad = false;
+  let latestSnapshot = null;
+  let hudFlippedAbove = false;
+  let lastReservedOffset = 0;
+  let lastHudHeight = HUD_ROW_HEIGHT;
+  let pollTimer = null;
+  let autoHideRevealed = false;
+  let visibleHoldUntil = 0;
+
+  function getCurrentSnapshot() {
+    return typeof ctx.getSessionSnapshot === "function"
+      ? ctx.getSessionSnapshot()
+      : { sessions: [], groups: [], orderedIds: [], menuOrderedIds: [] };
+  }
+
+  function getMiniMode() {
+    return typeof ctx.getMiniMode === "function" && ctx.getMiniMode();
+  }
+
+  function getMiniTransitioning() {
+    return typeof ctx.getMiniTransitioning === "function" && ctx.getMiniTransitioning();
+  }
+
+  function baseEligible(snapshot = latestSnapshot) {
+    return evaluateBaseEligible({
+      snapshot,
+      sessionHudEnabled: ctx.sessionHudEnabled,
+      petHidden: ctx.petHidden,
+      miniMode: getMiniMode(),
+      miniTransitioning: getMiniTransitioning(),
+    });
+  }
+
+  function shouldShow(snapshot = latestSnapshot) {
+    if (!baseEligible(snapshot)) return false;
+    if (ctx.sessionHudAutoHide !== true) return true;
+    if (ctx.sessionHudPinned === true) return true;
+    return autoHideRevealed;
+  }
+
+  function isAutoHidePollingNeeded() {
+    if (!baseEligible(latestSnapshot)) return false;
+    if (ctx.sessionHudAutoHide !== true) return false;
+    if (ctx.sessionHudPinned === true) return false;
+    return true;
+  }
+
+  function computeExpectedHudContentBounds(snapshot) {
+    if (!ctx.win || ctx.win.isDestroyed()) return null;
+    const petBounds = typeof ctx.getPetWindowBounds === "function" ? ctx.getPetWindowBounds() : null;
+    if (!petBounds) return null;
+    const hitRect = typeof ctx.getHitRectScreen === "function"
+      ? ctx.getHitRectScreen(petBounds)
+      : null;
+    const anchorRect = typeof ctx.getSessionHudAnchorRect === "function"
+      ? ctx.getSessionHudAnchorRect(petBounds)
+      : null;
+    const cx = petBounds.x + petBounds.width / 2;
+    const cy = petBounds.y + petBounds.height / 2;
+    const workArea = typeof ctx.getNearestWorkArea === "function"
+      ? ctx.getNearestWorkArea(cx, cy)
+      : { x: 0, y: 0, width: 1280, height: 800 };
+    const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+    const height = computeHudHeight(layout.rowCount);
+    const width = getHudWidth(ctx.sessionHudShowElapsed !== false, ctx.sessionHudShowStateLabels !== false);
+    const computed = computeSessionHudBounds({ hitRect, anchorRect, workArea, width, height });
+    return { hitRect, contentBounds: computed && computed.contentBounds };
+  }
+
+  function evaluateAutoHideCursorNow({ syncOnChange = true } = {}) {
+    if (!isAutoHidePollingNeeded()) {
+      stopAutoHidePoll();
+      return false;
+    }
+    let cursor = null;
+    try {
+      cursor = screen.getCursorScreenPoint();
+    } catch (_err) {
+      cursor = null;
+    }
+    let inHotZone = false;
+    if (cursor) {
+      const expected = computeExpectedHudContentBounds(latestSnapshot);
+      const hotZone = computeAutoHideHotZone({
+        petHitRect: expected && expected.hitRect,
+        expectedHudContentBounds: expected && expected.contentBounds,
+        pad: HOT_ZONE_PAD,
+      });
+      inHotZone = pointInHotZone(cursor, hotZone);
+    }
+    const now = Date.now();
+    const result = evaluateShouldShow({
+      snapshot: latestSnapshot,
+      sessionHudEnabled: ctx.sessionHudEnabled,
+      sessionHudAutoHide: ctx.sessionHudAutoHide,
+      sessionHudPinned: ctx.sessionHudPinned,
+      inHotZone,
+      now,
+      visibleHoldUntil,
+      hideGraceMs: HIDE_GRACE_MS,
+      petHidden: ctx.petHidden,
+      miniMode: getMiniMode(),
+      miniTransitioning: getMiniTransitioning(),
+    });
+    visibleHoldUntil = result.nextHoldUntil;
+    if (result.show !== autoHideRevealed) {
+      autoHideRevealed = result.show;
+      if (syncOnChange) {
+        syncSessionHud(latestSnapshot, { sendSnapshot: result.show });
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function pollAutoHideCursor() {
+    pollTimer = null;
+    if (!isAutoHidePollingNeeded()) {
+      stopAutoHidePoll();
+      return;
+    }
+    evaluateAutoHideCursorNow();
+    schedulePollTick();
+  }
+
+  function schedulePollTick() {
+    if (pollTimer) return;
+    pollTimer = setTimeout(pollAutoHideCursor, AUTO_HIDE_POLL_MS);
+  }
+
+  function startAutoHidePoll() {
+    evaluateAutoHideCursorNow({ syncOnChange: false });
+    if (!isAutoHidePollingNeeded()) return;
+    if (!pollTimer) schedulePollTick();
+  }
+
+  function stopAutoHidePoll() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    autoHideRevealed = false;
+    visibleHoldUntil = 0;
+  }
+
+  function syncAutoHidePollLifecycle() {
+    if (isAutoHidePollingNeeded()) startAutoHidePoll();
+    else stopAutoHidePoll();
+  }
+
+  function sendSnapshot(snapshot = latestSnapshot) {
+    if (!snapshot || !hudWindow || hudWindow.isDestroyed() || !didFinishLoad) return;
+    if (!hudWindow.webContents || hudWindow.webContents.isDestroyed()) return;
+    hudWindow.webContents.send("session-hud:session-snapshot", {
+      ...snapshot,
+      hudShowStateLabels: ctx.sessionHudShowStateLabels !== false,
+      hudShowElapsed: ctx.sessionHudShowElapsed !== false,
+      hudAutoHide: ctx.sessionHudAutoHide === true,
+      hudPinned: ctx.sessionHudPinned === true,
+    });
+  }
+
+  function sendI18n() {
+    if (!hudWindow || hudWindow.isDestroyed() || !didFinishLoad) return;
+    if (!hudWindow.webContents || hudWindow.webContents.isDestroyed()) return;
+    if (typeof ctx.getI18n !== "function") return;
+    hudWindow.webContents.send("session-hud:lang-change", ctx.getI18n());
+  }
+
+  function ensureSessionHud() {
+    if (hudWindow && !hudWindow.isDestroyed()) return hudWindow;
+    if (!ctx.win || ctx.win.isDestroyed()) return null;
+
+    didFinishLoad = false;
+    hudFlippedAbove = false;
+    const hudWidth = getHudWidth(ctx.sessionHudShowElapsed !== false, ctx.sessionHudShowStateLabels !== false);
+    hudWindow = new BrowserWindow({
+      parent: ctx.win,
+      width: hudWidth + HUD_WINDOW_SHELL.left + HUD_WINDOW_SHELL.right,
+      height: HUD_HEIGHT + HUD_WINDOW_SHELL.top + HUD_WINDOW_SHELL.bottom,
+      show: false,
+      frame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: !isMac,
+      focusable: false,
+      hasShadow: false,
+      backgroundColor: "#00000000",
+      ...(isLinux ? { type: LINUX_WINDOW_TYPE } : {}),
+      ...(isMac ? { type: "panel" } : {}),
+      webPreferences: {
+        preload: path.join(__dirname, "preload-session-hud.js"),
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    if (isWin) hudWindow.setAlwaysOnTop(true, WIN_TOPMOST_LEVEL);
+    if (typeof ctx.guardAlwaysOnTop === "function") ctx.guardAlwaysOnTop(hudWindow);
+
+    hudWindow.loadFile(path.join(__dirname, "session-hud.html"));
+    hudWindow.webContents.once("did-finish-load", () => {
+      didFinishLoad = true;
+      sendI18n();
+      syncSessionHud();
+    });
+    hudWindow.on("closed", () => {
+      hudWindow = null;
+      didFinishLoad = false;
+      hudFlippedAbove = false;
+      notifyReservedOffsetIfChanged();
+    });
+
+    return hudWindow;
+  }
+
+  function hideSessionHud() {
+    hudFlippedAbove = false;
+    if (hudWindow && !hudWindow.isDestroyed()) hudWindow.hide();
+    notifyReservedOffsetIfChanged();
+  }
+
+  function computeBounds(snapshot) {
+    if (!ctx.win || ctx.win.isDestroyed()) return null;
+    const petBounds = typeof ctx.getPetWindowBounds === "function" ? ctx.getPetWindowBounds() : null;
+    if (!petBounds) return null;
+    const hitRect = typeof ctx.getHitRectScreen === "function"
+      ? ctx.getHitRectScreen(petBounds)
+      : null;
+    const anchorRect = typeof ctx.getSessionHudAnchorRect === "function"
+      ? ctx.getSessionHudAnchorRect(petBounds)
+      : null;
+    const cx = petBounds.x + petBounds.width / 2;
+    const cy = petBounds.y + petBounds.height / 2;
+    const workArea = typeof ctx.getNearestWorkArea === "function"
+      ? ctx.getNearestWorkArea(cx, cy)
+      : { x: 0, y: 0, width: 1280, height: 800 };
+    const layout = computeHudLayout(snapshot, { showStateLabels: ctx.sessionHudShowStateLabels !== false });
+    const height = computeHudHeight(layout.rowCount);
+    const width = getHudWidth(ctx.sessionHudShowElapsed !== false, ctx.sessionHudShowStateLabels !== false);
+    lastHudHeight = height;
+    return computeSessionHudBounds({ hitRect, anchorRect, workArea, width, height });
+  }
+
+  function showSessionHud(win) {
+    if (!win || win.isDestroyed() || !didFinishLoad) return;
+    if (!win.isVisible()) {
+      win.showInactive();
+      keepOutOfTaskbar(win);
+      if (isMac) deferMacFloatingVisibility(ctx, win);
+      else if (typeof ctx.reapplyMacVisibility === "function") ctx.reapplyMacVisibility();
+    }
+    notifyReservedOffsetIfChanged();
+  }
+
+  function syncSessionHud(snapshot = latestSnapshot || getCurrentSnapshot(), options = {}) {
+    latestSnapshot = snapshot;
+    syncAutoHidePollLifecycle();
+    if (!shouldShow(snapshot)) {
+      hideSessionHud();
+      return;
+    }
+
+    const win = ensureSessionHud();
+    if (!win || win.isDestroyed()) return;
+
+    const computed = computeBounds(snapshot);
+    if (!computed) {
+      hideSessionHud();
+      return;
+    }
+    hudFlippedAbove = !!computed.flippedAbove;
+    win.setBounds(computed.bounds);
+    if (options.sendSnapshot !== false) sendSnapshot(snapshot);
+    showSessionHud(win);
+  }
+
+  function broadcastSessionSnapshot(snapshot) {
+    syncSessionHud(snapshot);
+  }
+
+  function repositionSessionHud() {
+    syncSessionHud(latestSnapshot || getCurrentSnapshot(), { sendSnapshot: false });
+  }
+
+  function getHudReservedOffset() {
+    return readHudReservedOffset();
+  }
+
+  function readHudReservedOffset() {
+    if (!hudWindow || hudWindow.isDestroyed() || !hudWindow.isVisible()) return 0;
+    if (hudFlippedAbove) return 0;
+    return computeHudReservedOffset(lastHudHeight);
+  }
+
+  function notifyReservedOffsetIfChanged() {
+    const next = readHudReservedOffset();
+    if (next === lastReservedOffset) return;
+    lastReservedOffset = next;
+    if (typeof ctx.onReservedOffsetChange === "function") ctx.onReservedOffsetChange(next);
+  }
+
+  function cleanup() {
+    stopAutoHidePoll();
+    if (hudWindow && !hudWindow.isDestroyed()) hudWindow.destroy();
+    hudWindow = null;
+    didFinishLoad = false;
+    hudFlippedAbove = false;
+    lastHudHeight = HUD_ROW_HEIGHT;
+    notifyReservedOffsetIfChanged();
+  }
+
+  return {
+    ensureSessionHud,
+    broadcastSessionSnapshot,
+    repositionSessionHud,
+    syncSessionHud,
+    sendI18n,
+    getHudReservedOffset,
+    cleanup,
+    getWindow: () => hudWindow,
+  };
+};
+
+module.exports.__test = {
+  computeSessionHudBounds,
+  computeHudLayout,
+  getHudMaxExpandedRows,
+  computeHudHeight,
+  computeHudReservedOffset,
+  isHudSession,
+  getHudWidth,
+  evaluateBaseEligible,
+  evaluateShouldShow,
+  pointInExpandedRect,
+  computeAutoHideHotZone,
+  pointInHotZone,
+  constants: {
+    HUD_WIDTH,
+    HUD_WIDTH_COMPACT,
+    HUD_WIDTH_LABELS,
+    HUD_WIDTH_LABELS_COMPACT,
+    HUD_HEIGHT,
+    HUD_ROW_HEIGHT,
+    HUD_MAX_EXPANDED_ROWS,
+    HUD_MAX_EXPANDED_ROWS_LABELS,
+    HUD_WINDOW_SHELL,
+    HUD_PET_GAP,
+    BUBBLE_GAP,
+    EDGE_MARGIN,
+    HUD_BORDER_Y,
+    HOT_ZONE_PAD,
+    AUTO_HIDE_POLL_MS,
+    HIDE_GRACE_MS,
+  },
+};

@@ -9,6 +9,8 @@ const PEEK_OFFSET = 25;
 const SNAP_TOLERANCE = 30;
 const JUMP_PEAK_HEIGHT = 40;
 const JUMP_DURATION = 350;
+const MINI_ENTER_FALLBACK_MS = 3200;
+const MINI_ENTER_PRELOAD_MS = 300;
 const CRABWALK_SPEED = 0.12;  // px/ms
 let MINI_OFFSET_RATIO = ctx.theme.miniMode.offsetRatio;
 
@@ -20,20 +22,42 @@ let miniPeeked = false;
 let preMiniX = 0, preMiniY = 0;
 let currentMiniX = 0;
 let miniSnap = null;  // { y, width, height } — canonical rect to prevent DPI drift
+let lastMiniWorkArea = null;  // workArea of the display the mini pet is on
 let miniTransitionTimer = null;
 let peekAnimTimer = null;
 let isAnimating = false;
+
+function syncSessionHudVisibility() {
+  if (typeof ctx.syncSessionHudVisibility === "function") ctx.syncSessionHudVisibility();
+}
+
+function repositionSessionHud() {
+  if (typeof ctx.repositionSessionHud === "function") ctx.repositionSessionHud();
+}
 
 function refreshTheme() {
   MINI_OFFSET_RATIO = ctx.theme.miniMode.offsetRatio;
 }
 
+function themeSupportsMini() {
+  return !!(ctx.theme && ctx.theme.miniMode && ctx.theme.miniMode.supported !== false);
+}
+
 // ── Window animation ──
-function animateWindowX(targetX, durationMs) {
+// Mini animations run on **real** Electron bounds (not virtual). enterMiniMode
+// calls ctx.setViewportOffsetY(0) before starting animation, so real === virtual
+// throughout the mini lifecycle. Skipping applyPetWindowBounds here avoids the
+// per-frame materialize → IPC → renderer CSS re-apply round-trip that was
+// stalling the main thread during mini entry.
+function animateWindowX(targetX, durationMs, onDone) {
   if (peekAnimTimer) { clearTimeout(peekAnimTimer); peekAnimTimer = null; }
   const bounds = ctx.win.getBounds();
   const startX = bounds.x;
-  if (startX === targetX) { isAnimating = false; return; }
+  if (startX === targetX) {
+    isAnimating = false;
+    if (onDone) onDone();
+    return;
+  }
   isAnimating = true;
   const startTime = Date.now();
   const snapY = miniSnap ? miniSnap.y : bounds.y;
@@ -41,15 +65,32 @@ function animateWindowX(targetX, durationMs) {
   const snapH = miniSnap ? miniSnap.height : bounds.height;
   let frameCount = 0;
   const step = () => {
-    if (!ctx.win || ctx.win.isDestroyed()) { peekAnimTimer = null; isAnimating = false; return; }
+    if (!ctx.win || ctx.win.isDestroyed()) {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     const t = Math.min(1, (Date.now() - startTime) / durationMs);
     const eased = t * (2 - t);
     const x = Math.round(startX + (targetX - startX) * eased);
-    if (!Number.isFinite(x) || !Number.isFinite(snapY)) { peekAnimTimer = null; isAnimating = false; return; }
+    if (!Number.isFinite(x) || !Number.isFinite(snapY)) {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     try {
       ctx.win.setBounds({ x, y: snapY, width: snapW, height: snapH });
-    } catch { peekAnimTimer = null; isAnimating = false; return; }
+    } catch {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     ctx.syncHitWin();
+    repositionSessionHud();
+    syncContainedClip();
     // Throttle bubble reposition to every 3rd frame (~20fps) — visually identical, less overhead
     if (ctx.bubbleFollowPet && ctx.pendingPermissions.length && (++frameCount % 3 === 0 || t >= 1)) ctx.repositionBubbles();
     if (t < 1) {
@@ -57,6 +98,7 @@ function animateWindowX(targetX, durationMs) {
     } else {
       peekAnimTimer = null;
       isAnimating = false;
+      if (onDone) onDone();
     }
   };
   step();
@@ -75,17 +117,34 @@ function animateWindowParabola(targetX, targetY, durationMs, onDone) {
   const startTime = Date.now();
   let frameCount = 0;
   const step = () => {
-    if (!ctx.win || ctx.win.isDestroyed()) { peekAnimTimer = null; isAnimating = false; return; }
+    if (!ctx.win || ctx.win.isDestroyed()) {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     const t = Math.min(1, (Date.now() - startTime) / durationMs);
     const eased = t * (2 - t);
     const x = Math.round(startX + (targetX - startX) * eased);
     const arc = -4 * JUMP_PEAK_HEIGHT * t * (t - 1);
     const y = Math.round(startY + (targetY - startY) * eased - arc);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) { peekAnimTimer = null; isAnimating = false; if (onDone) onDone(); return; }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     try {
       ctx.win.setPosition(x, y);
-    } catch { peekAnimTimer = null; isAnimating = false; if (onDone) onDone(); return; }
+    } catch {
+      peekAnimTimer = null;
+      isAnimating = false;
+      if (onDone) onDone();
+      return;
+    }
     ctx.syncHitWin();
+    repositionSessionHud();
+    syncContainedClip();
     // Throttle bubble reposition to every 3rd frame (~20fps) — visually identical, less overhead
     if (ctx.bubbleFollowPet && ctx.pendingPermissions.length && (++frameCount % 3 === 0 || t >= 1)) ctx.repositionBubbles();
     if (t < 1) {
@@ -97,6 +156,58 @@ function animateWindowParabola(targetX, targetY, durationMs, onDone) {
     }
   };
   step();
+}
+
+// When the mini pet at `wa`/`yMid` sits at an internal seam in `edge`
+// direction, returns the seam X — the local display's *bounds* edge, which
+// is the physical boundary the neighbouring monitor begins at (and the same
+// place a single-display mini gets physically cut off by the screen edge).
+// Returns null at an outer screen edge (single display, or no neighbour at
+// the pet's vertical band). The 4px tolerance absorbs OS-side rounding.
+function seamBoundary(wa, yMid, edge) {
+  const displays = screen.getAllDisplays();
+  const cx = wa.x + wa.width / 2;
+  const cy = wa.y + wa.height / 2;
+  const local = displays.find((d) =>
+    cx >= d.workArea.x && cx <= d.workArea.x + d.workArea.width &&
+    cy >= d.workArea.y && cy <= d.workArea.y + d.workArea.height);
+  const lb = local ? local.bounds : wa;
+  const seam = edge === "right" ? lb.x + lb.width : lb.x;
+  const overlapsY = (d) => {
+    if (!Number.isFinite(yMid)) return false;
+    return yMid >= d.bounds.y && yMid <= d.bounds.y + d.bounds.height;
+  };
+  const hasNeighbour = displays.some((d) => {
+    if (d === local || !overlapsY(d)) return false;
+    const dEdge = edge === "right" ? d.bounds.x : d.bounds.x + d.bounds.width;
+    return Math.abs(dEdge - seam) <= 4;
+  });
+  return hasNeighbour ? seam : null;
+}
+
+// Multi-monitor seam state: when the mini pet sits at an internal seam, the
+// half that pokes past `containedBoundary` (the display 1 edge in screen X)
+// gets clip-pathed away in the renderer so it doesn't show on the neighbour.
+// `null` outside contained mini.
+let containedBoundary = null;
+
+function syncContainedClip() {
+  // Startup recovery computes the seam state before the render window
+  // exists; theme/renderer reload can also tear the window down briefly.
+  // Bail out rather than dereference a missing window — the clip is
+  // (re)sent from syncRendererStateAfterLoad() once the renderer is up.
+  if (!ctx.win || ctx.win.isDestroyed()) return;
+  if (!miniMode || containedBoundary == null) {
+    ctx.sendToRenderer("mini-clip", null);
+    return;
+  }
+  const bounds = ctx.win.getBounds();
+  if (!bounds.width) return;
+  const fraction = (containedBoundary - bounds.x) / bounds.width;
+  ctx.sendToRenderer("mini-clip", {
+    fraction: Math.max(0, Math.min(1, fraction)),
+    edge: miniEdge,
+  });
 }
 
 // Shared X-position formula for mini mode (eliminates duplication across 4+ call sites)
@@ -114,6 +225,35 @@ function miniPeekOut() {
   animateWindowX(currentMiniX, 200);
 }
 
+function getMiniStateFile(state) {
+  const miniStates = ctx.theme && ctx.theme.miniMode && ctx.theme.miniMode.states;
+  if (!miniStates) return null;
+  const files = miniStates[state];
+  return Array.isArray(files) && files[0] ? files[0] : null;
+}
+
+function getMiniEnterDurationMs(state) {
+  const file = getMiniStateFile(state);
+  const cycleMs = typeof ctx.getAnimationAssetCycleMs === "function"
+    ? ctx.getAnimationAssetCycleMs(file)
+    : null;
+  return Number.isFinite(cycleMs) && cycleMs > 0 ? cycleMs : MINI_ENTER_FALLBACK_MS;
+}
+
+function getMiniRestState() {
+  return ctx.doNotDisturb ? "mini-sleep" : "mini-idle";
+}
+
+function finishMiniEntry(delayMs) {
+  if (miniTransitionTimer) { clearTimeout(miniTransitionTimer); miniTransitionTimer = null; }
+  const settleMs = Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : MINI_ENTER_FALLBACK_MS;
+  miniTransitionTimer = setTimeout(() => {
+    miniTransitionTimer = null;
+    miniTransitioning = false;
+    ctx.applyState(getMiniRestState());
+  }, settleMs);
+}
+
 function cancelMiniTransition() {
   miniTransitioning = false;
   if (miniTransitionTimer) { clearTimeout(miniTransitionTimer); miniTransitionTimer = null; }
@@ -122,12 +262,16 @@ function cancelMiniTransition() {
 }
 
 function _getSize() {
+  if (typeof ctx.getEffectiveCurrentPixelSize === "function") {
+    return ctx.getEffectiveCurrentPixelSize();
+  }
   return ctx.getCurrentPixelSize ? ctx.getCurrentPixelSize() : ctx.SIZES[ctx.currentSize];
 }
 
 function checkMiniModeSnap() {
+  if (!themeSupportsMini()) return;
   if (miniMode) return;
-  const bounds = ctx.win.getBounds();
+  const bounds = ctx.getPetWindowBounds();
   const size = _getSize();
   const mEdge = Math.round(size.width * 0.25);
   const centerX = bounds.x + size.width / 2;
@@ -153,17 +297,32 @@ function checkMiniModeSnap() {
 }
 
 function enterMiniMode(wa, viaMenu, edge) {
+  if (!themeSupportsMini()) return;
   if (miniMode && !viaMenu) return;
-  const bounds = ctx.win.getBounds();
+  // preMini 存 virtual — 退出 mini 时能复原贴顶位置
+  const virtualBounds = ctx.getPetWindowBounds();
   if (!viaMenu) {
-    preMiniX = bounds.x;
-    preMiniY = bounds.y;
+    preMiniX = virtualBounds.x;
+    preMiniY = virtualBounds.y;
   }
+  // 清零 viewport offset — mini 全程用 real 坐标,避免每帧 materialize + IPC 风暴
+  if (typeof ctx.setViewportOffsetY === "function") ctx.setViewportOffsetY(0);
+  // 之后 real === virtual,用 real API 读取当前 y 作为 mini 起点
+  const bounds = ctx.win.getBounds();
   miniMode = true;
+  miniSleepPeeked = false;
+  miniPeeked = false;
   if (edge) miniEdge = edge;
   const size = _getSize();
   currentMiniX = calcMiniX(wa, size);
+  lastMiniWorkArea = wa;
   miniSnap = { y: bounds.y, width: size.width, height: size.height };
+
+  // Multi-monitor seam detection — when active, the renderer clips the half
+  // of the window that crosses the seam so the neighbouring display stays
+  // clean while the local display still shows the natural half-body peek.
+  containedBoundary = seamBoundary(wa, bounds.y + size.height / 2, miniEdge);
+  syncContainedClip();
 
   ctx.stopWakePoll();
 
@@ -172,39 +331,63 @@ function enterMiniMode(wa, viaMenu, edge) {
   miniTransitioning = true;
   ctx.buildContextMenu();
   ctx.buildTrayMenu();
+  syncSessionHudVisibility();
 
   const enterSvgState = ctx.doNotDisturb ? "mini-enter-sleep" : "mini-enter";
 
   if (viaMenu) {
-    const displays = screen.getAllDisplays();
+    const adjacent = containedBoundary != null;
     let jumpTarget;
-    if (miniEdge === "right") {
-      let maxRight = 0;
-      for (const d of displays) maxRight = Math.max(maxRight, d.bounds.x + d.bounds.width);
-      jumpTarget = maxRight;
+    if (adjacent) {
+      // Internal seam: skip fly-off-screen; arc lands at the contained mini X
+      // so the parabola never crosses onto the neighbouring display.
+      jumpTarget = currentMiniX;
     } else {
-      let minLeft = Infinity;
-      for (const d of displays) minLeft = Math.min(minLeft, d.bounds.x);
-      jumpTarget = minLeft - size.width;
+      const displays = screen.getAllDisplays();
+      if (miniEdge === "right") {
+        let maxRight = 0;
+        for (const d of displays) maxRight = Math.max(maxRight, d.bounds.x + d.bounds.width);
+        jumpTarget = maxRight;
+      } else {
+        let minLeft = Infinity;
+        for (const d of displays) minLeft = Math.min(minLeft, d.bounds.x);
+        jumpTarget = minLeft - size.width;
+      }
     }
     animateWindowParabola(jumpTarget, bounds.y, JUMP_DURATION, () => {
+      const enterDurationMs = getMiniEnterDurationMs(enterSvgState);
       ctx.applyState(enterSvgState);
+      if (MINI_ENTER_PRELOAD_MS <= 0) {
+        miniSnap = { y: bounds.y, width: size.width, height: size.height };
+        ctx.win.setBounds({ x: currentMiniX, y: miniSnap.y, width: miniSnap.width, height: miniSnap.height });
+        ctx.syncHitWin();
+        syncSessionHudVisibility();
+        syncContainedClip();
+        finishMiniEntry(enterDurationMs);
+        return;
+      }
       miniTransitionTimer = setTimeout(() => {
         miniSnap = { y: bounds.y, width: size.width, height: size.height };
         ctx.win.setBounds({ x: currentMiniX, y: miniSnap.y, width: miniSnap.width, height: miniSnap.height });
-        miniTransitionTimer = setTimeout(() => {
-          miniTransitioning = false;
-          ctx.applyState(ctx.doNotDisturb ? "mini-sleep" : "mini-idle");
-        }, 3200);
-      }, 300);
+        miniTransitionTimer = null;
+        ctx.syncHitWin();
+        syncSessionHudVisibility();
+        syncContainedClip();
+        finishMiniEntry(enterDurationMs);
+      }, MINI_ENTER_PRELOAD_MS);
     });
   } else {
-    animateWindowX(currentMiniX, 100);
-    ctx.applyState(enterSvgState);
-    miniTransitionTimer = setTimeout(() => {
-      miniTransitioning = false;
-      ctx.applyState(ctx.doNotDisturb ? "mini-sleep" : "mini-idle");
-    }, 3200);
+    // Drag path: slide the window into place first, then play mini-enter.
+    // Running the 100ms window slide concurrently with the ~960ms in-SVG
+    // body-slide used to cancel them out visually (opposite directions, 10×
+    // speed difference) — the body-slide became invisible and the pet
+    // looked frozen for ~1s before the arm wave. Sequencing them matches
+    // the via-menu path: window settles, then the full entry animation
+    // plays in place and reads clearly.
+    animateWindowX(currentMiniX, 100, () => {
+      ctx.applyState(enterSvgState);
+      finishMiniEntry(getMiniEnterDurationMs(enterSvgState));
+    });
   }
 }
 
@@ -221,7 +404,12 @@ function exitMiniMode() {
   miniPeeked = false;
 
   const size = _getSize();
-  const clamped = ctx.clampToScreen(preMiniX, preMiniY, size.width, size.height);
+  const visualState = ctx.doNotDisturb ? "idle" : ctx.resolveDisplayState();
+  const visualFile = visualState ? ctx.getSvgOverride(visualState) : null;
+  const clamped = ctx.clampToScreenVisual(preMiniX, preMiniY, size.width, size.height, {
+    state: visualState,
+    file: visualFile,
+  });
   const wa = ctx.getNearestWorkArea(clamped.x + size.width / 2, clamped.y + size.height / 2);
   const mEdge = Math.round(size.width * 0.25);
   // Prevent right-edge re-snap
@@ -236,10 +424,13 @@ function exitMiniMode() {
   animateWindowParabola(clamped.x, clamped.y, JUMP_DURATION, () => {
     miniMode = false;
     miniTransitioning = false;
+    containedBoundary = null;
+    ctx.sendToRenderer("mini-clip", null);
     ctx.sendToRenderer("mini-mode-change", false);
     ctx.sendToHitWin("hit-state-sync", { miniMode: false });
     ctx.buildContextMenu();
     ctx.buildTrayMenu();
+    syncSessionHudVisibility();
     if (ctx.doNotDisturb) {
       ctx.doNotDisturb = false;
       ctx.sendToRenderer("dnd-change", false);
@@ -255,6 +446,13 @@ function exitMiniMode() {
 }
 
 function enterMiniViaMenu() {
+  if (!themeSupportsMini()) return;
+  // preMini 存 virtual — 退出 mini 时能复原贴顶位置
+  const virtualBounds = ctx.getPetWindowBounds();
+  preMiniX = virtualBounds.x;
+  preMiniY = virtualBounds.y;
+  // 清零 viewport offset — 和 enterMiniMode 对称
+  if (typeof ctx.setViewportOffsetY === "function") ctx.setViewportOffsetY(0);
   const bounds = ctx.win.getBounds();
   const size = _getSize();
   const wa = ctx.getNearestWorkArea(bounds.x + size.width / 2, bounds.y + size.height / 2);
@@ -265,21 +463,25 @@ function enterMiniViaMenu() {
   const edge = centerX <= waMid ? "left" : "right";
   miniEdge = edge;
 
-  preMiniX = bounds.x;
-  preMiniY = bounds.y;
   miniTransitioning = true;
+  syncSessionHudVisibility();
 
-  // Send edge before crabwalk so CSS flip applies before animation starts
-  ctx.sendToRenderer("mini-mode-change", true, edge);
+  // Pre-entry crabwalk still uses the normal-size render/layout path. Send the
+  // edge for left-side flipping, but don't let the renderer enter mini layout
+  // until enterMiniMode() starts the real mini handoff.
+  ctx.sendToRenderer("mini-mode-change", true, edge, { preEntry: true });
   ctx.sendToHitWin("hit-state-sync", { miniMode: true });
 
   ctx.applyState("mini-crabwalk");
 
+  const adjacent = seamBoundary(wa, bounds.y + size.height / 2, edge) != null;
   let edgeX;
   if (edge === "right") {
-    edgeX = wa.x + wa.width - size.width + Math.round(size.width * 0.25);
+    edgeX = adjacent
+      ? wa.x + wa.width - size.width
+      : wa.x + wa.width - size.width + Math.round(size.width * 0.25);
   } else {
-    edgeX = wa.x - Math.round(size.width * 0.25);
+    edgeX = adjacent ? wa.x : wa.x - Math.round(size.width * 0.25);
   }
   const walkDist = Math.abs(bounds.x - edgeX);
   const walkDuration = walkDist / CRABWALK_SPEED;
@@ -290,27 +492,51 @@ function enterMiniViaMenu() {
   }, walkDuration + 50);
 }
 
+function refreshContainedBoundary(wa, yMid) {
+  containedBoundary = seamBoundary(wa, yMid, miniEdge);
+}
+
+// Internal-seam state for the hit (input) window. When non-null the hit
+// rect must be clipped to the same seam so the transparent input surface
+// does not keep capturing clicks over the neighbouring display.
+function getContainedSeam() {
+  if (containedBoundary == null) return null;
+  return { boundary: containedBoundary, edge: miniEdge };
+}
+
 function handleDisplayChange() {
   if (!ctx.win || ctx.win.isDestroyed()) return;
   if (!miniMode) return;
   const size = _getSize();
-  const snapY = miniSnap ? miniSnap.y : ctx.win.getBounds().y;
+  // mini 期间 offset 恒为 0,real === virtual,直接读 real
+  const bounds = ctx.win.getBounds();
+  const snapY = miniSnap ? miniSnap.y : bounds.y;
   const wa = ctx.getNearestWorkArea(currentMiniX + size.width / 2, snapY + size.height / 2);
+  lastMiniWorkArea = wa;
   currentMiniX = calcMiniX(wa, size);
+  // mini 的 y 必须在工作区内(real 坐标),加回两端 clamp
   const clampedY = Math.max(wa.y, Math.min(snapY, wa.y + wa.height - size.height));
   miniSnap = { y: clampedY, width: size.width, height: size.height };
   ctx.win.setBounds({ x: currentMiniX, y: clampedY, width: size.width, height: size.height });
+  refreshContainedBoundary(wa, clampedY + size.height / 2);
+  syncContainedClip();
+  syncSessionHudVisibility();
 }
 
 function handleResize(sizeKey) {
-  const size = ctx.SIZES[sizeKey] || _getSize();
   if (!miniMode) return false;
-  const { y } = ctx.win.getBounds();
-  const wa = ctx.getNearestWorkArea(currentMiniX + size.width / 2, y + size.height / 2);
+  const { y: curY } = ctx.win.getBounds();
+  const wa = lastMiniWorkArea || ctx.getNearestWorkArea(currentMiniX, curY);
+  const size = (typeof ctx.getPixelSizeFor === "function")
+    ? ctx.getPixelSizeFor(sizeKey, wa)
+    : ctx.SIZES[sizeKey];
   currentMiniX = calcMiniX(wa, size);
-  const clampedY = Math.max(wa.y, Math.min(y, wa.y + wa.height - size.height));
+  const clampedY = Math.max(wa.y, Math.min(curY, wa.y + wa.height - size.height));
   miniSnap = { y: clampedY, width: size.width, height: size.height };
   ctx.win.setBounds({ x: currentMiniX, y: clampedY, width: size.width, height: size.height });
+  refreshContainedBoundary(wa, clampedY + size.height / 2);
+  syncContainedClip();
+  syncSessionHudVisibility();
   return true;
 }
 
@@ -319,11 +545,20 @@ function restoreFromPrefs(prefs, size) {
   preMiniY = prefs.preMiniY || 0;
   miniEdge = prefs.miniEdge || "right";
   const wa = ctx.getNearestWorkArea(prefs.x + size.width / 2, prefs.y + size.height / 2);
+  lastMiniWorkArea = wa;
   currentMiniX = calcMiniX(wa, size);
+  // 启动恢复 mini 时 y 必须在工作区内(保证 offset = 0,符合 mini 语义)
   const startY = Math.max(wa.y, Math.min(prefs.y, wa.y + wa.height - size.height));
   miniSnap = { y: startY, width: size.width, height: size.height };
   miniMode = true;
-  return { x: currentMiniX, y: startY };
+  miniTransitioning = false;
+  miniSleepPeeked = false;
+  miniPeeked = false;
+  // Compute the seam state only — the render window does not exist yet at
+  // startup restore. The renderer clip is (re)sent by
+  // syncRendererStateAfterLoad() once the renderer has finished loading.
+  refreshContainedBoundary(wa, startY + size.height / 2);
+  return { x: currentMiniX, y: startY, width: size.width, height: size.height };
 }
 
 function getMiniMode() { return miniMode; }
@@ -349,6 +584,7 @@ return {
   miniPeekIn, miniPeekOut, checkMiniModeSnap, cancelMiniTransition,
   animateWindowX, animateWindowParabola,
   refreshTheme,
+  syncContainedClip, getContainedSeam,
   handleDisplayChange, handleResize, restoreFromPrefs,
   getMiniMode, getMiniEdge, getMiniTransitioning, getMiniSleepPeeked, setMiniSleepPeeked, getMiniPeeked, setMiniPeeked,
   getIsAnimating, getPreMiniX, getPreMiniY, getCurrentMiniX, getMiniSnap,

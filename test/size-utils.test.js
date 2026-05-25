@@ -3,9 +3,11 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const {
+  getLaunchPixelSize,
   getLaunchSizingWorkArea,
   getProportionalBasePx,
   getProportionalPixelSize,
+  getSavedPixelSize,
 } = require("../src/size-utils");
 
 describe("size utils", () => {
@@ -54,5 +56,37 @@ describe("size utils", () => {
     assert.deepStrictEqual(calls, [[2821, 761]]);
     assert.deepStrictEqual(picked, portrait);
     assert.deepStrictEqual(getProportionalPixelSize(15, picked), { width: 286, height: 286 });
+  });
+
+  it("restores the last realized pixel size when keep-size-across-displays is enabled", () => {
+    assert.deepStrictEqual(
+      getSavedPixelSize({ savedPixelWidth: 286, savedPixelHeight: 286 }),
+      { width: 286, height: 286 },
+    );
+    assert.deepStrictEqual(
+      getLaunchPixelSize(
+        { keepSizeAcrossDisplays: true, size: "P:15", savedPixelWidth: 286, savedPixelHeight: 286 },
+        { width: 500, height: 500 },
+      ),
+      { width: 286, height: 286 },
+    );
+  });
+
+  it("falls back to proportional launch sizing when no saved pixel size should apply", () => {
+    const fallback = { width: 500, height: 500 };
+    assert.strictEqual(
+      getLaunchPixelSize(
+        { keepSizeAcrossDisplays: false, size: "P:15", savedPixelWidth: 286, savedPixelHeight: 286 },
+        fallback,
+      ),
+      fallback,
+    );
+    assert.strictEqual(
+      getLaunchPixelSize(
+        { keepSizeAcrossDisplays: true, size: "P:15", savedPixelWidth: 0, savedPixelHeight: 286 },
+        fallback,
+      ),
+      fallback,
+    );
   });
 });

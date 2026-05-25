@@ -1,12 +1,13 @@
 {
   "_comment": "Clawd Theme Template — copy this folder to {userData}/themes/your-theme-id/ and customize",
+  "_scaffoldOnly": true,
 
   "schemaVersion": 1,
   "name": "My Theme",
   "author": "Your Name",
   "version": "1.0.0",
   "description": "A short description of your theme",
-  "license": "MIT",
+  "_comment_license": "Optional: if you add a license field, treat it as descriptive metadata only. It should describe assets you own and does not grant rights by itself.",
 
   "viewBox": {
     "_comment": "Logical canvas in SVG units. All assets should share this aspect ratio.",
@@ -26,7 +27,7 @@
   },
 
   "eyeTracking": {
-    "_comment": "Set enabled:true if your idle SVG has #eyes-js / #body-js / #shadow-js groups for cursor tracking.",
+    "_comment": "Set enabled:true only for states that really need cursor tracking. Only eyeTracking.states entries must be SVG.",
     "enabled": true,
     "states": ["idle"],
     "eyeRatioX": 0.5,
@@ -44,18 +45,24 @@
   },
 
   "states": {
-    "_comment": "Each state maps to an array of filenames in assets/. SVG, GIF, APNG, WebP all work. Only eyeTracking.states entries MUST be SVG.",
+    "_comment": "Each state can be an array of filenames or an object like { files: [...], fallbackTo: \"attention\" }. SVG, GIF, APNG, WebP, PNG, JPG, JPEG all work. Only eyeTracking.states entries MUST be SVG.",
     "idle":         ["idle-follow.svg"],
     "thinking":     ["thinking.gif"],
     "working":      ["typing.gif"],
-    "error":        ["error.gif"],
+    "juggling":     ["juggling.gif"],
+    "error":        { "fallbackTo": "attention" },
     "attention":    ["happy.gif"],
     "notification": ["notification.gif"],
     "sleeping":     ["sleeping.gif"],
     "waking":       ["waking.gif"]
   },
 
-  "_comment_optional_states": "These states are optional. If omitted, Clawd falls back to idle/sleeping automatically.",
+  "_comment_optional_states": "Optional extras. fallbackTo is only allowed on error / attention / notification / sweeping / carrying / sleeping. Omit other optional states only if you are okay with them visually degrading to idle.",
+
+  "sleepSequence": {
+    "_comment": "full = yawning/dozing/collapsing/waking all need real files. direct = go straight to sleeping after mouseSleepTimeout; waking becomes optional.",
+    "mode": "direct"
+  },
 
   "workingTiers": [
     { "_comment": "Show different animations based on concurrent session count", "minSessions": 3, "file": "building.gif" },
@@ -63,8 +70,13 @@
     { "minSessions": 1, "file": "typing.gif" }
   ],
 
+  "jugglingTiers": [
+    { "_comment": "Optional subagent-specific overrides. Omit this whole block to use states.juggling[0] if you provide that state.", "minSessions": 2, "file": "conducting.gif" },
+    { "minSessions": 1, "file": "juggling.gif" }
+  ],
+
   "idleAnimations": [
-    { "_comment": "Random animations played during idle. duration in ms.", "file": "idle-look.gif", "duration": 6500 }
+    { "_comment": "Random animations played during idle. Omit this whole array (or leave it empty) to keep idle on states.idle[0]. duration in ms.", "file": "idle-look.gif", "duration": 6500 }
   ],
 
   "timings": {
@@ -81,7 +93,7 @@
   "sleepingHitboxFiles": ["sleeping.gif"],
 
   "reactions": {
-    "_comment": "Click/drag reaction animations. All optional — omit the whole block to disable reactions.",
+    "_comment": "Click/drag reaction animations. Omit the whole block to disable click and drag reactions.",
     "drag":       { "file": "react-drag.gif" },
     "clickLeft":  { "file": "react-left.gif",  "duration": 2500 },
     "clickRight": { "file": "react-right.gif", "duration": 2500 },
@@ -95,7 +107,7 @@
   },
 
   "miniMode": {
-    "_comment": "Set supported:false (or remove this block entirely) to disable mini mode for your theme.",
+    "_comment": "Set supported:false (or remove this block entirely) to disable mini mode. If supported=true, validator expects all 8 mini states.",
     "supported": false
   },
 

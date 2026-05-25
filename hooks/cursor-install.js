@@ -5,8 +5,15 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { resolveNodeBin } = require("./server-config");
-const { writeJsonAtomic, asarUnpackedPath, extractExistingNodeBin } = require("./json-utils");
+const {
+  writeJsonAtomic,
+  asarUnpackedPath,
+  extractExistingNodeBin,
+  formatNodeHookCommand,
+} = require("./json-utils");
 const MARKER = "cursor-hook.js";
+const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".cursor");
+const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "hooks.json");
 
 const CURSOR_HOOK_EVENTS = [
   "sessionStart",
@@ -22,15 +29,26 @@ const CURSOR_HOOK_EVENTS = [
   "stop",
 ];
 
+function buildCursorHookCommand(nodeBin, hookScript, platform = process.platform) {
+  // Cursor's Windows hook launcher is more reliable when the command goes
+  // through cmd.exe explicitly instead of invoking node directly.
+  return formatNodeHookCommand(nodeBin, hookScript, {
+    platform,
+    windowsWrapper: "cmd",
+  });
+}
+
 /**
  * Register Clawd hooks into ~/.cursor/hooks.json
  * @param {object} [options]
  * @param {boolean} [options.silent]
  * @param {string} [options.hooksPath]
+ * @param {string} [options.homeDir] internal override for tests
  * @returns {{ added: number, skipped: number, updated: number }}
  */
 function registerCursorHooks(options = {}) {
-  const hooksPath = options.hooksPath || path.join(os.homedir(), ".cursor", "hooks.json");
+  const homeDir = options.homeDir || os.homedir();
+  const hooksPath = options.hooksPath || path.join(homeDir, ".cursor", "hooks.json");
 
   // Skip if ~/.cursor/ doesn't exist (Cursor not installed) — unless caller overrides path
   if (!options.hooksPath) {
@@ -58,7 +76,11 @@ function registerCursorHooks(options = {}) {
   const nodeBin = resolved
     || extractExistingNodeBin(settings, MARKER)
     || "node";
-  const desiredCommand = `"${nodeBin}" "${hookScript}"`;
+  const desiredCommand = buildCursorHookCommand(
+    nodeBin,
+    hookScript,
+    options.platform || process.platform
+  );
 
   if (!settings.hooks || typeof settings.hooks !== "object") settings.hooks = {};
   if (typeof settings.version !== "number") settings.version = 1;
@@ -115,7 +137,13 @@ function registerCursorHooks(options = {}) {
   return { added, skipped, updated };
 }
 
-module.exports = { registerCursorHooks, CURSOR_HOOK_EVENTS };
+module.exports = {
+  DEFAULT_PARENT_DIR,
+  DEFAULT_CONFIG_PATH,
+  registerCursorHooks,
+  CURSOR_HOOK_EVENTS,
+  buildCursorHookCommand,
+};
 
 if (require.main === module) {
   try {

@@ -9,6 +9,8 @@ const { resolveNodeBin, buildPermissionUrl, DEFAULT_SERVER_PORT, readRuntimePort
 const { writeJsonAtomic, asarUnpackedPath, extractExistingNodeBin } = require("./json-utils");
 const MARKER = "codebuddy-hook.js";
 const HTTP_MARKER = "/permission";
+const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".codebuddy");
+const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "settings.json");
 
 // CodeBuddy supported hook events (as of v1.16+)
 const CODEBUDDY_HOOK_EVENTS = [
@@ -169,7 +171,12 @@ function registerCodeBuddyHooks(options = {}) {
   return { added, skipped, updated };
 }
 
-module.exports = { registerCodeBuddyHooks, CODEBUDDY_HOOK_EVENTS };
+module.exports = {
+  DEFAULT_PARENT_DIR,
+  DEFAULT_CONFIG_PATH,
+  registerCodeBuddyHooks,
+  CODEBUDDY_HOOK_EVENTS,
+};
 
 if (require.main === module) {
   try {

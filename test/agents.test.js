@@ -21,7 +21,7 @@ const state = require("../src/state.js")({
   sendToHitWin: () => {}, miniPeekIn: () => {}, miniPeekOut: () => {},
   buildContextMenu: () => {}, buildTrayMenu: () => {},
   pendingPermissions: [], resolvePermissionEntry: () => {},
-  t: (k) => k, showSessionId: false, focusTerminalWindow: () => {},
+  t: (k) => k, focusTerminalWindow: () => {},
 });
 
 const VALID_STATES = new Set(Object.keys(state.STATE_PRIORITY));
@@ -129,6 +129,13 @@ describe("Agent config modules — data integrity", () => {
     const codex = agents.find((a) => a.id === "codex");
     assert.ok(codex);
     assert.strictEqual(codex.capabilities.interactiveBubble, true);
+  });
+
+  it("pi is state-only and does not expose a bubble sub-toggle", () => {
+    const pi = agents.find((a) => a.id === "pi");
+    assert.ok(pi);
+    assert.strictEqual(pi.capabilities.permissionApproval, false);
+    assert.strictEqual(pi.capabilities.interactiveBubble, false);
   });
 
 });

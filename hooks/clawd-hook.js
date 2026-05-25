@@ -3,8 +3,145 @@
 // Usage: node clawd-hook.js <event_name>
 // Reads stdin JSON from Claude Code for session_id
 
+const crypto = require("crypto");
+const fs = require("fs");
 const { postStateToRunningServer, readHostPrefix } = require("./server-config");
 const { createPidResolver, readStdinJson, getPlatformConfig } = require("./shared-process");
+
+const TRANSCRIPT_TAIL_BYTES = 262144; // 256 KB
+const SESSION_TITLE_CONTROL_RE = /[\u0000-\u001F\u007F-\u009F]+/g;
+const SESSION_TITLE_MAX = 80;
+const PROMPT_TITLE_MAX = 40;
+const PROMPT_TITLE_SECRET_RE =
+  /\b(api[_-]?key|authorization|bearer|password|passwd|private[_-]?key|secret|token)\b|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|[A-Za-z0-9+/=_-]{32,}/i;
+const TOOL_MATCH_STRING_MAX = 240;
+const TOOL_MATCH_ARRAY_MAX = 16;
+const TOOL_MATCH_OBJECT_KEYS_MAX = 32;
+const TOOL_MATCH_DEPTH_MAX = 6;
+
+function normalizeTitle(value) {
+  if (typeof value !== "string") return null;
+  const collapsed = value
+    .replace(SESSION_TITLE_CONTROL_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!collapsed) return null;
+  return collapsed.length > SESSION_TITLE_MAX
+    ? `${collapsed.slice(0, SESSION_TITLE_MAX - 1)}\u2026`
+    : collapsed;
+}
+
+function normalizeTitleWithMax(value, maxLen) {
+  const title = normalizeTitle(value);
+  if (!title || title.length <= maxLen) return title;
+  return `${title.slice(0, maxLen - 1)}\u2026`;
+}
+
+function looksSecretishPromptTitle(value) {
+  if (typeof value !== "string") return false;
+  return PROMPT_TITLE_SECRET_RE.test(value);
+}
+
+function extractPromptTitle(prompt) {
+  if (typeof prompt !== "string") return null;
+  for (const line of prompt.split(/\r?\n/)) {
+    const candidate = line.trim();
+    if (!candidate) continue;
+    if (looksSecretishPromptTitle(candidate)) return null;
+    return normalizeTitleWithMax(candidate, PROMPT_TITLE_MAX);
+  }
+  return null;
+}
+
+// Read the tail of a Claude Code transcript JSONL and return the most recent
+// user-set session title (custom-title / agent-name events). Returns null if
+// the file is missing/unreadable or no title events are found.
+function extractSessionTitleFromTranscript(transcriptPath) {
+  if (typeof transcriptPath !== "string" || !transcriptPath) return null;
+
+  let data;
+  let truncated = false;
+  let fd = null;
+  try {
+    const stat = fs.statSync(transcriptPath);
+    fd = fs.openSync(transcriptPath, "r");
+    const readLen = Math.min(stat.size, TRANSCRIPT_TAIL_BYTES);
+    truncated = stat.size > readLen;
+    const buf = Buffer.alloc(readLen);
+    fs.readSync(fd, buf, 0, readLen, Math.max(0, stat.size - readLen));
+    data = buf.toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch {}
+    }
+  }
+
+  const lines = data.split("\n");
+  // If we read a tail of a larger file, the first line is likely a truncated
+  // JSON fragment — drop it so JSON.parse doesn't fail noisily on it.
+  if (truncated && lines.length > 1) lines.shift();
+
+  let latest = null;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (!obj || typeof obj !== "object") continue;
+    const type = typeof obj.type === "string" ? obj.type : "";
+    if (type !== "custom-title" && type !== "agent-name") continue;
+    latest =
+      normalizeTitle(obj.customTitle) ||
+      normalizeTitle(obj.title) ||
+      normalizeTitle(obj.custom_title) ||
+      normalizeTitle(obj.agentName) ||
+      normalizeTitle(obj.agent_name) ||
+      latest;
+  }
+  return latest;
+}
+
+function normalizeToolUseId(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeToolMatchValue(value, depth = 0) {
+  if (depth > TOOL_MATCH_DEPTH_MAX) return null;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, TOOL_MATCH_ARRAY_MAX)
+      .map((entry) => normalizeToolMatchValue(entry, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort().slice(0, TOOL_MATCH_OBJECT_KEYS_MAX)) {
+      out[key] = normalizeToolMatchValue(value[key], depth + 1);
+    }
+    return out;
+  }
+  if (typeof value === "string") {
+    return value.length > TOOL_MATCH_STRING_MAX
+      ? `${value.slice(0, TOOL_MATCH_STRING_MAX - 1)}…`
+      : value;
+  }
+  return value;
+}
+
+function buildToolInputFingerprint(toolInput) {
+  if (!toolInput || typeof toolInput !== "object") return null;
+  const normalized = normalizeToolMatchValue(toolInput);
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify(normalized))
+    .digest("hex");
+}
+
+function shouldReportForegroundWtHwnd(event) {
+  return event === "SessionStart" || event === "UserPromptSubmit";
+}
 
 const EVENT_TO_STATE = {
   SessionStart: "idle",
@@ -25,61 +162,102 @@ const EVENT_TO_STATE = {
   WorktreeCreate: "carrying",
 };
 
-const event = process.argv[2];
-const state = EVENT_TO_STATE[event];
-if (!state) process.exit(0);
+function isTaskToolStart(event, payload) {
+  // Claude Code may report subagent launches as PreToolUse(Task) without a
+  // matching SubagentStart. Keep PostToolUse(Task) as a normal working update:
+  // state.js holds juggling through working events and releases it on a later
+  // Stop/UserPromptSubmit, or on a real SubagentStop if Claude emits one.
+  return event === "PreToolUse"
+    && payload
+    && typeof payload.tool_name === "string"
+    && payload.tool_name === "Task";
+}
 
-const config = getPlatformConfig();
-const resolve = createPidResolver({
-  agentNames: { win: new Set(["claude.exe"]), mac: new Set(["claude"]) },
-  agentCmdlineCheck: (cmd) => cmd.includes("claude-code") || cmd.includes("@anthropic-ai"),
-  platformConfig: config,
-});
+function buildStateBody(event, payload, resolve) {
+  const state = EVENT_TO_STATE[event];
+  if (!state) return null;
 
-// Pre-resolve on SessionStart (runs during stdin buffering, not after)
-// Remote mode: skip PID collection — remote PIDs are meaningless on the local machine
-if (event === "SessionStart" && !process.env.CLAWD_REMOTE) resolve();
-
-readStdinJson().then((payload) => {
   const sessionId = payload.session_id || "default";
   const cwd = payload.cwd || "";
   const source = payload.source || payload.reason || "";
+  const syntheticSubagentStart = isTaskToolStart(event, payload);
 
   // /clear triggers SessionEnd → SessionStart in quick succession;
   // show sweeping (clearing context) instead of sleeping
-  const resolvedState = (event === "SessionEnd" && source === "clear") ? "sweeping" : state;
+  const resolvedState = syntheticSubagentStart
+    ? "juggling"
+    : ((event === "SessionEnd" && source === "clear") ? "sweeping" : state);
+  const resolvedEvent = syntheticSubagentStart ? "SubagentStart" : event;
 
-  const body = { state: resolvedState, session_id: sessionId, event };
+  const body = { state: resolvedState, session_id: sessionId, event: resolvedEvent };
   body.agent_id = "claude-code";
   if (cwd) body.cwd = cwd;
+  const toolName = typeof payload.tool_name === "string" && payload.tool_name ? payload.tool_name : null;
+  const toolUseId = normalizeToolUseId(payload.tool_use_id ?? payload.toolUseId ?? payload.toolUseID);
+  const toolInputFingerprint = buildToolInputFingerprint(
+    payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input : null
+  );
+  if (toolName) body.tool_name = toolName;
+  if (toolUseId) body.tool_use_id = toolUseId;
+  if (toolInputFingerprint) body.tool_input_fingerprint = toolInputFingerprint;
+  // Session title: prefer payload field, fall back to scanning the transcript
+  // tail for user-set custom-title / agent-name events
+  const sessionTitle =
+    normalizeTitle(payload.session_title) ||
+    extractSessionTitleFromTranscript(payload.transcript_path);
+  if (sessionTitle) body.session_title = sessionTitle;
+  if (event === "UserPromptSubmit" && !body.session_title) {
+    const promptTitle = extractPromptTitle(payload.prompt);
+    if (promptTitle) body.session_title = promptTitle;
+  }
   if (process.env.CLAWD_REMOTE) {
     body.host = readHostPrefix();
   } else {
-    const { stablePid, agentPid, detectedEditor, pidChain } = resolve();
+    const { stablePid, agentPid, agentCommandLine, detectedEditor, pidChain, foregroundWtHwnd } = resolve();
     body.source_pid = stablePid;
     if (detectedEditor) body.editor = detectedEditor;
     if (agentPid) {
       body.agent_pid = agentPid;
       body.claude_pid = agentPid; // backward compat with older Clawd versions
-      // Check if claude process is running in non-interactive (-p/--print) mode
-      try {
-        const { execSync } = require("child_process");
-        const isWin = process.platform === "win32";
-        const cmdOut = isWin
-          ? execSync(
-              `wmic process where "ProcessId=${agentPid}" get CommandLine /format:csv`,
-              { encoding: "utf8", timeout: 500, windowsHide: true }
-            )
-          : execSync(`ps -o command= -p ${agentPid}`, { encoding: "utf8", timeout: 500 });
-        if (/\s(-p|--print)(\s|$)/.test(cmdOut)) body.headless = true;
-      } catch {}
+      if (agentCommandLine && /\s(-p|--print)(\s|$)/.test(agentCommandLine)) {
+        body.headless = true;
+      }
     }
     if (pidChain.length) body.pid_chain = pidChain;
+    if (shouldReportForegroundWtHwnd(event) && foregroundWtHwnd) {
+      body.wt_hwnd = String(foregroundWtHwnd);
+    }
   }
 
-  postStateToRunningServer(
-    JSON.stringify(body),
-    { timeoutMs: 100 },
-    () => process.exit(0)
-  );
-});
+  return body;
+}
+
+function main() {
+  const event = process.argv[2];
+  if (!EVENT_TO_STATE[event]) process.exit(0);
+
+  const config = getPlatformConfig();
+  const resolve = createPidResolver({
+    agentNames: { win: new Set(["claude.exe"]), mac: new Set(["claude"]) },
+    agentCmdlineCheck: (cmd) => cmd.includes("claude-code") || cmd.includes("@anthropic-ai"),
+    platformConfig: config,
+  });
+
+  // Pre-resolve on SessionStart (runs during stdin buffering, not after)
+  // Remote mode: skip PID collection — remote PIDs are meaningless on the local machine
+  if (event === "SessionStart" && !process.env.CLAWD_REMOTE) resolve();
+
+  readStdinJson().then((payload) => {
+    const body = buildStateBody(event, payload || {}, resolve);
+    if (!body) process.exit(0);
+    postStateToRunningServer(
+      JSON.stringify(body),
+      { timeoutMs: 100 },
+      () => process.exit(0)
+    );
+  });
+}
+
+if (require.main === module) main();
+
+module.exports = { buildStateBody, extractSessionTitleFromTranscript };

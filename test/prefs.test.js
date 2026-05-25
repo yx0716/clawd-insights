@@ -29,6 +29,9 @@ describe("prefs.getDefaults", () => {
     assert.notStrictEqual(a, b);
     assert.notStrictEqual(a.agents, b.agents);
     assert.notStrictEqual(a.themeOverrides, b.themeOverrides);
+    assert.notStrictEqual(a.shortcuts, b.shortcuts);
+    assert.notStrictEqual(a.sessionAliases, b.sessionAliases);
+    assert.notStrictEqual(a.tgApproval, b.tgApproval);
     // Mutating one shouldn't affect the other
     a.agents["claude-code"].enabled = false;
     assert.strictEqual(b.agents["claude-code"].enabled, true);
@@ -39,22 +42,92 @@ describe("prefs.getDefaults", () => {
     assert.strictEqual(d.version, prefs.CURRENT_VERSION);
   });
 
+  it("defaults Claude hook management on and Start with Claude off", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.manageClaudeHooksAutomatically, true);
+    assert.strictEqual(d.autoStartWithClaude, false);
+    assert.strictEqual(d.lowPowerIdleMode, false);
+    assert.strictEqual(d.allowEdgePinning, false);
+    assert.strictEqual(d.keepSizeAcrossDisplays, false);
+    assert.strictEqual(d.sessionHudEnabled, true);
+    assert.strictEqual(d.sessionHudShowStateLabels, true);
+    assert.strictEqual(d.sessionHudShowElapsed, true);
+    assert.strictEqual(d.sessionHudCleanupDetached, false);
+    assert.strictEqual(d.sessionHudAutoHide, true);
+    assert.strictEqual(d.sessionHudPinned, false);
+    assert.strictEqual(d.savedPixelWidth, 0);
+    assert.strictEqual(d.savedPixelHeight, 0);
+    assert.strictEqual(d.permissionBubblesEnabled, true);
+    assert.strictEqual(d.notificationBubbleAutoCloseSeconds, 6);
+    assert.strictEqual(d.updateBubbleAutoCloseSeconds, 9);
+    assert.deepStrictEqual(d.sessionAliases, {});
+    assert.deepStrictEqual(d.tgApproval, {
+      enabled: false,
+      allowedTgUserId: "",
+      targetSessionKey: "",
+    });
+  });
+
   it("seeds all known agents as enabled", () => {
     const d = prefs.getDefaults();
-    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "opencode"]) {
+    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "antigravity-cli", "codebuddy", "kiro-cli", "kimi-cli", "opencode", "pi", "openclaw", "hermes"]) {
       assert.strictEqual(d.agents[id].enabled, true, `${id} should default enabled`);
     }
   });
 
-  it("seeds all known agents with permissionsEnabled=true", () => {
+  it("seeds permission-capable agents with permissionsEnabled=true", () => {
     const d = prefs.getDefaults();
-    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "opencode"]) {
+    // State-only integrations intentionally excluded — no bubble.
+    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "kimi-cli", "opencode"]) {
       assert.strictEqual(
         d.agents[id].permissionsEnabled,
         true,
         `${id} should default permissionsEnabled`
       );
     }
+    for (const id of ["antigravity-cli", "pi", "openclaw"]) {
+      assert.strictEqual(
+        d.agents[id].permissionsEnabled,
+        false,
+        `${id} is state-only, permissionsEnabled must default to false`
+      );
+    }
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(d.agents.hermes, "permissionsEnabled"),
+      false,
+      "hermes should not expose a dead permissionsEnabled switch"
+    );
+  });
+
+  it("defaults OpenClaw permission bubbles off", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.agents.openclaw.enabled, true);
+    assert.strictEqual(d.agents.openclaw.permissionsEnabled, false);
+    assert.strictEqual(d.agents.openclaw.notificationHookEnabled, true);
+  });
+
+  it("defaults Pi permission bubbles off", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.agents.pi.enabled, true);
+    assert.strictEqual(d.agents.pi.permissionsEnabled, false);
+    assert.strictEqual(d.agents.pi.notificationHookEnabled, true);
+  });
+
+  it("defaults Codex permissions to intercept mode", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.agents.codex.permissionMode, "intercept");
+  });
+
+  it("defaults Hardware Buddy to disabled state-only BLE", () => {
+    const d = prefs.getDefaults();
+    assert.deepStrictEqual(d.hardwareBuddy, {
+      enabled: false,
+      backend: "bleak",
+      address: "",
+      namePrefix: "Clawstick",
+      permissionsEnabled: false,
+      quickCommandsEnabled: false,
+    });
   });
 });
 
@@ -63,32 +136,167 @@ describe("prefs.validate", () => {
     const v = prefs.validate({
       lang: "klingon",       // not in enum
       soundMuted: "yes",     // wrong type
+      soundVolume: 2,        // out of range → default 1
+      lowPowerIdleMode: "yes",
       x: NaN,                // not finite
       bubbleFollowPet: true, // ok
+      sessionHudEnabled: "yes",
+      sessionHudShowStateLabels: "yes",
+      sessionHudShowElapsed: "yes",
+      sessionHudCleanupDetached: "yes",
       hideBubbles: 0,        // wrong type
+      permissionBubblesEnabled: "yes",
+      notificationBubbleAutoCloseSeconds: -1,
+      updateBubbleAutoCloseSeconds: 3601,
+      allowEdgePinning: "yes",
+      savedPixelWidth: -1,
+      savedPixelHeight: "286",
     });
     const d = prefs.getDefaults();
     assert.strictEqual(v.lang, d.lang);
     assert.strictEqual(v.soundMuted, false);
+    assert.strictEqual(v.soundVolume, 1);
+    assert.strictEqual(v.lowPowerIdleMode, false);
     assert.strictEqual(v.x, 0);
     assert.strictEqual(v.bubbleFollowPet, true);
+    assert.strictEqual(v.sessionHudEnabled, true);
+    assert.strictEqual(v.sessionHudShowStateLabels, true);
+    assert.strictEqual(v.sessionHudShowElapsed, true);
+    assert.strictEqual(v.sessionHudCleanupDetached, false);
     assert.strictEqual(v.hideBubbles, false);
+    assert.strictEqual(v.permissionBubblesEnabled, true);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 6);
+    assert.strictEqual(v.updateBubbleAutoCloseSeconds, 9);
+    assert.strictEqual(v.allowEdgePinning, false);
+    assert.strictEqual(v.savedPixelWidth, 0);
+    assert.strictEqual(v.savedPixelHeight, 0);
+  });
+
+  it("backfills split bubble prefs from legacy hideBubbles=true", () => {
+    const v = prefs.validate(prefs.migrate({ hideBubbles: true }));
+    assert.strictEqual(v.hideBubbles, true);
+    assert.strictEqual(v.permissionBubblesEnabled, false);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 0);
+    assert.strictEqual(v.updateBubbleAutoCloseSeconds, 0);
+  });
+
+  it("backfills split bubble prefs from legacy hideBubbles=false", () => {
+    const v = prefs.validate(prefs.migrate({ hideBubbles: false }));
+    assert.strictEqual(v.hideBubbles, false);
+    assert.strictEqual(v.permissionBubblesEnabled, true);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 6);
+    assert.strictEqual(v.updateBubbleAutoCloseSeconds, 9);
+  });
+
+  it("preserves explicit split bubble prefs during legacy backfill", () => {
+    const v = prefs.validate(prefs.migrate({
+      hideBubbles: true,
+      permissionBubblesEnabled: true,
+      notificationBubbleAutoCloseSeconds: 12,
+      updateBubbleAutoCloseSeconds: 8,
+    }));
+    assert.strictEqual(v.permissionBubblesEnabled, true);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 12);
+    assert.strictEqual(v.updateBubbleAutoCloseSeconds, 8);
+  });
+
+  it("upgrades legacy default notification bubble duration during v3 migration", () => {
+    const v = prefs.validate(prefs.migrate({
+      version: 2,
+      hideBubbles: false,
+      notificationBubbleAutoCloseSeconds: 3,
+    }));
+    assert.strictEqual(v.version, prefs.CURRENT_VERSION);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 6);
+  });
+
+  it("preserves explicit notification bubble duration during v3 migration", () => {
+    const v = prefs.validate(prefs.migrate({
+      version: 2,
+      hideBubbles: false,
+      notificationBubbleAutoCloseSeconds: 12,
+    }));
+    assert.strictEqual(v.version, prefs.CURRENT_VERSION);
+    assert.strictEqual(v.notificationBubbleAutoCloseSeconds, 12);
+  });
+
+  it("resets existing Pi permission prefs during v4 migration", () => {
+    const v = prefs.validate(prefs.migrate({
+      version: 3,
+      agents: {
+        pi: { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      },
+    }));
+
+    assert.strictEqual(v.version, prefs.CURRENT_VERSION);
+    assert.strictEqual(v.agents.pi.enabled, true);
+    assert.strictEqual(v.agents.pi.permissionsEnabled, false);
+    assert.strictEqual(v.agents.pi.notificationHookEnabled, true);
+  });
+
+  it("defaults missing Pi permission prefs off during migration", () => {
+    const v = prefs.validate(prefs.migrate({
+      version: 1,
+      agents: {
+        pi: { enabled: true, notificationHookEnabled: true },
+      },
+    }));
+
+    assert.strictEqual(v.version, prefs.CURRENT_VERSION);
+    assert.strictEqual(v.agents.pi.permissionsEnabled, false);
+  });
+
+  it("normalizes Telegram approval prefs without storing a token", () => {
+    const v = prefs.validate({
+      tgApproval: {
+        enabled: true,
+        allowedTgUserId: " 123456789 ",
+        targetSessionKey: "987654321",
+        botToken: "123:should-not-survive",
+      },
+    });
+    assert.deepStrictEqual(v.tgApproval, {
+      enabled: true,
+      allowedTgUserId: "123456789",
+      targetSessionKey: "telegram:987654321",
+    });
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(v.tgApproval, "botToken"), false);
   });
 
   it("keeps valid fields verbatim", () => {
     const v = prefs.validate({
-      lang: "zh",
+      lang: "ko",
       soundMuted: true,
+      soundVolume: 0.4,
+      lowPowerIdleMode: true,
       bubbleFollowPet: true,
+      sessionHudEnabled: false,
+      sessionHudShowStateLabels: false,
+      sessionHudShowElapsed: false,
+      sessionHudCleanupDetached: true,
+      allowEdgePinning: true,
+      keepSizeAcrossDisplays: true,
+      savedPixelWidth: 286,
+      savedPixelHeight: 286,
       x: 100,
       y: -50,
       size: "P:15",
       miniEdge: "left",
       theme: "calico",
     });
-    assert.strictEqual(v.lang, "zh");
+    assert.strictEqual(v.lang, "ko");
     assert.strictEqual(v.soundMuted, true);
+    assert.strictEqual(v.soundVolume, 0.4);
+    assert.strictEqual(v.lowPowerIdleMode, true);
     assert.strictEqual(v.bubbleFollowPet, true);
+    assert.strictEqual(v.sessionHudEnabled, false);
+    assert.strictEqual(v.sessionHudShowStateLabels, false);
+    assert.strictEqual(v.sessionHudShowElapsed, false);
+    assert.strictEqual(v.sessionHudCleanupDetached, true);
+    assert.strictEqual(v.allowEdgePinning, true);
+    assert.strictEqual(v.keepSizeAcrossDisplays, true);
+    assert.strictEqual(v.savedPixelWidth, 286);
+    assert.strictEqual(v.savedPixelHeight, 286);
     assert.strictEqual(v.x, 100);
     assert.strictEqual(v.y, -50);
     assert.strictEqual(v.size, "P:15");
@@ -96,29 +304,9 @@ describe("prefs.validate", () => {
     assert.strictEqual(v.theme, "calico");
   });
 
-  it("keeps dashboard AI config fields", () => {
-    const v = prefs.validate({
-      aiConfig: {
-        provider: "openai",        // legacy — stripped by normalizeAIConfig at v3
-        defaultAnalysisProvider: "codex",
-        apiKey: "sk-test",         // legacy — stripped
-        baseUrl: "https://example.com/v1", // legacy — stripped
-        model: "gpt-test",         // legacy — stripped
-        customCliPaths: {
-          claude: "/usr/local/bin/claude",
-          codex: "/usr/local/bin/codex",
-        },
-        ignored: true,
-      },
-    });
-    // Only non-legacy fields survive normalizeAIConfig
-    assert.deepStrictEqual(v.aiConfig, {
-      defaultAnalysisProvider: "codex",
-      customCliPaths: {
-        claude: "/usr/local/bin/claude",
-        codex: "/usr/local/bin/codex",
-      },
-    });
+  it("accepts soundVolume 0 (silent playback is valid)", () => {
+    const v = prefs.validate({ soundVolume: 0 });
+    assert.strictEqual(v.soundVolume, 0);
   });
 
   it("normalizes agents (drops malformed entries)", () => {
@@ -170,6 +358,86 @@ describe("prefs.validate", () => {
     assert.strictEqual(v.agents["claude-code"].permissionsEnabled, true);
   });
 
+  it("normalizes agents: strips Hermes permission/notification flags until implemented", () => {
+    const v = prefs.validate({
+      agents: {
+        hermes: { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      },
+    });
+    assert.deepStrictEqual(v.agents.hermes, { enabled: true });
+  });
+
+  it("normalizes agents: preserves Antigravity permission flag but strips notification flag", () => {
+    const v = prefs.validate({
+      agents: {
+        "antigravity-cli": { enabled: false, permissionsEnabled: false, notificationHookEnabled: true },
+      },
+    });
+    assert.deepStrictEqual(v.agents["antigravity-cli"], { enabled: false, permissionsEnabled: false });
+  });
+
+  it("normalizes agents: preserves notificationHookEnabled flag", () => {
+    const v = prefs.validate({
+      agents: {
+        "claude-code": { enabled: true, notificationHookEnabled: false },
+      },
+    });
+    assert.strictEqual(v.agents["claude-code"].enabled, true);
+    assert.strictEqual(v.agents["claude-code"].notificationHookEnabled, false);
+  });
+
+  it("normalizes agents: preserves valid Codex permissionMode", () => {
+    const v = prefs.validate({
+      agents: {
+        codex: { enabled: true, permissionMode: "intercept" },
+      },
+    });
+    assert.strictEqual(v.agents.codex.enabled, true);
+    assert.strictEqual(v.agents.codex.permissionMode, "intercept");
+  });
+
+  it("normalizes agents: drops invalid Codex permissionMode to intercept", () => {
+    const v = prefs.validate({
+      agents: {
+        codex: { enabled: true, permissionMode: "auto" },
+      },
+    });
+    assert.strictEqual(v.agents.codex.permissionMode, "intercept");
+  });
+
+  it("normalizes agents: fills missing notificationHookEnabled from defaults", () => {
+    // Pre-flag prefs files don't carry notificationHookEnabled. The default
+    // must be true so an upgrade doesn't silently suppress idle notifications
+    // on users who never opted in.
+    const v = prefs.validate({
+      agents: {
+        "claude-code": { enabled: true, permissionsEnabled: false },
+      },
+    });
+    assert.strictEqual(v.agents["claude-code"].notificationHookEnabled, true);
+  });
+
+  it("seeds all known agents with notificationHookEnabled=true", () => {
+    const d = prefs.getDefaults();
+    for (const id of ["claude-code", "codex", "copilot-cli", "cursor-agent", "gemini-cli", "codebuddy", "kiro-cli", "opencode", "pi", "openclaw"]) {
+      assert.strictEqual(
+        d.agents[id].notificationHookEnabled,
+        true,
+        `${id} should default notificationHookEnabled`
+      );
+    }
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(d.agents.hermes, "notificationHookEnabled"),
+      false,
+      "hermes should not expose a dead notificationHookEnabled switch"
+    );
+    assert.strictEqual(
+      Object.prototype.hasOwnProperty.call(d.agents["antigravity-cli"], "notificationHookEnabled"),
+      false,
+      "antigravity-cli should not expose a dead notificationHookEnabled switch"
+    );
+  });
+
   it("returns defaults for null/non-object input", () => {
     const a = prefs.validate(null);
     const b = prefs.validate("not an object");
@@ -177,13 +445,225 @@ describe("prefs.validate", () => {
     assert.deepStrictEqual(a, d);
     assert.deepStrictEqual(b, d);
   });
+
+  it("positionDisplay defaults to null and round-trips a valid snapshot", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.positionDisplay, null);
+
+    const v = prefs.validate({
+      positionDisplay: {
+        id: 42,
+        scaleFactor: 2,
+        bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+        workArea: { x: 0, y: 0, width: 2560, height: 1392 },
+        stray: "ignored",
+      },
+    });
+    assert.deepStrictEqual(v.positionDisplay, {
+      id: 42,
+      scaleFactor: 2,
+      bounds: { x: 0, y: 0, width: 2560, height: 1440 },
+      workArea: { x: 0, y: 0, width: 2560, height: 1392 },
+    });
+  });
+
+  it("positionDisplay drops malformed snapshots back to null", () => {
+    for (const bad of [
+      { positionDisplay: "not an object" },
+      { positionDisplay: { bounds: null } },
+      { positionDisplay: { bounds: { x: 0, y: 0, width: 0, height: 1080 } } },
+      { positionDisplay: { bounds: { x: NaN, y: 0, width: 1920, height: 1080 } } },
+    ]) {
+      const v = prefs.validate(bad);
+      assert.strictEqual(v.positionDisplay, null, `expected null for ${JSON.stringify(bad)}`);
+    }
+  });
+
+  // Phase 3b-swap: themeVariant field
+  it("themeVariant defaults to empty object (no migration needed)", () => {
+    const d = prefs.getDefaults();
+    assert.deepStrictEqual(d.themeVariant, {});
+  });
+
+  it("themeVariant drops malformed entries but keeps string/string pairs", () => {
+    const v = prefs.validate({
+      themeVariant: {
+        clawd: "chill",
+        calico: "default",
+        bogus: 42,           // wrong value type
+        "": "chill",         // empty themeId
+        nullVal: "",         // empty variantId
+      },
+    });
+    assert.deepStrictEqual(v.themeVariant, { clawd: "chill", calico: "default" });
+  });
+
+  it("themeVariant falls back to defaults when not an object", () => {
+    const v = prefs.validate({ themeVariant: "nope" });
+    assert.deepStrictEqual(v.themeVariant, {});
+    const w = prefs.validate({ themeVariant: [1, 2] });
+    assert.deepStrictEqual(w.themeVariant, {});
+  });
+
+  it("sessionAliases normalizes valid entries and drops malformed values", () => {
+    const v = prefs.validate({
+      sessionAliases: {
+        "local|codex|s1": { title: "  Codex main  ", updatedAt: 100 },
+        "local|codex|missing-time": { title: "Missing time" },
+        "local|codex|empty": { title: "   ", updatedAt: 100 },
+        "local|codex|bad": { title: 42, updatedAt: 100 },
+      },
+    });
+    assert.strictEqual(v.sessionAliases["local|codex|s1"].title, "Codex main");
+    assert.strictEqual(v.sessionAliases["local|codex|s1"].updatedAt, 100);
+    assert.strictEqual(v.sessionAliases["local|codex|missing-time"].title, "Missing time");
+    assert.strictEqual(typeof v.sessionAliases["local|codex|missing-time"].updatedAt, "number");
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(v.sessionAliases, "local|codex|empty"), false);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(v.sessionAliases, "local|codex|bad"), false);
+  });
+
+  it("sessionAliases falls back to defaults when not an object", () => {
+    assert.deepStrictEqual(prefs.validate({ sessionAliases: "nope" }).sessionAliases, {});
+    assert.deepStrictEqual(prefs.validate({ sessionAliases: [1, 2] }).sessionAliases, {});
+  });
+
+  it("drops legacy workspaceAliases because they are no longer in the schema", () => {
+    const v = prefs.validate({
+      workspaceAliases: {
+        "local|d:/animation": "Clawd main repo",
+      },
+    });
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(v, "workspaceAliases"), false);
+    assert.deepStrictEqual(v.sessionAliases, {});
+  });
+
+  it("shortcuts defaults to the built-in shortcut map", () => {
+    const d = prefs.getDefaults();
+    assert.deepStrictEqual(d.shortcuts, {
+      togglePet: "CommandOrControl+Shift+Alt+C",
+      permissionAllow: "CommandOrControl+Shift+Y",
+      permissionDeny: "CommandOrControl+Shift+N",
+    });
+  });
+
+  it("shortcuts fills missing keys and normalizes valid values", () => {
+    const v = prefs.validate({
+      shortcuts: {
+        togglePet: "Ctrl+K",
+      },
+    });
+    assert.deepStrictEqual(v.shortcuts, {
+      togglePet: "CommandOrControl+K",
+      permissionAllow: "CommandOrControl+Shift+Y",
+      permissionDeny: "CommandOrControl+Shift+N",
+    });
+  });
+
+  it("shortcuts falls back to defaults for invalid or dangerous values", () => {
+    const v = prefs.validate({
+      shortcuts: {
+        togglePet: "Ctrl+C",
+        permissionAllow: "bad accelerator",
+        permissionDeny: 42,
+      },
+    });
+    assert.deepStrictEqual(v.shortcuts, {
+      togglePet: "CommandOrControl+Shift+Alt+C",
+      permissionAllow: "CommandOrControl+Shift+Y",
+      permissionDeny: "CommandOrControl+Shift+N",
+    });
+  });
+
+  it("shortcuts de-duplicates conflicting load-time values with default priority", () => {
+    const v = prefs.validate({
+      shortcuts: {
+        togglePet: "Ctrl+K",
+        permissionAllow: "Ctrl+K",
+        permissionDeny: "Ctrl+Shift+Y",
+      },
+    });
+    assert.deepStrictEqual(v.shortcuts, {
+      togglePet: "CommandOrControl+K",
+      permissionAllow: "CommandOrControl+Shift+Y",
+      permissionDeny: "CommandOrControl+Shift+N",
+    });
+  });
+
+  it("defaults the three stale-cleanup intervals to the historical constants", () => {
+    const d = prefs.getDefaults();
+    assert.strictEqual(d.sessionStaleMs, 600000);
+    assert.strictEqual(d.workingStaleMs, 300000);
+    assert.strictEqual(d.detachedIdleStaleMs, 30000);
+  });
+
+  it("accepts sessionStaleMs=0 (disables idle-age cutoff)", () => {
+    const v = prefs.validate({ sessionStaleMs: 0 });
+    assert.strictEqual(v.sessionStaleMs, 0);
+  });
+
+  it("drops below-minimum non-zero sessionStaleMs back to default", () => {
+    // 30s is below the 60s floor for non-zero values, so it should fall
+    // back to the default rather than land on disk as an unsafe value.
+    const v = prefs.validate({ sessionStaleMs: 30_000 });
+    assert.strictEqual(v.sessionStaleMs, 600_000);
+  });
+
+  it("drops workingStaleMs=0 back to default (0 not allowed)", () => {
+    const v = prefs.validate({ workingStaleMs: 0 });
+    assert.strictEqual(v.workingStaleMs, 300_000);
+  });
+
+  it("drops detachedIdleStaleMs=0 back to default (0 not allowed)", () => {
+    const v = prefs.validate({ detachedIdleStaleMs: 0 });
+    assert.strictEqual(v.detachedIdleStaleMs, 30_000);
+  });
+
+  it("clamps a hand-edited inverted pair: workingStaleMs > sessionStaleMs", () => {
+    const v = prefs.validate({
+      sessionStaleMs: 120_000,
+      workingStaleMs: 600_000,
+    });
+    assert.strictEqual(v.sessionStaleMs, 120_000);
+    assert.strictEqual(v.workingStaleMs, 120_000);
+  });
+
+  it("leaves workingStaleMs alone when sessionStaleMs is disabled (=0)", () => {
+    const v = prefs.validate({
+      sessionStaleMs: 0,
+      workingStaleMs: 600_000,
+    });
+    assert.strictEqual(v.sessionStaleMs, 0);
+    assert.strictEqual(v.workingStaleMs, 600_000);
+  });
+
+  it("normalizes Hardware Buddy settings", () => {
+    const v = prefs.validate({
+      hardwareBuddy: {
+        enabled: true,
+        backend: "fake",
+        address: "  FAKE:CLAWSTICK  ",
+        namePrefix: "  Claude  ",
+        permissionsEnabled: true,
+        quickCommandsEnabled: true,
+      },
+    });
+    assert.deepStrictEqual(v.hardwareBuddy, {
+      enabled: true,
+      backend: "fake",
+      address: "FAKE:CLAWSTICK",
+      namePrefix: "Claude",
+      permissionsEnabled: true,
+      quickCommandsEnabled: true,
+    });
+    assert.deepStrictEqual(prefs.validate({ hardwareBuddy: "bad" }).hardwareBuddy, prefs.getDefaults().hardwareBuddy);
+  });
 });
 
 describe("prefs.migrate", () => {
-  it("upgrades v0 (no version field) to v1", () => {
+  it("upgrades v0 (no version field) to the current version", () => {
     const raw = { lang: "zh", soundMuted: true };
     const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
+    assert.strictEqual(upgraded.version, prefs.CURRENT_VERSION);
     assert.ok(upgraded.agents && typeof upgraded.agents === "object");
     assert.ok(upgraded.themeOverrides && typeof upgraded.themeOverrides === "object");
     // Original fields preserved
@@ -191,14 +671,14 @@ describe("prefs.migrate", () => {
     assert.strictEqual(upgraded.soundMuted, true);
   });
 
-  it("leaves v1 files alone", () => {
+  it("migrates v1 files to the current version while preserving agent prefs", () => {
     const raw = {
       version: 1,
       lang: "en",
       agents: { "claude-code": { enabled: false } },
     };
     const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
+    assert.strictEqual(upgraded.version, prefs.CURRENT_VERSION);
     assert.strictEqual(upgraded.agents["claude-code"].enabled, false);
   });
 
@@ -218,184 +698,6 @@ describe("prefs.migrate", () => {
     const raw = { version: 1, x: 0, y: 0, positionSaved: true };
     const upgraded = prefs.migrate(raw);
     assert.strictEqual(upgraded.positionSaved, true);
-  });
-
-  it("v2→v3: removes legacy flat fields from aiConfig", () => {
-    const raw = {
-      version: 2,
-      aiConfig: {
-        provider: "openai",
-        apiKey: "sk-test",
-        baseUrl: "https://api.example.com",
-        model: "gpt-4o-mini",
-        defaultAnalysisProvider: "codex",
-        providers: [{ id: "abc", name: "Test", type: "openai", baseUrl: "https://x.com", apiKey: "k", model: "m", enabled: true }],
-      },
-    };
-    const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
-    assert.strictEqual(upgraded.aiConfig.provider, undefined);
-    assert.strictEqual(upgraded.aiConfig.apiKey, undefined);
-    assert.strictEqual(upgraded.aiConfig.baseUrl, undefined);
-    assert.strictEqual(upgraded.aiConfig.model, undefined);
-    // Non-legacy fields preserved
-    assert.strictEqual(upgraded.aiConfig.defaultAnalysisProvider, "codex");
-    assert.strictEqual(upgraded.aiConfig.providers.length, 1);
-  });
-
-  it("v2→v3: handles aiConfig with no legacy fields gracefully", () => {
-    const raw = { version: 2, aiConfig: { providers: [], defaultProviders: {} } };
-    const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
-    assert.ok(Array.isArray(upgraded.aiConfig.providers));
-  });
-
-  it("v2→v3: handles missing aiConfig without throwing", () => {
-    const raw = { version: 2 };
-    const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
-  });
-
-  it("v2→v3: is idempotent on v3 snapshots", () => {
-    const raw = { version: 3, aiConfig: { providers: [], defaultProviders: {} } };
-    const once = prefs.migrate(raw);
-    const twice = prefs.migrate(once);
-    assert.deepStrictEqual(once, twice);
-  });
-
-  it("v1→v3: full chain preserves migrated provider and removes legacy fields", () => {
-    const raw = {
-      version: 1,
-      aiConfig: { provider: "claude", apiKey: "sk-ant-test", model: "claude-haiku-4-5-20251001" },
-    };
-    const upgraded = prefs.migrate(raw);
-    assert.strictEqual(upgraded.version, 3);
-    // Legacy fields removed
-    assert.strictEqual(upgraded.aiConfig.provider, undefined);
-    assert.strictEqual(upgraded.aiConfig.apiKey, undefined);
-    assert.strictEqual(upgraded.aiConfig.model, undefined);
-    // Provider promoted into registry
-    assert.ok(Array.isArray(upgraded.aiConfig.providers));
-    assert.strictEqual(upgraded.aiConfig.providers.length, 1);
-    assert.strictEqual(upgraded.aiConfig.providers[0].type, "claude");
-  });
-
-  it("Property 5: v2→v3 migration removes legacy fields and bumps version", () => {
-    const legacyFields = {
-      provider: "openai",
-      apiKey: "sk-test",
-      baseUrl: "https://api.example.com",
-      model: "gpt-4o-mini",
-    };
-
-    for (let mask = 0; mask < 16; mask++) {
-      const aiConfig = {
-        providers: [{ id: "p1", name: "Provider", type: "openai" }],
-        defaultProviders: { brief: "p1" },
-      };
-      Object.keys(legacyFields).forEach((key, idx) => {
-        if (mask & (1 << idx)) aiConfig[key] = legacyFields[key];
-      });
-
-      const upgraded = prefs.migrate({ version: 2, aiConfig });
-
-      assert.strictEqual(upgraded.version, 3);
-      for (const key of Object.keys(legacyFields)) {
-        assert.strictEqual(Object.prototype.hasOwnProperty.call(upgraded.aiConfig, key), false, `${key} should be removed`);
-      }
-    }
-  });
-
-  it("Property 6: v2→v3 migration preserves the providers array", () => {
-    const providerSets = [
-      [],
-      [{ id: "p1", name: "One", type: "openai", model: "m1" }],
-      [
-        { id: "p1", name: "One", type: "openai", model: "m1" },
-        { id: "p2", name: "Two", type: "ollama", model: "m2" },
-      ],
-    ];
-
-    for (const providers of providerSets) {
-      const raw = {
-        version: 2,
-        aiConfig: {
-          provider: "openai",
-          apiKey: "sk-test",
-          providers,
-          defaultProviders: { detail: providers[0] ? providers[0].id : "" },
-        },
-      };
-
-      const upgraded = prefs.migrate(raw);
-
-      assert.strictEqual(upgraded.version, 3);
-      assert.deepStrictEqual(upgraded.aiConfig.providers, providers);
-    }
-  });
-
-  it("Property 7: migrate() is idempotent on v3 snapshots", () => {
-    const snapshots = [
-      { version: 3 },
-      { version: 3, aiConfig: { providers: [], defaultProviders: {} } },
-      {
-        version: 3,
-        lang: "zh",
-        aiConfig: {
-          defaultAnalysisProvider: "codex",
-          customCliPaths: { codex: "/opt/bin/codex" },
-          providers: [{ id: "p1", name: "One", type: "openai" }],
-          defaultProviders: { brief: "p1" },
-        },
-      },
-    ];
-
-    for (const snapshot of snapshots) {
-      const once = prefs.migrate(snapshot);
-      const twice = prefs.migrate(once);
-      assert.deepStrictEqual(twice, once);
-    }
-  });
-
-  it("Property 8: full migration chain v1→v3 preserves migrated provider", () => {
-    const legacyConfigs = [
-      { provider: "claude", apiKey: "sk-ant-test", baseUrl: "https://claude.example.com", model: "claude-test" },
-      { provider: "openai", apiKey: "sk-openai-test", baseUrl: "https://openai.example.com", model: "gpt-test" },
-      { provider: "ollama", baseUrl: "http://localhost:11434", model: "llama-test" },
-    ];
-
-    for (const legacy of legacyConfigs) {
-      const upgraded = prefs.migrate({ version: 1, aiConfig: legacy });
-      const providerId = `legacy-${legacy.provider}-migrated`;
-
-      assert.strictEqual(upgraded.version, 3);
-      assert.strictEqual(upgraded.aiConfig.providers.length, 1);
-      assert.strictEqual(upgraded.aiConfig.providers[0].id, providerId);
-      assert.strictEqual(upgraded.aiConfig.providers[0].type, legacy.provider);
-      assert.strictEqual(upgraded.aiConfig.providers[0].model, legacy.model);
-      assert.deepStrictEqual(upgraded.aiConfig.defaultProviders, {
-        brief: providerId,
-        detail: providerId,
-        batch: providerId,
-      });
-      for (const key of ["provider", "apiKey", "baseUrl", "model"]) {
-        assert.strictEqual(Object.prototype.hasOwnProperty.call(upgraded.aiConfig, key), false, `${key} should be removed`);
-      }
-    }
-  });
-
-  it("Property 9: migrate() handles missing or empty aiConfig without throwing", () => {
-    const snapshots = [
-      { version: 2 },
-      { version: 2, aiConfig: null },
-      { version: 2, aiConfig: {} },
-      { version: 2, aiConfig: [] },
-    ];
-
-    for (const snapshot of snapshots) {
-      assert.doesNotThrow(() => prefs.migrate(snapshot));
-      assert.strictEqual(prefs.migrate(snapshot).version, 3);
-    }
   });
 });
 
@@ -431,7 +733,7 @@ describe("prefs.load", () => {
     );
     const { snapshot, locked } = prefs.load(p);
     assert.strictEqual(locked, false);
-    assert.strictEqual(snapshot.version, 3);
+    assert.strictEqual(snapshot.version, prefs.CURRENT_VERSION);
     assert.strictEqual(snapshot.lang, "zh");
     assert.strictEqual(snapshot.x, 100);
     assert.strictEqual(snapshot.y, 200);
@@ -439,6 +741,27 @@ describe("prefs.load", () => {
     // New fields populated from defaults
     assert.ok(snapshot.agents);
     assert.ok(snapshot.themeOverrides);
+  });
+
+  it("loads v2 prefs without locking or warning", () => {
+    const p = makeTempPath();
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ version: 2, lang: "zh" }),
+      "utf8"
+    );
+    const originalWarn = console.warn;
+    let warned = false;
+    console.warn = () => { warned = true; };
+    try {
+      const { snapshot, locked } = prefs.load(p);
+      assert.strictEqual(locked, false);
+      assert.strictEqual(snapshot.version, prefs.CURRENT_VERSION);
+      assert.strictEqual(snapshot.lang, "zh");
+      assert.strictEqual(warned, false);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("returns locked=true and warns for future-version files", () => {
@@ -474,7 +797,7 @@ describe("prefs.save", () => {
     assert.strictEqual(snapshot.lang, "zh");
     assert.strictEqual(snapshot.bubbleFollowPet, true);
     assert.strictEqual(snapshot.x, 42);
-    assert.strictEqual(snapshot.version, 3);
+    assert.strictEqual(snapshot.version, prefs.CURRENT_VERSION);
   });
 
   it("validates before writing — bad fields fall back to defaults on disk", () => {
@@ -495,63 +818,298 @@ describe("prefs.save", () => {
     const snap = prefs.getDefaults();
     snap.themeOverrides = {
       clawd: {
-        sweeping: { disabled: true },
+        states: {
+          sweeping: { disabled: true },
+        },
       },
     };
     prefs.save(p, snap);
     const { snapshot } = prefs.load(p);
-    assert.deepStrictEqual(snapshot.themeOverrides.clawd.sweeping, { disabled: true });
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.states.sweeping, { disabled: true });
   });
 
-  it("round-trips aiConfig through save/load", () => {
+  it("themeOverrides: nested state entry preserves file + transition while keeping disabled", () => {
     const p = makeTempPath();
     const snap = prefs.getDefaults();
-    snap.aiConfig = {
-      defaultAnalysisProvider: "codex",
-      customCliPaths: { codex: "/opt/bin/codex" },
+    snap.themeOverrides = {
+      clawd: {
+        states: {
+          attention: {
+            disabled: true,
+            sourceThemeId: "clawd",
+            file: "clawd-happy.svg",
+            transition: { in: 100, out: 220 },
+          },
+        },
+      },
     };
     prefs.save(p, snap);
     const { snapshot } = prefs.load(p);
-    assert.deepStrictEqual(snapshot.aiConfig, {
-      defaultAnalysisProvider: "codex",
-      customCliPaths: { codex: "/opt/bin/codex" },
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.states.attention, {
+      disabled: true,
+      sourceThemeId: "clawd",
+      file: "clawd-happy.svg",
+      transition: { in: 100, out: 220 },
     });
   });
 
-  it("themeOverrides: disabled wins over file when both present on same key", () => {
+  it("themeOverrides: state/tier/timing entries round-trip in Path A schema", () => {
     const p = makeTempPath();
     const snap = prefs.getDefaults();
     snap.themeOverrides = {
       clawd: {
-        attention: {
-          disabled: true,
-          sourceThemeId: "clawd",
-          file: "clawd-happy.svg",
+        states: {
+          attention: {
+            file: "clawd-happy.svg",
+            transition: { in: 80, out: 140 },
+          },
+        },
+        tiers: {
+          workingTiers: {
+            "clawd-working-typing.svg": {
+              file: "custom-working.svg",
+              transition: { in: 0, out: 90 },
+            },
+          },
+        },
+        timings: {
+          autoReturn: { attention: 2800 },
         },
       },
     };
     prefs.save(p, snap);
     const { snapshot } = prefs.load(p);
-    assert.deepStrictEqual(snapshot.themeOverrides.clawd.attention, { disabled: true });
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd, {
+      states: {
+        attention: {
+          file: "clawd-happy.svg",
+          transition: { in: 80, out: 140 },
+        },
+      },
+      tiers: {
+        workingTiers: {
+          "clawd-working-typing.svg": {
+            file: "custom-working.svg",
+            transition: { in: 0, out: 90 },
+          },
+        },
+      },
+      timings: {
+        autoReturn: { attention: 2800 },
+      },
+    });
   });
 
-  it("themeOverrides: file-form entry round-trips unchanged when disabled is absent/false", () => {
+  it("themeOverrides.sounds: round-trips per-soundName file entries", () => {
     const p = makeTempPath();
     const snap = prefs.getDefaults();
     snap.themeOverrides = {
       clawd: {
-        attention: {
-          disabled: false,
-          sourceThemeId: "clawd",
-          file: "clawd-happy.svg",
+        sounds: {
+          complete: { file: "my-done.mp3" },
+          confirm: { file: "nope.wav" },
         },
       },
     };
     prefs.save(p, snap);
     const { snapshot } = prefs.load(p);
-    assert.deepStrictEqual(snapshot.themeOverrides.clawd.attention, {
-      sourceThemeId: "clawd",
-      file: "clawd-happy.svg",
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.sounds, {
+      complete: { file: "my-done.mp3" },
+      confirm: { file: "nope.wav" },
+    });
+  });
+
+  it("themeOverrides.sounds: drops entries with invalid / empty file and non-string keys", () => {
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          sounds: {
+            complete: { file: "ok.mp3" },
+            confirm: { file: "" },    // empty
+            weird:    { durationMs: 1000 }, // no file → dropped
+            "":       { file: "x.mp3" }, // empty key → dropped
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides.clawd.sounds, {
+      complete: { file: "ok.mp3" },
+    });
+  });
+
+  it("themeOverrides.sounds: strips ancillary fields (durationMs / transition / sourceThemeId) — sounds only keep file", () => {
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          sounds: {
+            complete: { file: "ok.mp3", durationMs: 1000, transition: { in: 50 }, sourceThemeId: "x" },
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides.clawd.sounds, {
+      complete: { file: "ok.mp3" },
+    });
+  });
+
+  it("themeOverrides.sounds: preserves originalName when valid, basename-strips and caps length", () => {
+    // originalName is display-only — stores what the user picked before the
+    // copy renamed it to `${soundName}${ext}`. Sanitised to guard hand-edited
+    // pref files from shoving path traversal / absurd strings into the UI.
+    const longName = "a".repeat(300) + ".mp3";
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          sounds: {
+            complete: { file: "complete.mp3", originalName: "cat-demo.mp3" },
+            confirm:  { file: "confirm.wav", originalName: "../../etc/passwd.wav" }, // basenamed
+            hiss:     { file: "hiss.mp3", originalName: ".." },                      // dropped
+            purr:     { file: "purr.mp3", originalName: "" },                        // dropped
+            growl:    { file: "growl.mp3", originalName: longName },                 // capped
+          },
+        },
+      },
+    });
+    assert.strictEqual(validated.themeOverrides.clawd.sounds.complete.originalName, "cat-demo.mp3");
+    assert.strictEqual(validated.themeOverrides.clawd.sounds.confirm.originalName, "passwd.wav");
+    assert.strictEqual(validated.themeOverrides.clawd.sounds.hiss.originalName, undefined);
+    assert.strictEqual(validated.themeOverrides.clawd.sounds.purr.originalName, undefined);
+    assert.strictEqual(validated.themeOverrides.clawd.sounds.growl.originalName.length, 256);
+  });
+
+  it("themeOverrides.sounds: rejects path-unsafe soundName keys and basename-sanitises file", () => {
+    // soundName becomes a filename stem under sound-overrides/<themeId>/ —
+    // a malicious theme or hand-edited pref must not be able to escape that
+    // directory. File paths with separators get basename-stripped.
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          sounds: {
+            complete:      { file: "ok.mp3" },
+            "../../evil":  { file: "x.mp3" },           // unsafe key → dropped
+            "foo/bar":     { file: "x.mp3" },           // unsafe key → dropped
+            "spaces bad":  { file: "x.mp3" },           // unsafe key → dropped
+            confirm:       { file: "../../etc/passwd" },// unsafe file → basenamed
+            quiet:         { file: ".." },               // bare `..` → dropped
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides.clawd.sounds, {
+      complete: { file: "ok.mp3" },
+      confirm:  { file: "passwd" },
+    });
+  });
+
+  it("themeOverrides: legacy flat state entries normalize into states map", () => {
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          attention: { disabled: true },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides, {
+      clawd: {
+        states: {
+          attention: { disabled: true },
+        },
+      },
+    });
+  });
+
+  it("themeOverrides: reactions round-trip with file + durationMs + transition", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.themeOverrides = {
+      clawd: {
+        reactions: {
+          clickLeft: {
+            file: "my-poke.svg",
+            durationMs: 2200,
+            transition: { in: 50, out: 100 },
+          },
+          double: { file: "my-double.svg", durationMs: 4000 },
+        },
+      },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.reactions, {
+      clickLeft: {
+        file: "my-poke.svg",
+        durationMs: 2200,
+        transition: { in: 50, out: 100 },
+      },
+      double: { file: "my-double.svg", durationMs: 4000 },
+    });
+  });
+
+  it("themeOverrides: hitbox.wide round-trips boolean per-file flags", () => {
+    const p = makeTempPath();
+    const snap = prefs.getDefaults();
+    snap.themeOverrides = {
+      clawd: {
+        hitbox: {
+          wide: {
+            "clawd-error.svg": true,
+            "clawd-idle.svg": false,
+          },
+        },
+      },
+    };
+    prefs.save(p, snap);
+    const { snapshot } = prefs.load(p);
+    assert.deepStrictEqual(snapshot.themeOverrides.clawd.hitbox, {
+      wide: {
+        "clawd-error.svg": true,
+        "clawd-idle.svg": false,
+      },
+    });
+  });
+
+  it("themeOverrides: hitbox normalize drops non-boolean values", () => {
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          hitbox: {
+            wide: {
+              "ok.svg": true,
+              "bad.svg": "yes",   // dropped
+              "null-val.svg": null,  // dropped
+            },
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides.clawd.hitbox, {
+      wide: { "ok.svg": true },
+    });
+  });
+
+  it("themeOverrides: normalize drops unknown reaction keys and strips durationMs from drag", () => {
+    const validated = prefs.validate({
+      ...prefs.getDefaults(),
+      themeOverrides: {
+        clawd: {
+          reactions: {
+            explode: { file: "bogus.svg" },           // invalid key
+            drag: { file: "my-drag.svg", durationMs: 9999 },  // drag can't have duration
+            clickLeft: { file: "p.svg" },             // valid
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(validated.themeOverrides.clawd.reactions, {
+      drag: { file: "my-drag.svg" },     // durationMs stripped
+      clickLeft: { file: "p.svg" },
+      // explode: absent
     });
   });
 });

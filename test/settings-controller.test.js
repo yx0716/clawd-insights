@@ -104,6 +104,69 @@ describe("applyUpdate sync invariant", () => {
     assert.deepStrictEqual(order, ["start:1:S", "end:1:S", "start:2:M", "end:2:M"]);
     assert.strictEqual(ctrl.get("size"), "M");
   });
+
+  it("manageClaudeHooksAutomatically uses the async effect path without changing controller semantics", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: false },
+        locked: false,
+      },
+      injectedDeps: {
+        syncClaudeHooksNow: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        },
+        startClaudeSettingsWatcher: () => {},
+        stopClaudeSettingsWatcher: () => {},
+      },
+    });
+    const ret = ctrl.applyUpdate("manageClaudeHooksAutomatically", true);
+    assert.strictEqual(typeof ret.then, "function");
+    const result = await ret;
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), true);
+  });
+
+  it("serializes Claude hook update and command work on one shared lock", async () => {
+    const calls = [];
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: false },
+        locked: false,
+      },
+      injectedDeps: {
+        syncClaudeHooksNow: async () => {
+          calls.push("sync:start");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          calls.push("sync:end");
+        },
+        startClaudeSettingsWatcher: () => calls.push("watcher:start"),
+        stopClaudeSettingsWatcher: () => calls.push("watcher:stop"),
+        uninstallClaudeHooksNow: async () => {
+          calls.push("uninstall:start");
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          calls.push("uninstall:end");
+        },
+      },
+    });
+
+    const enable = ctrl.applyUpdate("manageClaudeHooksAutomatically", true);
+    const disconnect = ctrl.applyCommand("uninstallHooks");
+    const results = await Promise.all([enable, disconnect]);
+
+    assert.strictEqual(results[0].status, "ok");
+    assert.strictEqual(results[1].status, "ok");
+    assert.deepStrictEqual(calls, [
+      "sync:start",
+      "sync:end",
+      "watcher:start",
+      "watcher:stop",
+      "uninstall:start",
+      "uninstall:end",
+    ]);
+    assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), false);
+  });
 });
 
 // Tiny helper — must be sync because controller's applyUpdate stays sync
@@ -174,6 +237,24 @@ describe("applyUpdate", () => {
     const r = await ctrl.applyUpdate("boom", "anything");
     assert.strictEqual(r.status, "error");
     assert.match(r.message, /kaboom/);
+  });
+
+  it("does not commit autoStartWithClaude when management-disabled effect returns noop", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: false, autoStartWithClaude: false },
+        locked: false,
+      },
+      injectedDeps: {
+        installAutoStart: () => { throw new Error("should not run"); },
+        uninstallAutoStart: () => { throw new Error("should not run"); },
+      },
+    });
+    const r = await ctrl.applyUpdate("autoStartWithClaude", true);
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(r.noop, true);
+    assert.strictEqual(ctrl.get("autoStartWithClaude"), false);
   });
 });
 
@@ -334,6 +415,102 @@ describe("applyCommand", () => {
     const b = ctrl.applyCommand("slow", { tag: "b" });
     await Promise.all([a, b]);
     assert.deepStrictEqual(order, ["start:a", "end:a", "start:b", "end:b"]);
+  });
+
+  it("serializes commands sharing a domain lockKey (cross-command race fix)", async () => {
+    // Codex review #9 high finding: remoteSsh.update / .markDeployed /
+    // .delete all write the same prefs field. Without a shared lockKey
+    // they execute concurrently — markDeployed can compute its commit
+    // from a stale snapshot taken before update committed, and stomp
+    // the user's edit. Domain lockKey forces serialization.
+    const order = [];
+    const slowFast = async (payload) => {
+      order.push(`start:${payload.tag}`);
+      await new Promise((r) => setTimeout(r, payload.tag === "a" ? 20 : 1));
+      order.push(`end:${payload.tag}`);
+      return { status: "ok" };
+    };
+    const cmdA = (payload) => slowFast(payload);
+    const cmdB = (payload) => slowFast(payload);
+    cmdA.lockKey = "shared";
+    cmdB.lockKey = "shared";
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      commands: { cmdA, cmdB },
+    });
+    const a = ctrl.applyCommand("cmdA", { tag: "a" });
+    const b = ctrl.applyCommand("cmdB", { tag: "b" });
+    await Promise.all([a, b]);
+    // Without shared lock they'd interleave start:a, start:b, end:b, end:a.
+    assert.deepStrictEqual(order, ["start:a", "end:a", "start:b", "end:b"],
+      "commands sharing a domain lockKey must serialize even across different names");
+  });
+
+  it("commands without shared lockKey can interleave (control: distinct lockKeys are independent)", async () => {
+    const order = [];
+    const slowFast = async (payload) => {
+      order.push(`start:${payload.tag}`);
+      await new Promise((r) => setTimeout(r, payload.tag === "a" ? 20 : 1));
+      order.push(`end:${payload.tag}`);
+      return { status: "ok" };
+    };
+    const cmdA = (payload) => slowFast(payload);
+    const cmdB = (payload) => slowFast(payload);
+    // No lockKey on either — controller defaults to per-name lock; different
+    // names → no cross-command serialization.
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      commands: { cmdA, cmdB },
+    });
+    const a = ctrl.applyCommand("cmdA", { tag: "a" });
+    const b = ctrl.applyCommand("cmdB", { tag: "b" });
+    await Promise.all([a, b]);
+    // b finishes first (1ms vs 20ms) without serialization.
+    assert.deepStrictEqual(order, ["start:a", "start:b", "end:b", "end:a"]);
+  });
+
+  it("applies uninstallHooks commit without clearing latent autoStartWithClaude preference", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults(), manageClaudeHooksAutomatically: true, autoStartWithClaude: true },
+        locked: false,
+      },
+      commands: {
+        uninstallHooks: () => ({ status: "ok", commit: { manageClaudeHooksAutomatically: false } }),
+      },
+    });
+    const r = await ctrl.applyCommand("uninstallHooks", null);
+    assert.strictEqual(r.status, "ok");
+    assert.strictEqual(ctrl.get("manageClaudeHooksAutomatically"), false);
+    assert.strictEqual(ctrl.get("autoStartWithClaude"), true);
+  });
+
+  it("applies setSessionAlias through the default command registry and persists it", async () => {
+    const p = makeTempPath();
+    const ctrl = createSettingsController({
+      prefsPath: p,
+      injectedDeps: {
+        now: () => 1000,
+        getActiveSessionAliasKeys: () => new Set(["local|codex|s1"]),
+      },
+    });
+
+    const r = await ctrl.applyCommand("setSessionAlias", {
+      host: null,
+      agentId: "codex",
+      sessionId: "s1",
+      alias: "Codex main",
+    });
+
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(ctrl.get("sessionAliases"), {
+      "local|codex|s1": { title: "Codex main", updatedAt: 1000 },
+    });
+    const onDisk = JSON.parse(fs.readFileSync(p, "utf8"));
+    assert.deepStrictEqual(onDisk.sessionAliases, {
+      "local|codex|s1": { title: "Codex main", updatedAt: 1000 },
+    });
   });
 });
 
@@ -544,20 +721,6 @@ describe("hydrate (system → prefs import, no effect)", () => {
     assert.deepStrictEqual(lastChanges, { lang: "zh", soundMuted: true });
   });
 
-  it("hydrates and persists dashboard AI config", async () => {
-    const p = makeTempPath();
-    const ctrl = createSettingsController({ prefsPath: p });
-    const aiConfig = {
-      defaultAnalysisProvider: "codex",
-      customCliPaths: { codex: "/opt/bin/codex" },
-    };
-    const r = await ctrl.hydrate({ aiConfig });
-    assert.strictEqual(r.status, "ok");
-    assert.deepStrictEqual(ctrl.get("aiConfig"), aiConfig);
-    const { snapshot } = prefs.load(p);
-    assert.deepStrictEqual(snapshot.aiConfig, aiConfig);
-  });
-
   it("noop when value already matches", async () => {
     const ctrl = createSettingsController({ prefsPath: makeTempPath() });
     const r = await ctrl.hydrate({ lang: "en" }); // default
@@ -584,5 +747,54 @@ describe("locked controller (future-version files)", () => {
     const onDisk = JSON.parse(fs.readFileSync(p, "utf8"));
     assert.strictEqual(onDisk.version, 999);
     assert.strictEqual(onDisk.lang, "en");
+  });
+});
+
+describe("sessionCleanup.setTriple via applyCommand", () => {
+  // This is the regression for v4 — applyCommand must accept a triple that
+  // would have been rejected if each key were applied separately via
+  // applyUpdate, because lowering both knobs simultaneously would otherwise
+  // hit the single-key cross-field validator with the pre-change snapshot.
+  it("commits an atomic triple that drops both stale intervals together", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: {
+          ...prefs.getDefaults(),
+          sessionStaleMs: 600_000,
+          workingStaleMs: 300_000,
+          detachedIdleStaleMs: 30_000,
+        },
+        locked: false,
+      },
+    });
+    const result = await ctrl.applyCommand("sessionCleanup.setTriple", {
+      sessionStaleMs: 120_000,
+      workingStaleMs: 60_000,
+      detachedIdleStaleMs: 30_000,
+    });
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(ctrl.get("sessionStaleMs"), 120_000);
+    assert.strictEqual(ctrl.get("workingStaleMs"), 60_000);
+    assert.strictEqual(ctrl.get("detachedIdleStaleMs"), 30_000);
+  });
+
+  it("rejects an inverted triple without partial commit", async () => {
+    const ctrl = createSettingsController({
+      prefsPath: makeTempPath(),
+      loadResult: {
+        snapshot: { ...prefs.getDefaults() },
+        locked: false,
+      },
+    });
+    const result = await ctrl.applyCommand("sessionCleanup.setTriple", {
+      sessionStaleMs: 120_000,
+      workingStaleMs: 300_000,
+      detachedIdleStaleMs: 30_000,
+    });
+    assert.strictEqual(result.status, "error");
+    // Original defaults intact.
+    assert.strictEqual(ctrl.get("sessionStaleMs"), 600_000);
+    assert.strictEqual(ctrl.get("workingStaleMs"), 300_000);
   });
 });

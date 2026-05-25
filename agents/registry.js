@@ -5,12 +5,31 @@ const claudeCode = require("./claude-code");
 const codex = require("./codex");
 const copilotCli = require("./copilot-cli");
 const geminiCli = require("./gemini-cli");
+const antigravityCli = require("./antigravity-cli");
 const cursorAgent = require("./cursor-agent");
 const codebuddy = require("./codebuddy");
 const kiroCli = require("./kiro-cli");
+const kimiCli = require("./kimi-cli");
 const opencode = require("./opencode");
+const pi = require("./pi");
+const openclaw = require("./openclaw");
+const hermes = require("./hermes");
 
-const AGENTS = [claudeCode, codex, copilotCli, geminiCli, cursorAgent, codebuddy, kiroCli, opencode];
+const AGENTS = [
+  claudeCode,
+  codex,
+  copilotCli,
+  geminiCli,
+  antigravityCli,
+  cursorAgent,
+  codebuddy,
+  kiroCli,
+  kimiCli,
+  opencode,
+  pi,
+  openclaw,
+  hermes,
+];
 const AGENT_MAP = new Map(AGENTS.map((a) => [a.id, a]));
 
 module.exports = {

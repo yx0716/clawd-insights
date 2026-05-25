@@ -1,5 +1,6 @@
 // Gemini CLI session JSON monitor
 // Polls ~/.gemini/tmp/*/chats/session-*.json for state changes
+// Legacy only: Gemini CLI runtime integration is hook-only and does not start this monitor.
 
 const fs = require("fs");
 const path = require("path");

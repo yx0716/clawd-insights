@@ -3,7 +3,7 @@
 // Polls ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl for state changes
 // and POSTs them via HTTP to the local Clawd desktop pet (through SSH tunnel).
 //
-// Zero external dependencies — Node.js built-ins + ./server-config.js only.
+// Zero external dependencies — Node.js built-ins + same-directory hook helpers only.
 //
 // Usage:
 //   node codex-remote-monitor.js            # run as long-lived daemon
@@ -18,19 +18,23 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { postStateToRunningServer, readHostPrefix } = require("./server-config");
+const { classifySessionMeta } = require("./codex-subagent-fields");
 
 // ── Inline config from agents/codex.js (zero-dependency requirement) ──
 
 const SESSION_DIR = path.join(os.homedir(), ".codex", "sessions");
 const POLL_INTERVAL_MS = 1500;
 
-// JSONL record type[:subtype] → pet state
-// ⚠️ Duplicated from agents/codex.js logEventMap (zero-dep requirement) — keep in sync
+// JSONL record type[:subtype] → pet state. This standalone remote monitor keeps
+// a zero-dep subset of agents/codex.js because it posts final states directly
+// and does not carry the full local monitor's turn-end/approval heuristics.
+// Keep shared Codex JSONL event additions in sync where they affect both paths.
 const LOG_EVENT_MAP = {
   "session_meta": "idle",
   "event_msg:task_started": "thinking",
   "event_msg:user_message": "thinking",
   "event_msg:agent_message": "working",
+  "event_msg:guardian_assessment": "working",
   "response_item:function_call": "working",
   "response_item:custom_tool_call": "working",
   "response_item:web_search_call": "working",
@@ -77,23 +81,28 @@ function extractSessionId(fileName) {
   return parts.slice(-5).join("-");
 }
 
-function postState(sessionId, state, event, cwd) {
-  const body = JSON.stringify({
+function buildPostStateBody(sessionId, state, event, cwd, isSubagent, host) {
+  return JSON.stringify({
     state,
     session_id: sessionId,
     event,
     agent_id: "codex",
     cwd: cwd || "",
-    host: hostPrefix,
+    host: host || hostPrefix,
+    headless: isSubagent === true,
   });
+}
+
+function postState(sessionId, state, event, cwd, isSubagent) {
+  const body = buildPostStateBody(sessionId, state, event, cwd, isSubagent);
   postStateToRunningServer(
     body,
-    { timeoutMs: 100, preferredPort },
+    { timeoutMs: 100, preferredPort, remote: true },
     () => {} // fire and forget — tunnel may be down
   );
 }
 
-function processLine(line, entry) {
+function processLine(line, entry, options = {}) {
   let obj;
   try {
     obj = JSON.parse(line);
@@ -110,17 +119,20 @@ function processLine(line, entry) {
   // Extract CWD from session_meta
   if (type === "session_meta" && payload) {
     entry.cwd = payload.cwd || "";
+    entry.isSubagent = classifySessionMeta(payload) === "subagent";
   }
 
   const state = LOG_EVENT_MAP[key];
   if (state === undefined || state === null) return;
+  const finalState = entry.isSubagent && state === "attention" ? "idle" : state;
 
   // Avoid spamming same state
-  if (state === entry.lastState && state === "working") return;
-  entry.lastState = state;
+  if (finalState === entry.lastState && finalState === "working") return;
+  entry.lastState = finalState;
   entry.lastEventTime = Date.now();
 
-  postState(entry.sessionId, state, key, entry.cwd);
+  const postStateFn = typeof options.postState === "function" ? options.postState : postState;
+  postStateFn(entry.sessionId, finalState, key, entry.cwd, entry.isSubagent);
 }
 
 function pollFile(filePath, fileName) {
@@ -139,6 +151,7 @@ function pollFile(filePath, fileName) {
       offset: 0,
       sessionId: "codex:" + sessionId,
       cwd: "",
+      isSubagent: false,
       lastEventTime: Date.now(),
       lastState: null,
       partial: "",
@@ -174,7 +187,7 @@ function cleanStaleFiles() {
   const now = Date.now();
   for (const [filePath, entry] of tracked) {
     if (now - entry.lastEventTime > 300000) {
-      postState(entry.sessionId, "sleeping", "stale-cleanup", entry.cwd);
+      postState(entry.sessionId, "sleeping", "stale-cleanup", entry.cwd, entry.isSubagent);
       tracked.delete(filePath);
     }
   }
@@ -205,26 +218,33 @@ function poll() {
   cleanStaleFiles();
 }
 
-// ── Main ──
+function main() {
+  console.log(`Clawd Codex remote monitor started`);
+  console.log(`  Session dir: ${SESSION_DIR}`);
+  console.log(`  Poll interval: ${POLL_INTERVAL_MS}ms`);
+  if (preferredPort) console.log(`  Preferred port: ${preferredPort}`);
+  console.log(`  Press Ctrl+C to stop\n`);
 
-console.log(`Clawd Codex remote monitor started`);
-console.log(`  Session dir: ${SESSION_DIR}`);
-console.log(`  Poll interval: ${POLL_INTERVAL_MS}ms`);
-if (preferredPort) console.log(`  Preferred port: ${preferredPort}`);
-console.log(`  Press Ctrl+C to stop\n`);
+  poll();
 
-poll();
+  if (!onceMode) {
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
 
-if (!onceMode) {
-  const interval = setInterval(poll, POLL_INTERVAL_MS);
-
-  process.on("SIGINT", () => {
-    clearInterval(interval);
-    console.log("\nStopped.");
-    process.exit(0);
-  });
-  process.on("SIGTERM", () => {
-    clearInterval(interval);
-    process.exit(0);
-  });
+    process.on("SIGINT", () => {
+      clearInterval(interval);
+      console.log("\nStopped.");
+      process.exit(0);
+    });
+    process.on("SIGTERM", () => {
+      clearInterval(interval);
+      process.exit(0);
+    });
+  }
 }
+
+if (require.main === module) main();
+
+module.exports.__test = {
+  buildPostStateBody,
+  processLine,
+};

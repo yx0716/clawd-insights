@@ -80,13 +80,15 @@ function createSettingsController({
 
   const store = createStore(initialSnapshot);
 
-  // Per-key async serialization. When an async action is in flight for a key,
-  // later writes on the same key queue after it instead of racing — otherwise
-  // a slow-resolving effect could commit after a fast-resolving one and flip
-  // the store back. Sync actions on an idle key skip the lock entirely so the
-  // common path stays synchronous (menu setters rely on that). The Map self-
-  // cleans: once a tracked promise settles, its entry is removed unless
-  // another call has already chained a newer one on top.
+  // Per-key/domain async serialization. When an async action is in flight for a
+  // key, later writes on the same key queue after it instead of racing —
+  // otherwise a slow-resolving effect could commit after a fast-resolving one
+  // and flip the store back. Some actions can opt into a shared lock domain
+  // when different settings/commands mutate the same external resource (for
+  // example ~/.claude/settings.json). Sync actions on an idle key skip the lock
+  // entirely so the common path stays synchronous (menu setters rely on that).
+  // The Map self-cleans: once a tracked promise settles, its entry is removed
+  // unless another call has already chained a newer one on top.
   const _asyncLocks = new Map();
   function _trackAsyncLock(lockKey, p) {
     _asyncLocks.set(lockKey, p);
@@ -136,6 +138,22 @@ function createSettingsController({
       return entry.effect;
     }
     return null;
+  }
+
+  function resolveUpdateLockKey(key) {
+    const entry = updates[key];
+    if (entry && typeof entry.lockKey === "string" && entry.lockKey) {
+      return `domain:${entry.lockKey}`;
+    }
+    return `update:${key}`;
+  }
+
+  function resolveCommandLockKey(name) {
+    const command = commands[name];
+    if (command && typeof command.lockKey === "string" && command.lockKey) {
+      return `domain:${command.lockKey}`;
+    }
+    return `cmd:${name}`;
   }
 
   // Run one fn (validator or effect) and normalize its return into a sync
@@ -216,13 +234,14 @@ function createSettingsController({
   // because returning sync `{ok}` while a pending commit is about to stomp
   // the same key would be a lie.
   function applyUpdate(key, value) {
-    const pending = _asyncLocks.get(key);
+    const lockKey = resolveUpdateLockKey(key);
+    const pending = _asyncLocks.get(lockKey);
     if (pending) {
       const next = pending.then(
         () => _doApplyUpdate(key, value),
         () => _doApplyUpdate(key, value)
       );
-      _trackAsyncLock(key, next);
+      _trackAsyncLock(lockKey, next);
       return next;
     }
     const actionResult = invokeAction(key, value);
@@ -230,7 +249,7 @@ function createSettingsController({
       return finishSingle(key, value, actionResult);
     }
     const next = actionResult.then((r) => finishSingle(key, value, r));
-    _trackAsyncLock(key, next);
+    _trackAsyncLock(lockKey, next);
     return next;
   }
 
@@ -360,10 +379,10 @@ function createSettingsController({
     ).then(finishBulk);
   }
 
-  // Serialize commands by name — same-name rapid toggles would otherwise
+  // Serialize commands by name/domain — same-name rapid toggles would otherwise
   // race and the later-resolving one would commit over the earlier.
   function applyCommand(name, payload) {
-    const lockKey = `cmd:${name}`;
+    const lockKey = resolveCommandLockKey(name);
     const prev = _asyncLocks.get(lockKey);
     const run = () => _doApplyCommand(name, payload);
     const next = prev ? prev.then(run, run) : run();
@@ -438,7 +457,11 @@ function createSettingsController({
         if (persisted.status !== "ok") return persisted;
       }
     }
-    return { status: "ok", message: result.message };
+    // Pass through command-produced metadata (noop / reason / targetDrift /
+    // anything a future command needs the IPC layer to see). Strip `commit`
+    // since that's a controller-internal payload, not for callers.
+    const { commit: _commit, ...meta } = result;
+    return { ...meta, status: "ok", message: result.message };
   }
 
   function getSnapshot() {

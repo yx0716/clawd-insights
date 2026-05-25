@@ -1,12 +1,16 @@
 "use strict";
 
-const { describe, it, before, after } = require("node:test");
+const { describe, it, before, after, afterEach, mock } = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
 const themeLoader = require("../src/theme-loader");
+
+afterEach(() => {
+  mock.restoreAll();
+});
 
 // Scratch dir layout the loader expects:
 //   <tmp>/src/           (appDir)
@@ -24,13 +28,22 @@ function makeFixture(themes) {
   const userData = path.join(tmp, "userData");
   fs.mkdirSync(path.join(userData, "themes"), { recursive: true });
 
-  for (const { id, builtin, json } of themes) {
+  for (const { id, builtin, json, assets } of themes) {
     const base = builtin
       ? path.join(tmp, "themes", id)
       : path.join(userData, "themes", id);
     fs.mkdirSync(base, { recursive: true });
     if (json !== undefined) {
       fs.writeFileSync(path.join(base, "theme.json"), JSON.stringify(json), "utf8");
+    }
+    if (assets && typeof assets === "object") {
+      const assetsDir = path.join(base, "assets");
+      fs.mkdirSync(assetsDir, { recursive: true });
+      for (const [filename, content] of Object.entries(assets)) {
+        const assetPath = path.join(assetsDir, filename);
+        fs.mkdirSync(path.dirname(assetPath), { recursive: true });
+        fs.writeFileSync(assetPath, content, "utf8");
+      }
     }
   }
   themeLoader.init(appDir, userData);
@@ -45,10 +58,34 @@ function validThemeJson(overrides = {}) {
     viewBox: { x: 0, y: 0, width: 100, height: 100 },
     states: {
       idle: ["idle.svg"],
+      yawning: ["yawning.svg"],
+      dozing: ["dozing.svg"],
+      collapsing: ["collapsing.svg"],
       thinking: ["thinking.svg"],
       working: ["working.svg"],
       sleeping: ["sleeping.svg"],
       waking: ["waking.svg"],
+    },
+    ...overrides,
+  };
+}
+
+function contextFor(theme) {
+  return themeLoader.createThemeContext(theme);
+}
+
+function fullMiniMode(overrides = {}) {
+  return {
+    supported: true,
+    states: {
+      "mini-idle": ["mini-idle.svg"],
+      "mini-enter": ["mini-enter.svg"],
+      "mini-enter-sleep": ["mini-enter-sleep.svg"],
+      "mini-crabwalk": ["mini-crabwalk.svg"],
+      "mini-peek": ["mini-peek.svg"],
+      "mini-alert": ["mini-alert.svg"],
+      "mini-happy": ["mini-happy.svg"],
+      "mini-sleep": ["mini-sleep.svg"],
     },
     ...overrides,
   };
@@ -60,6 +97,46 @@ describe("theme-loader strict mode", () => {
     fixture = makeFixture([
       { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
       { id: "good", builtin: true, json: validThemeJson({ name: "Good" }) },
+      {
+        id: "updatevisuals",
+        builtin: true,
+        json: validThemeJson({
+          name: "Update Visuals",
+          updateVisuals: { checking: "../nested/checking-special.svg" },
+        }),
+      },
+      {
+        id: "badupdatevisuals",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Update Visuals",
+          updateVisuals: { checking: 42 },
+        }),
+      },
+      {
+        id: "updatebubbleanchor",
+        builtin: true,
+        json: validThemeJson({
+          name: "Update Bubble Anchor",
+          updateBubbleAnchorBox: { x: 10, y: 20, width: 30, height: 40 },
+        }),
+      },
+      {
+        id: "badupdatebubbleanchor",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Update Bubble Anchor",
+          updateBubbleAnchorBox: { x: 10, y: "bad", width: 30, height: 40 },
+        }),
+      },
+      {
+        id: "badrendering",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Rendering",
+          rendering: { svgChannel: "img" },
+        }),
+      },
       // Missing required fields (no schemaVersion, no viewBox) → validateTheme fails.
       { id: "broken", builtin: false, json: { name: "Bad", version: "1", states: {} } },
     ]);
@@ -93,6 +170,194 @@ describe("theme-loader strict mode", () => {
   it("strict load succeeds on a valid theme", () => {
     const theme = themeLoader.loadTheme("good", { strict: true });
     assert.strictEqual(theme._id, "good");
+  });
+
+  it("normalizes updateVisuals file references", () => {
+    const theme = themeLoader.loadTheme("updatevisuals", { strict: true });
+    assert.strictEqual(theme.updateVisuals.checking, "checking-special.svg");
+  });
+
+  it("strict load rejects malformed updateVisuals", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badupdatevisuals", { strict: true }),
+      /updateVisuals\.checking/
+    );
+  });
+
+  it("preserves updateBubbleAnchorBox on a valid theme", () => {
+    const theme = themeLoader.loadTheme("updatebubbleanchor", { strict: true });
+    assert.deepStrictEqual(theme.updateBubbleAnchorBox, { x: 10, y: 20, width: 30, height: 40 });
+  });
+
+  it("strict load rejects malformed updateBubbleAnchorBox", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badupdatebubbleanchor", { strict: true }),
+      /updateBubbleAnchorBox/
+    );
+  });
+
+  it("strict load rejects malformed rendering config", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badrendering", { strict: true }),
+      /rendering\.svgChannel/
+    );
+  });
+});
+
+describe("theme-loader trusted runtime and schema v1 defaults", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      { id: "old-schema", builtin: true, json: validThemeJson({ name: "Old Schema" }) },
+      {
+        id: "trusted",
+        builtin: true,
+        json: validThemeJson({
+          name: "Trusted",
+          trustedRuntime: {
+            scriptedSvgFiles: [
+              "scripted.svg",
+              "../nested/also-scripted.svg",
+              "not-svg.png",
+              "scripted.svg",
+            ],
+            scriptedSvgCycleMs: {
+              "scripted.svg": 2400.4,
+              "../nested/also-scripted.svg": 3600,
+              "not-svg.png": 1200,
+              "unlisted.svg": 1800,
+              "bad.svg": -1,
+            },
+          },
+          fileViewBoxes: {
+            "../nested/mini-special.svg": { x: -12, y: -12, width: 48, height: 48 },
+          },
+          miniMode: fullMiniMode({
+            viewBox: { x: -12, y: -12, width: 48, height: 48 },
+          }),
+        }),
+      },
+      {
+        id: "forged",
+        builtin: false,
+        json: validThemeJson({
+          name: "Forged",
+          trustedRuntime: {
+            scriptedSvgFiles: ["forged-script.svg"],
+            scriptedSvgCycleMs: { "forged-script.svg": 3200 },
+          },
+          fileViewBoxes: {
+            "mini-special.svg": { x: -10, y: -10, width: 40, height: 40 },
+          },
+          miniMode: fullMiniMode({
+            viewBox: { x: -10, y: -10, width: 40, height: 40 },
+          }),
+        }),
+        assets: {},
+      },
+      {
+        id: "forced-object",
+        builtin: false,
+        json: validThemeJson({
+          name: "Forced Object",
+          rendering: { svgChannel: "object" },
+          eyeTracking: { enabled: false, states: [] },
+          reactions: { clickLeft: { file: "react-once.svg", duration: 840 } },
+        }),
+        assets: {
+          "idle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+          "react-once.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+        },
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("keeps schemaVersion 1 themes valid while adding safe defaults", () => {
+    const theme = themeLoader.loadTheme("old-schema", { strict: true });
+    const rendererConfig = contextFor(theme).getRendererConfig();
+
+    assert.strictEqual(theme.schemaVersion, 1);
+    assert.deepStrictEqual(theme.trustedRuntime, { scriptedSvgFiles: [] });
+    assert.deepStrictEqual(theme.rendering, { svgChannel: "auto" });
+    assert.deepStrictEqual(rendererConfig.rendering, { svgChannel: "auto" });
+    assert.deepStrictEqual(theme.fileViewBoxes, {});
+    assert.strictEqual(theme.miniMode.viewBox, null);
+  });
+
+  it("preserves trustedRuntime only for built-in themes and sanitizes filenames", () => {
+    const theme = themeLoader.loadTheme("trusted", { strict: true });
+    const rendererConfig = contextFor(theme).getRendererConfig();
+
+    assert.strictEqual(theme._builtin, true);
+    assert.deepStrictEqual(theme.trustedRuntime, {
+      scriptedSvgFiles: ["scripted.svg", "also-scripted.svg"],
+      scriptedSvgCycleMs: {
+        "scripted.svg": 2400,
+        "also-scripted.svg": 3600,
+      },
+    });
+    assert.deepStrictEqual(rendererConfig.trustedScriptedSvgFiles, ["scripted.svg", "also-scripted.svg"]);
+    assert.deepStrictEqual(rendererConfig.fileViewBoxes, {
+      "mini-special.svg": { x: -12, y: -12, width: 48, height: 48 },
+    });
+    assert.deepStrictEqual(rendererConfig.miniModeViewBox, { x: -12, y: -12, width: 48, height: 48 });
+    assert.deepStrictEqual(theme.fileViewBoxes, {
+      "mini-special.svg": { x: -12, y: -12, width: 48, height: 48 },
+    });
+    assert.deepStrictEqual(theme.miniMode.viewBox, { x: -12, y: -12, width: 48, height: 48 });
+  });
+
+  it("does not let external themes forge trustedRuntime into renderer config", () => {
+    const warn = mock.method(console, "warn", () => {});
+
+    const theme = themeLoader.loadTheme("forged", { strict: true });
+    const rendererConfig = contextFor(theme).getRendererConfig();
+
+    assert.strictEqual(theme._builtin, false);
+    assert.deepStrictEqual(theme.trustedRuntime, { scriptedSvgFiles: [] });
+    assert.deepStrictEqual(rendererConfig.trustedScriptedSvgFiles, []);
+    assert.deepStrictEqual(rendererConfig.fileViewBoxes, {
+      "mini-special.svg": { x: -10, y: -10, width: 40, height: 40 },
+    });
+    assert.deepStrictEqual(rendererConfig.miniModeViewBox, { x: -10, y: -10, width: 40, height: 40 });
+    assert.strictEqual(warn.mock.callCount(), 1);
+    assert.match(warn.mock.calls[0].arguments[0], /trustedRuntime ignored for non-builtin theme "forged"/);
+    assert.deepStrictEqual(theme.fileViewBoxes, {
+      "mini-special.svg": { x: -10, y: -10, width: 40, height: 40 },
+    });
+    assert.deepStrictEqual(theme.miniMode.viewBox, { x: -10, y: -10, width: 40, height: 40 });
+  });
+
+  it("passes forced SVG object-channel rendering through for external themes", () => {
+    const theme = themeLoader.loadTheme("forced-object", { strict: true });
+    const rendererConfig = contextFor(theme).getRendererConfig();
+
+    assert.strictEqual(theme._builtin, false);
+    assert.deepStrictEqual(theme.rendering, { svgChannel: "object" });
+    assert.deepStrictEqual(rendererConfig.rendering, { svgChannel: "object" });
+    assert.deepStrictEqual(rendererConfig.eyeTrackingStates, []);
+    assert.deepStrictEqual(rendererConfig.trustedScriptedSvgFiles, []);
+    assert.strictEqual(theme.reactions.clickLeft.file, "react-once.svg");
+  });
+
+  it("rejects path traversal before marking a theme as built-in", () => {
+    const escapedDir = path.join(fixture.tmp, "escaped-theme");
+    fs.mkdirSync(escapedDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(escapedDir, "theme.json"),
+      JSON.stringify(validThemeJson({
+        name: "Escaped",
+        trustedRuntime: { scriptedSvgFiles: ["escaped.svg"] },
+      })),
+      "utf8"
+    );
+
+    assert.throws(
+      () => themeLoader.loadTheme(path.join("..", "escaped-theme"), { strict: true }),
+      /not found/
+    );
   });
 });
 
@@ -141,5 +406,827 @@ describe("theme-loader getThemeMetadata", () => {
     // (Exercising the positive path requires writing assets; we trust
     // path.basename() + fs.existsSync as leaf pieces.)
     assert.strictEqual(meta.previewFileUrl, null);
+  });
+});
+
+describe("theme-loader preview sound selection", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      {
+        id: "preview-theme",
+        builtin: false,
+        json: validThemeJson({
+          name: "Preview Theme",
+          sounds: {
+            confirm: "preview-confirm.mp3",
+          },
+        }),
+      },
+      {
+        id: "fallback-theme",
+        builtin: false,
+        json: validThemeJson({
+          name: "Fallback Theme",
+          sounds: {
+            confirm: null,
+          },
+        }),
+      },
+      {
+        id: "silent-theme",
+        builtin: false,
+        json: validThemeJson({
+          name: "Silent Theme",
+          sounds: {
+            confirm: null,
+            complete: null,
+          },
+        }),
+      },
+    ]);
+
+    fs.writeFileSync(path.join(fixture.tmp, "assets", "sounds", "complete.mp3"), "complete", "utf8");
+
+    for (const themeId of ["preview-theme", "fallback-theme", "silent-theme"]) {
+      fs.mkdirSync(path.join(fixture.tmp, "userData", "themes", themeId, "assets"), { recursive: true });
+    }
+
+    const previewSoundsDir = path.join(fixture.tmp, "userData", "themes", "preview-theme", "sounds");
+    fs.mkdirSync(previewSoundsDir, { recursive: true });
+    fs.writeFileSync(path.join(previewSoundsDir, "preview-confirm.mp3"), "confirm", "utf8");
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("prefers confirm for settings preview when available", () => {
+    const theme = themeLoader.loadTheme("preview-theme", { strict: true });
+    const previewUrl = contextFor(theme).getPreviewSoundUrl();
+    assert.ok(previewUrl, "preview URL expected");
+    assert.ok(previewUrl.includes("preview-confirm.mp3"));
+  });
+
+  it("falls back to complete when confirm is unavailable", () => {
+    const theme = themeLoader.loadTheme("fallback-theme", { strict: true });
+    const previewUrl = contextFor(theme).getPreviewSoundUrl();
+    assert.ok(previewUrl, "preview URL expected");
+    assert.ok(previewUrl.includes("complete.mp3"));
+  });
+
+  it("returns null when neither confirm nor complete is available", () => {
+    const theme = themeLoader.loadTheme("silent-theme", { strict: true });
+    assert.strictEqual(contextFor(theme).getPreviewSoundUrl(), null);
+  });
+});
+
+describe("theme-loader fileHitBoxes", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      {
+        id: "filehit",
+        builtin: true,
+        json: validThemeJson({
+          name: "File Hitboxes",
+          fileHitBoxes: {
+            "./nested/working.svg": { x: 1, y: 2, w: 3, h: 4 },
+            "zero-width.svg": { x: 1, y: 2, w: 0, h: 4 },
+            "missing-height.svg": { x: 1, y: 2, w: 3 },
+            "not-object.svg": 42,
+          },
+        }),
+      },
+      {
+        id: "variant-filehit",
+        builtin: true,
+        json: validThemeJson({
+          name: "Variant File Hitboxes",
+          fileHitBoxes: {
+            "base.svg": { x: 0, y: 1, w: 2, h: 3 },
+            "pose.svg": { x: 1, y: 2, w: 3, h: 4 },
+          },
+          variants: {
+            tuned: {
+              fileHitBoxes: {
+                "pose.svg": { x: 10, y: 20, w: 30, h: 40 },
+                "./nested/extra.svg": { x: 5, y: 6, w: 7, h: 8 },
+              },
+            },
+            partial: {
+              fileHitBoxes: {
+                "pose.svg": { x: 99 },
+              },
+            },
+          },
+        }),
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("normalizes basename keys and drops invalid entries with warnings", () => {
+    const warn = mock.method(console, "warn", () => {});
+
+    const theme = themeLoader.loadTheme("filehit", { strict: true });
+
+    assert.deepStrictEqual(theme.fileHitBoxes, {
+      "working.svg": { x: 1, y: 2, w: 3, h: 4 },
+    });
+    assert.ok(warn.mock.callCount() >= 3);
+  });
+
+  it("variant fileHitBoxes merge by file key and replace whole rects", () => {
+    const theme = themeLoader.loadTheme("variant-filehit", { strict: true, variant: "tuned" });
+
+    assert.deepStrictEqual(theme.fileHitBoxes, {
+      "base.svg": { x: 0, y: 1, w: 2, h: 3 },
+      "pose.svg": { x: 10, y: 20, w: 30, h: 40 },
+      "extra.svg": { x: 5, y: 6, w: 7, h: 8 },
+    });
+  });
+
+  it("variant partial rects are rejected instead of deep-merged", () => {
+    const warn = mock.method(console, "warn", () => {});
+
+    const theme = themeLoader.loadTheme("variant-filehit", { strict: true, variant: "partial" });
+
+    assert.deepStrictEqual(theme.fileHitBoxes["pose.svg"], { x: 1, y: 2, w: 3, h: 4 });
+    assert.ok(warn.mock.callCount() >= 1);
+  });
+});
+
+describe("theme-loader discovery", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      {
+        id: "clawd",
+        builtin: true,
+        json: validThemeJson({ name: "Clawd" }),
+      },
+      {
+        id: "template",
+        builtin: true,
+        json: validThemeJson({ name: "My Theme", _scaffoldOnly: true }),
+      },
+      {
+        id: "user-cat",
+        builtin: false,
+        json: validThemeJson({ name: "User Cat" }),
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("skips the built-in template from discoverThemes and metadata scans", () => {
+    const discovered = themeLoader.discoverThemes().map((theme) => theme.id);
+    assert.deepStrictEqual(discovered.sort(), ["clawd", "user-cat"]);
+
+    const listed = themeLoader.listThemesWithMetadata().map((theme) => theme.id);
+    assert.deepStrictEqual(listed.sort(), ["clawd", "user-cat"]);
+  });
+});
+
+describe("theme-loader external SVG sanitization", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      {
+        id: "clawd",
+        builtin: true,
+        json: validThemeJson({ name: "Clawd" }),
+      },
+      {
+        id: "unsafe-inline-style",
+        builtin: false,
+        json: validThemeJson({ name: "Unsafe Inline Style" }),
+        assets: {
+          "pattern.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+          "idle.svg": [
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+            "  <rect",
+            "    style=\"fill:url(pattern.svg#grad);stroke:url(#allowed);filter:url(https://example.com/filter.svg#p)\"",
+            "    fill=\"url(pattern.svg#fill)\"",
+            "    mask=\"url(//bad.example/fill.svg#p)\"",
+            "    width=\"10\" height=\"10\"/>",
+            "  <use href=\"pattern.svg#shape\"/>",
+            "  <use href=\"//attacker.com/x.svg#p\"/>",
+            "  <image href=\"..%2F..%2Fetc%2Fpasswd\"/>",
+            "</svg>",
+          ].join(""),
+        },
+      },
+      {
+        id: "safe-raster-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Safe Raster Ref" }),
+        assets: {
+          "spritesheet.webp": "fake-webp",
+          "nested/sheet.png": "fake-png",
+          "idle.svg": [
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+            "  <style>.bg { fill: url(#local); background: url('./nested/sheet.png'); }</style>",
+            "  <defs><clipPath id=\"frame\"><rect width=\"10\" height=\"10\"/></clipPath></defs>",
+            "  <g clip-path=\"url(#frame)\">",
+            "    <image href=\"spritesheet.webp\"/>",
+            "  </g>",
+            "</svg>",
+          ].join(""),
+        },
+      },
+      {
+        id: "missing-raster-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Missing Raster Ref" }),
+        assets: {
+          "idle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"missing.webp\"/></svg>",
+        },
+      },
+      {
+        id: "repair-raster-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Repair Raster Ref" }),
+        assets: {
+          "spritesheet.webp": "repair-webp",
+          "idle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"spritesheet.webp\"/></svg>",
+        },
+      },
+      {
+        id: "invalidation-raster-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Invalidation Raster Ref" }),
+        assets: {
+          "spritesheet.webp": "old-webp",
+          "idle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"spritesheet.webp\"/></svg>",
+        },
+      },
+      {
+        id: "orphan-raster-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Orphan Raster Ref" }),
+        assets: {
+          "a.webp": "raster-a",
+          "b.webp": "raster-b",
+          "idle.svg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><image href=\"a.webp\"/></svg>",
+        },
+      },
+      {
+        id: "legacy-cache-ref",
+        builtin: false,
+        json: validThemeJson({ name: "Legacy Cache Ref" }),
+        assets: {
+          "spritesheet.webp": "legacy-webp",
+          "idle.svg": [
+            "<svg xmlns=\"http://www.w3.org/2000/svg\">",
+            "  <script>alert(1)</script>",
+            "  <image href=\"spritesheet.webp\"/>",
+            "</svg>",
+          ].join(""),
+        },
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("strips unsafe href/url references while preserving safe local ones", () => {
+    const theme = themeLoader.loadTheme("unsafe-inline-style", { strict: true });
+    const sanitizedPath = contextFor(theme).resolveAssetPath("idle.svg");
+    const sanitized = fs.readFileSync(sanitizedPath, "utf8");
+
+    assert.ok(sanitized.includes("fill:url(pattern.svg#grad)"), "safe relative CSS url should survive");
+    assert.ok(sanitized.includes("stroke:url(#allowed)"), "internal fragment url should survive");
+    assert.ok(sanitized.includes("fill=\"url(pattern.svg#fill)\""), "safe relative presentation attr should survive");
+    assert.ok(sanitized.includes("href=\"pattern.svg#shape\""), "safe relative href should survive");
+    assert.ok(!sanitized.includes("https://example.com"), "inline style external url should be removed");
+    assert.ok(!sanitized.includes("//bad.example"), "protocol-relative presentation attr should be removed");
+    assert.ok(!sanitized.includes("//attacker.com"), "protocol-relative href should be removed");
+    assert.ok(!sanitized.includes("..%2F..%2Fetc%2Fpasswd"), "encoded traversal href should be removed");
+  });
+
+  it("copies safe relative raster dependencies beside cached SVGs", () => {
+    const theme = themeLoader.loadTheme("safe-raster-ref", { strict: true });
+    const sanitizedPath = contextFor(theme).resolveAssetPath("idle.svg");
+    const sanitized = fs.readFileSync(sanitizedPath, "utf8");
+    const cachedAssetsDir = path.dirname(sanitizedPath);
+    const cachedWebp = path.join(cachedAssetsDir, "spritesheet.webp");
+    const cachedPng = path.join(cachedAssetsDir, "nested", "sheet.png");
+    const cacheMetaPath = path.join(path.dirname(cachedAssetsDir), ".cache-meta.json");
+    const cacheMeta = JSON.parse(fs.readFileSync(cacheMetaPath, "utf8"));
+
+    assert.ok(sanitized.includes("<image"), "safe local image element should survive sanitization");
+    assert.strictEqual(fs.readFileSync(cachedWebp, "utf8"), "fake-webp");
+    assert.strictEqual(fs.readFileSync(cachedPng, "utf8"), "fake-png");
+    assert.strictEqual(cacheMeta.version, 2);
+    assert.ok(cacheMeta.svgs["idle.svg"]);
+    assert.ok(cacheMeta.rasters["spritesheet.webp"]);
+    assert.ok(cacheMeta.rasters["nested/sheet.png"]);
+    assert.ok(!cacheMeta.rasters["#frame"]);
+  });
+
+  it("rejects missing SVG raster dependencies in strict mode", () => {
+    const warn = mock.method(console, "warn", () => {});
+
+    assert.throws(
+      () => themeLoader.loadTheme("missing-raster-ref", { strict: true }),
+      /missing raster dependencies: missing\.webp/
+    );
+    assert.ok(warn.mock.calls.some((call) => String(call.arguments[0]).includes("Missing raster dependency")));
+  });
+
+  it("repairs a missing cached raster when metadata still exists", () => {
+    const theme = themeLoader.loadTheme("repair-raster-ref", { strict: true });
+    const cachedAssetsDir = path.dirname(contextFor(theme).resolveAssetPath("idle.svg"));
+    const cachedWebp = path.join(cachedAssetsDir, "spritesheet.webp");
+
+    assert.strictEqual(fs.readFileSync(cachedWebp, "utf8"), "repair-webp");
+    fs.rmSync(cachedWebp, { force: true });
+
+    themeLoader.loadTheme("repair-raster-ref", { strict: true });
+    assert.strictEqual(fs.readFileSync(cachedWebp, "utf8"), "repair-webp");
+  });
+
+  it("invalidates cached rasters when source mtime or size changes", () => {
+    const theme = themeLoader.loadTheme("invalidation-raster-ref", { strict: true });
+    const cachedAssetsDir = path.dirname(contextFor(theme).resolveAssetPath("idle.svg"));
+    const cachedWebp = path.join(cachedAssetsDir, "spritesheet.webp");
+    const sourceWebp = path.join(fixture.tmp, "userData", "themes", "invalidation-raster-ref", "assets", "spritesheet.webp");
+
+    assert.strictEqual(fs.readFileSync(cachedWebp, "utf8"), "old-webp");
+    fs.writeFileSync(sourceWebp, "new-webp-content", "utf8");
+
+    themeLoader.loadTheme("invalidation-raster-ref", { strict: true });
+    assert.strictEqual(fs.readFileSync(cachedWebp, "utf8"), "new-webp-content");
+  });
+
+  it("removes orphaned cached rasters after SVG references change", () => {
+    const theme = themeLoader.loadTheme("orphan-raster-ref", { strict: true });
+    const cachedAssetsDir = path.dirname(contextFor(theme).resolveAssetPath("idle.svg"));
+    const cachedA = path.join(cachedAssetsDir, "a.webp");
+    const cachedB = path.join(cachedAssetsDir, "b.webp");
+    const sourceSvg = path.join(fixture.tmp, "userData", "themes", "orphan-raster-ref", "assets", "idle.svg");
+
+    assert.strictEqual(fs.readFileSync(cachedA, "utf8"), "raster-a");
+    fs.writeFileSync(
+      sourceSvg,
+      "<svg xmlns=\"http://www.w3.org/2000/svg\"><g><image href=\"b.webp\"/></g></svg>",
+      "utf8"
+    );
+
+    themeLoader.loadTheme("orphan-raster-ref", { strict: true });
+    const cacheMeta = JSON.parse(fs.readFileSync(path.join(path.dirname(cachedAssetsDir), ".cache-meta.json"), "utf8"));
+    assert.strictEqual(fs.existsSync(cachedA), false);
+    assert.strictEqual(fs.readFileSync(cachedB, "utf8"), "raster-b");
+    assert.ok(!cacheMeta.rasters["a.webp"]);
+    assert.ok(cacheMeta.rasters["b.webp"]);
+  });
+
+  it("migrates legacy flat cache metadata and refreshes cached SVGs", () => {
+    const themeId = "legacy-cache-ref";
+    const sourceSvg = path.join(fixture.tmp, "userData", "themes", themeId, "assets", "idle.svg");
+    const cacheRoot = path.join(fixture.tmp, "userData", "theme-cache", themeId);
+    const cacheAssetsDir = path.join(cacheRoot, "assets");
+    fs.mkdirSync(cacheAssetsDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheAssetsDir, "idle.svg"), "<svg><script>stale()</script></svg>", "utf8");
+    const sourceStat = fs.statSync(sourceSvg);
+    fs.writeFileSync(
+      path.join(cacheRoot, ".cache-meta.json"),
+      JSON.stringify({ "idle.svg": { mtime: sourceStat.mtimeMs, size: sourceStat.size } }),
+      "utf8"
+    );
+
+    const theme = themeLoader.loadTheme(themeId, { strict: true });
+    const sanitized = fs.readFileSync(contextFor(theme).resolveAssetPath("idle.svg"), "utf8");
+    const cacheMeta = JSON.parse(fs.readFileSync(path.join(cacheRoot, ".cache-meta.json"), "utf8"));
+
+    assert.strictEqual(cacheMeta.version, 2);
+    assert.ok(cacheMeta.svgs["idle.svg"]);
+    assert.ok(cacheMeta.rasters["spritesheet.webp"]);
+    assert.ok(sanitized.includes("<image"));
+    assert.ok(!sanitized.includes("<script"));
+    assert.ok(!sanitized.includes("stale()"));
+  });
+});
+
+describe("theme-loader capability metadata", () => {
+  let fixture;
+  before(() => {
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      {
+        id: "capTheme",
+        builtin: true,
+        json: validThemeJson({
+          name: "Capabilities",
+          eyeTracking: { enabled: true, states: ["idle"] },
+          workingTiers: [{ minSessions: 1, file: "working-tier.svg" }],
+          jugglingTiers: [{ minSessions: 1, file: "juggling-tier.svg" }],
+          idleAnimations: [{ file: "idle-loop.png", duration: 1200 }],
+          reactions: { drag: { file: "drag.png" } },
+          miniMode: { supported: false },
+        }),
+      },
+      {
+        id: "implicitMini",
+        builtin: true,
+        json: validThemeJson({
+          name: "Implicit Mini",
+          miniMode: fullMiniMode({ supported: undefined }),
+        }),
+      },
+      {
+        id: "badMini",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Mini",
+          miniMode: {
+            supported: true,
+            states: {
+              "mini-idle": ["mini-idle.svg"],
+              "mini-enter": ["mini-enter.svg"],
+            },
+          },
+        }),
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("derives _capabilities from the current schema fields", () => {
+    const theme = themeLoader.loadTheme("capTheme", { strict: true });
+    assert.deepStrictEqual(theme._capabilities, {
+      eyeTracking: true,
+      miniMode: false,
+      idleAnimations: true,
+      reactions: true,
+      workingTiers: true,
+      jugglingTiers: true,
+      idleMode: "tracked",
+      sleepMode: "full",
+    });
+  });
+
+  it("includes capabilities in theme metadata scans", () => {
+    const meta = themeLoader.getThemeMetadata("capTheme");
+    assert.deepStrictEqual(meta.capabilities, {
+      eyeTracking: true,
+      miniMode: false,
+      idleAnimations: true,
+      reactions: true,
+      workingTiers: true,
+      jugglingTiers: true,
+      idleMode: "tracked",
+      sleepMode: "full",
+    });
+
+    const listed = themeLoader.listThemesWithMetadata().find((theme) => theme.id === "capTheme");
+    assert.ok(listed, "capTheme should appear in metadata list");
+    assert.deepStrictEqual(listed.capabilities, meta.capabilities);
+  });
+
+  it("treats a miniMode block as supported unless supported=false", () => {
+    const theme = themeLoader.loadTheme("implicitMini", { strict: true });
+    assert.strictEqual(theme._capabilities.miniMode, true);
+  });
+
+  it("strict load rejects mini themes that do not define all 8 mini states", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badMini", { strict: true }),
+      /miniMode\.supported=true requires miniMode\.states\.mini-enter-sleep/
+    );
+  });
+});
+
+describe("theme-loader fallback + sleepSequence", () => {
+  let fixture;
+  before(() => {
+    const directSleepStates = {
+      idle: ["idle.svg"],
+      thinking: ["thinking.svg"],
+      working: ["working.svg"],
+      attention: ["attention.svg"],
+      error: { fallbackTo: "attention" },
+      sleeping: { fallbackTo: "idle" },
+    };
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      {
+        id: "directSleep",
+        builtin: true,
+        json: validThemeJson({
+          name: "Direct Sleep",
+          states: directSleepStates,
+          idleAnimations: [{ file: "idle-loop.svg", duration: 1800 }],
+          miniMode: fullMiniMode(),
+          sleepSequence: { mode: "direct" },
+        }),
+      },
+      {
+        id: "badSleepMode",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Sleep Mode",
+          sleepSequence: { mode: "instant" },
+        }),
+      },
+      {
+        id: "badFallbackCycle",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Fallback Cycle",
+          states: {
+            ...validThemeJson().states,
+            error: { fallbackTo: "attention" },
+            attention: { fallbackTo: "error" },
+          },
+        }),
+      },
+      {
+        id: "badFallbackHop",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Fallback Hop",
+          states: {
+            ...validThemeJson().states,
+            error: { fallbackTo: "attention" },
+            attention: { fallbackTo: "notification" },
+            notification: { fallbackTo: "carrying" },
+            carrying: { fallbackTo: "sleeping" },
+          },
+        }),
+      },
+      {
+        id: "badFallbackSource",
+        builtin: true,
+        json: validThemeJson({
+          name: "Bad Fallback Source",
+          states: {
+            ...validThemeJson().states,
+            waking: { fallbackTo: "idle" },
+          },
+          sleepSequence: { mode: "direct" },
+        }),
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("normalizes object-form state bindings and direct sleep mode", () => {
+    const theme = themeLoader.loadTheme("directSleep", { strict: true });
+    assert.strictEqual(theme.sleepSequence.mode, "direct");
+    assert.deepStrictEqual(theme.states.error, []);
+    assert.deepStrictEqual(theme._stateBindings.error, {
+      files: [],
+      fallbackTo: "attention",
+    });
+    assert.deepStrictEqual(theme._stateBindings.sleeping, {
+      files: [],
+      fallbackTo: "idle",
+    });
+    assert.strictEqual(theme._capabilities.sleepMode, "direct");
+
+    const meta = themeLoader.getThemeMetadata("directSleep");
+    assert.strictEqual(meta.capabilities.sleepMode, "direct");
+  });
+
+  it("user overrides can materialize a fallback-only state without dropping fallbackTo", () => {
+    const theme = themeLoader.loadTheme("directSleep", {
+      strict: true,
+      overrides: {
+        states: {
+          error: {
+            file: "custom-error.svg",
+            transition: { in: 30, out: 60 },
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(theme.states.error, ["custom-error.svg"]);
+    assert.deepStrictEqual(theme._stateBindings.error, {
+      files: ["custom-error.svg"],
+      fallbackTo: "attention",
+    });
+    assert.deepStrictEqual(theme.transitions["custom-error.svg"], { in: 30, out: 60 });
+  });
+
+  it("user overrides can patch mini states and idle animations", () => {
+    const theme = themeLoader.loadTheme("directSleep", {
+      strict: true,
+      overrides: {
+        states: {
+          "mini-idle": {
+            file: "custom-mini-idle.svg",
+            transition: { in: 10, out: 20 },
+          },
+        },
+        idleAnimations: {
+          "idle-loop.svg": {
+            file: "custom-idle-loop.svg",
+            transition: { in: 25, out: 35 },
+            durationMs: 4200,
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(theme.miniMode.states["mini-idle"], ["custom-mini-idle.svg"]);
+    assert.strictEqual(theme.idleAnimations[0].file, "custom-idle-loop.svg");
+    assert.strictEqual(theme.idleAnimations[0].duration, 4200);
+    assert.deepStrictEqual(theme.transitions["custom-mini-idle.svg"], { in: 10, out: 20 });
+    assert.deepStrictEqual(theme.transitions["custom-idle-loop.svg"], { in: 25, out: 35 });
+  });
+
+  it("rejects invalid sleepSequence values", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badSleepMode", { strict: true }),
+      /sleepSequence\.mode must be "full" or "direct"/
+    );
+  });
+
+  it("rejects fallback cycles and overlong chains", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badFallbackCycle", { strict: true }),
+      /forms a cycle|does not terminate in real files/
+    );
+    assert.throws(
+      () => themeLoader.loadTheme("badFallbackHop", { strict: true }),
+      /exceeds 3 hop limit/
+    );
+  });
+
+  it("rejects fallbackTo on unsupported source states", () => {
+    assert.throws(
+      () => themeLoader.loadTheme("badFallbackSource", { strict: true }),
+      /states\.waking\.fallbackTo is only allowed on/
+    );
+  });
+});
+
+// ── Phase 3b-swap: variant support ──
+describe("theme-loader variant loading", () => {
+  let fixture;
+  before(() => {
+    const variantTheme = validThemeJson({
+      name: "Variant Host",
+      workingTiers: [
+        { minSessions: 2, file: "pose-a.svg" },
+        { minSessions: 1, file: "pose-b.svg" },
+      ],
+      jugglingTiers: [{ minSessions: 1, file: "pose-b.svg" }],
+      displayHintMap: { "pose-a.svg": "pose-a.svg" },
+      hitBoxes: { default: { x: 0, y: 0, w: 10, h: 10 } },
+      timings: { autoReturn: { attention: 4000 }, yawnDuration: 3000 },
+      objectScale: { widthRatio: 1, heightRatio: 1, offsetX: 0, offsetY: 0 },
+      variantsSchemaVersion: 0,
+      variants: {
+        chill: {
+          name: { en: "Chill", zh: "松弛" },
+          description: "slower",
+          workingTiers: [
+            { minSessions: 3, file: "pose-c.svg" },
+            { minSessions: 1, file: "pose-b.svg" },
+          ],
+          timings: { autoReturn: { attention: 8000 } },
+          displayHintMap: { "pose-c.svg": "pose-c.svg" },
+          garbageField: "ignored",  // not in allow-list
+        },
+        strictDefault: {
+          // Explicit default that replaces the synthetic one
+          name: "Explicit default",
+        },
+      },
+    });
+    fixture = makeFixture([
+      { id: "clawd", builtin: true, json: validThemeJson({ name: "Clawd" }) },
+      { id: "host", builtin: true, json: variantTheme },
+      {
+        id: "novariants",
+        builtin: true,
+        json: validThemeJson({ name: "Plain" }),
+      },
+    ]);
+  });
+  after(() => fixture && fixture.cleanup());
+
+  it("default request returns _variantId='default' when theme has no variants", () => {
+    const theme = themeLoader.loadTheme("novariants");
+    assert.strictEqual(theme._variantId, "default");
+  });
+
+  it("unknown variant lenient-falls back to default", () => {
+    const theme = themeLoader.loadTheme("host", { variant: "nonexistent" });
+    assert.strictEqual(theme._variantId, "default");
+    // Fallback to default means original tiers untouched (not "chill" tiers)
+    assert.deepStrictEqual(
+      theme.workingTiers.map((t) => t.file),
+      ["pose-a.svg", "pose-b.svg"]
+    );
+  });
+
+  it("named variant patches workingTiers via replace semantics", () => {
+    const theme = themeLoader.loadTheme("host", { variant: "chill" });
+    assert.strictEqual(theme._variantId, "chill");
+    // Patch replaced tiers wholesale — and mergeDefaults ran after, so tiers
+    // are sorted descending by minSessions. Proves patch-before-merge order.
+    assert.deepStrictEqual(
+      theme.workingTiers.map((t) => t.file),
+      ["pose-c.svg", "pose-b.svg"]
+    );
+    assert.deepStrictEqual(
+      theme.workingTiers.map((t) => t.minSessions),
+      [3, 1]
+    );
+  });
+
+  it("variant patches timings via deep-merge (scalars + nested objects)", () => {
+    const theme = themeLoader.loadTheme("host", { variant: "chill" });
+    assert.strictEqual(theme.timings.autoReturn.attention, 8000);  // patched
+    assert.strictEqual(theme.timings.yawnDuration, 3000);          // preserved
+    // base autoReturn.error was unspecified — mergeDefaults fills DEFAULT 5000
+    assert.strictEqual(theme.timings.autoReturn.error, 5000);
+  });
+
+  it("variant replaces displayHintMap wholesale (not deep-merge)", () => {
+    const theme = themeLoader.loadTheme("host", { variant: "chill" });
+    // chill replaced the entire map → "pose-a.svg" key is gone
+    assert.strictEqual(theme.displayHintMap["pose-a.svg"], undefined);
+    assert.strictEqual(theme.displayHintMap["pose-c.svg"], "pose-c.svg");
+  });
+
+  it("out-of-allow-list fields in variant are ignored silently", () => {
+    const theme = themeLoader.loadTheme("host", { variant: "chill" });
+    assert.strictEqual(theme.garbageField, undefined);
+  });
+
+  it("getThemeMetadata.variants synthesizes a default entry when author omits it", () => {
+    const meta = themeLoader.getThemeMetadata("host");
+    assert.ok(Array.isArray(meta.variants));
+    const ids = meta.variants.map((v) => v.id);
+    // host declares `chill` + `strictDefault` explicitly; since no `default`
+    // is declared, loader synthesizes one.
+    assert.ok(ids.includes("default"), `expected synthetic default in ${ids.join(",")}`);
+    assert.ok(ids.includes("chill"));
+    assert.ok(ids.includes("strictDefault"));
+  });
+
+  it("getThemeMetadata.variants preserves i18n-style name object as-is", () => {
+    const meta = themeLoader.getThemeMetadata("host");
+    const chill = meta.variants.find((v) => v.id === "chill");
+    assert.deepStrictEqual(chill.name, { en: "Chill", zh: "松弛" });
+    assert.strictEqual(chill.description, "slower");
+  });
+
+  it("getThemeMetadata.variants returns single-item list for theme with no variants", () => {
+    const meta = themeLoader.getThemeMetadata("novariants");
+    assert.strictEqual(meta.variants.length, 1);
+    assert.strictEqual(meta.variants[0].id, "default");
+  });
+
+  it("user overrides patch states / tiers / timings on top of the resolved variant", () => {
+    const theme = themeLoader.loadTheme("host", {
+      variant: "chill",
+      overrides: {
+        states: {
+          thinking: {
+            file: "custom-thinking.svg",
+            transition: { in: 80, out: 120 },
+          },
+        },
+        tiers: {
+          workingTiers: {
+            "pose-c.svg": {
+              file: "custom-working.svg",
+              transition: { in: 10, out: 40 },
+            },
+          },
+        },
+        timings: {
+          autoReturn: { attention: 6400 },
+        },
+      },
+    });
+    assert.strictEqual(theme.states.thinking[0], "custom-thinking.svg");
+    assert.deepStrictEqual(
+      theme.workingTiers.map((t) => t.file),
+      ["custom-working.svg", "pose-b.svg"]
+    );
+    assert.deepStrictEqual(theme.transitions["custom-thinking.svg"], { in: 80, out: 120 });
+    assert.deepStrictEqual(theme.transitions["custom-working.svg"], { in: 10, out: 40 });
+    assert.strictEqual(theme.timings.autoReturn.attention, 6400);
+  });
+
+  it("stores pre-override tier bindings for UI card identity", () => {
+    const theme = themeLoader.loadTheme("host", {
+      variant: "chill",
+      overrides: {
+        tiers: {
+          jugglingTiers: {
+            "pose-b.svg": { file: "custom-juggling.svg" },
+          },
+        },
+      },
+    });
+    assert.deepStrictEqual(theme._bindingBase.jugglingTiers, [
+      { minSessions: 1, originalFile: "pose-b.svg" },
+    ]);
   });
 });

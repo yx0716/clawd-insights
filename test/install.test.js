@@ -3,7 +3,22 @@ const assert = require("node:assert");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { registerHooks, __test } = require("../hooks/install");
+const { registerHooks, unregisterHooks, registerHooksAsync, unregisterHooksAsync, __test } = require("../hooks/install");
+const { buildPermissionUrl, SERVER_PORTS } = require("../hooks/server-config");
+const {
+  parseClaudeVersion,
+  getWindowsClaudePathSuffixes,
+  getClaudePathCandidates,
+  getClaudePathCandidatesAsync,
+  getClaudePackageJsonCandidates,
+  getClaudePackageJsonCandidatesAsync,
+  getClaudeVersionFromPackageJson,
+  getClaudeVersionFromPackageJsonAsync,
+  readClaudeVersionFallback,
+  readClaudeVersionFallbackAsync,
+  getClaudeVersionAsync,
+  isClawdPermissionUrl,
+} = __test;
 
 const tempDirs = [];
 
@@ -19,23 +34,46 @@ function readSettings(settingsPath) {
   return JSON.parse(fs.readFileSync(settingsPath, "utf8"));
 }
 
-function getClawdCommands(settings, event) {
+function getCommandHookEntries(settings, event, marker) {
   const entries = settings.hooks?.[event];
   if (!Array.isArray(entries)) return [];
-  const commands = [];
+  const hooks = [];
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
-    if (typeof entry.command === "string" && entry.command.includes("clawd-hook.js")) {
-      commands.push(entry.command);
+    if (typeof entry.command === "string" && entry.command.includes(marker)) {
+      hooks.push(entry);
     }
     if (!Array.isArray(entry.hooks)) continue;
     for (const hook of entry.hooks) {
-      if (hook && typeof hook.command === "string" && hook.command.includes("clawd-hook.js")) {
-        commands.push(hook.command);
+      if (hook && typeof hook.command === "string" && hook.command.includes(marker)) {
+        hooks.push(hook);
       }
     }
   }
-  return commands;
+  return hooks;
+}
+
+function getClawdCommands(settings, event) {
+  return getCommandHookEntries(settings, event, "clawd-hook.js").map((hook) => hook.command);
+}
+
+function getHttpUrls(settings, event) {
+  const entries = settings.hooks?.[event];
+  if (!Array.isArray(entries)) return [];
+  const urls = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    if (entry.type === "http" && typeof entry.url === "string") {
+      urls.push(entry.url);
+    }
+    if (!Array.isArray(entry.hooks)) continue;
+    for (const hook of entry.hooks) {
+      if (hook && typeof hook === "object" && hook.type === "http" && typeof hook.url === "string") {
+        urls.push(hook.url);
+      }
+    }
+  }
+  return urls;
 }
 
 afterEach(() => {
@@ -44,7 +82,493 @@ afterEach(() => {
   }
 });
 
+describe("Claude version detection helpers", () => {
+  it("extracts semver from Claude version output", () => {
+    assert.strictEqual(parseClaudeVersion("2.1.109 (Claude Code)"), "2.1.109");
+    assert.strictEqual(parseClaudeVersion("Claude Code vnext"), null);
+    assert.strictEqual(parseClaudeVersion(null), null);
+  });
+
+  it("reuses the in-flight async Claude version probe", async () => {
+    let execCalls = 0;
+    const execFile = async () => {
+      execCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { stdout: "Claude Code 2.1.109\n" };
+    };
+
+    const [a, b] = await Promise.all([
+      getClaudeVersionAsync({
+        platform: "linux",
+        pathEnv: "",
+        candidates: ["/usr/bin/claude"],
+        execFile,
+        resetCache: true,
+      }),
+      getClaudeVersionAsync({
+        platform: "linux",
+        pathEnv: "",
+        candidates: ["/usr/bin/claude"],
+        execFile,
+      }),
+    ]);
+
+    assert.deepStrictEqual(a, b);
+    assert.strictEqual(execCalls, 1);
+  });
+
+  it("reuses a cached async Claude version result after success", async () => {
+    let execCalls = 0;
+    const execFile = async () => {
+      execCalls++;
+      return { stdout: "Claude Code 2.1.109\n" };
+    };
+
+    const first = await getClaudeVersionAsync({
+      platform: "linux",
+      pathEnv: "",
+      candidates: ["/usr/bin/claude"],
+      execFile,
+      resetCache: true,
+    });
+    const second = await getClaudeVersionAsync({
+      platform: "linux",
+      pathEnv: "",
+      candidates: ["/usr/bin/claude"],
+      execFile,
+    });
+
+    assert.strictEqual(first.version, "2.1.109");
+    assert.deepStrictEqual(second, first);
+    assert.strictEqual(execCalls, 1);
+  });
+
+  it("normalizes Windows PATHEXT suffixes with stable order", () => {
+    assert.deepStrictEqual(
+      getWindowsClaudePathSuffixes(".EXE;.Cmd;;BAT;.ps1"),
+      ["", ".cmd", ".ps1", ".exe", ".bat"]
+    );
+  });
+
+  it("finds existing Windows Claude shims from PATH and de-dupes case-insensitively", () => {
+    const npmDir = "C:\\Users\\Tester\\AppData\\Roaming\\npm";
+    const npmDirUpper = "C:\\USERS\\Tester\\AppData\\Roaming\\NPM";
+    const toolsDir = "C:\\Tools";
+    const existing = new Set([
+      path.join(npmDir, "claude.cmd").toLowerCase(),
+      path.join(toolsDir, "claude.ps1").toLowerCase(),
+    ]);
+
+    const candidates = getClaudePathCandidates({
+      platform: "win32",
+      pathEnv: `"${npmDir}";${npmDirUpper};${toolsDir}`,
+      pathExt: ".CMD;.Ps1",
+      existsSync(candidatePath) {
+        return existing.has(candidatePath.toLowerCase());
+      },
+    });
+
+    assert.deepStrictEqual(candidates, [
+      path.join(npmDir, "claude.cmd"),
+      path.join(toolsDir, "claude.ps1"),
+    ]);
+  });
+
+  it("finds existing Windows Claude shims asynchronously from PATH", async () => {
+    const npmDir = "C:\\Users\\Tester\\AppData\\Roaming\\npm";
+    const npmDirUpper = "C:\\USERS\\Tester\\AppData\\Roaming\\NPM";
+    const toolsDir = "C:\\Tools";
+    const existing = new Set([
+      path.join(npmDir, "claude.cmd").toLowerCase(),
+      path.join(toolsDir, "claude.ps1").toLowerCase(),
+    ]);
+
+    const candidates = await getClaudePathCandidatesAsync({
+      platform: "win32",
+      pathEnv: `"${npmDir}";${npmDirUpper};${toolsDir}`,
+      pathExt: ".CMD;.Ps1",
+      async access(candidatePath) {
+        if (!existing.has(candidatePath.toLowerCase())) {
+          throw new Error(`missing: ${candidatePath}`);
+        }
+      },
+    });
+
+    assert.deepStrictEqual(candidates, [
+      path.join(npmDir, "claude.cmd"),
+      path.join(toolsDir, "claude.ps1"),
+    ]);
+  });
+
+  it("finds existing POSIX Claude binaries from PATH", () => {
+    const localDir = "/usr/local/bin";
+    const optDir = "/opt/claude/bin";
+
+    const candidates = getClaudePathCandidates({
+      platform: "linux",
+      pathEnv: `${localDir}:${optDir}`,
+      existsSync(candidatePath) {
+        return candidatePath === path.join(optDir, "claude");
+      },
+    });
+
+    assert.deepStrictEqual(candidates, [path.join(optDir, "claude")]);
+  });
+
+  it("collects Claude package.json candidates from sibling node_modules and realpath targets", () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const candidateDir = path.dirname(candidatePath);
+    const siblingPackageJson = path.join(candidateDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    const realpathCli = "D:\\shim-store\\claude\\cli.js";
+    const realpathPackageJson = path.join(path.dirname(realpathCli), "package.json");
+
+    const candidates = getClaudePackageJsonCandidates(candidatePath, {
+      platform: "win32",
+      existsSync(packageJsonPath) {
+        return packageJsonPath === siblingPackageJson || packageJsonPath === realpathPackageJson;
+      },
+      realpathSync(targetPath) {
+        assert.strictEqual(targetPath, candidatePath);
+        return realpathCli;
+      },
+      statSync() {
+        return { size: 512, isFile: () => true };
+      },
+      readFileSync(targetPath) {
+        assert.strictEqual(targetPath, candidatePath);
+        return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+      },
+    });
+
+    assert.deepStrictEqual(candidates, [
+      siblingPackageJson,
+      realpathPackageJson,
+    ]);
+  });
+
+  it("collects Claude package.json candidates asynchronously", async () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const candidateDir = path.dirname(candidatePath);
+    const siblingPackageJson = path.join(candidateDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    const realpathCli = "D:\\shim-store\\claude\\cli.js";
+    const realpathPackageJson = path.join(path.dirname(realpathCli), "package.json");
+    const existing = new Set([siblingPackageJson.toLowerCase(), realpathPackageJson.toLowerCase()]);
+
+    const candidates = await getClaudePackageJsonCandidatesAsync(candidatePath, {
+      platform: "win32",
+      async access(packageJsonPath) {
+        if (!existing.has(packageJsonPath.toLowerCase())) {
+          throw new Error(`missing: ${packageJsonPath}`);
+        }
+      },
+      async realpath(targetPath) {
+        assert.strictEqual(targetPath, candidatePath);
+        return realpathCli;
+      },
+      async stat() {
+        return { size: 512, isFile: () => true };
+      },
+      async readFile(targetPath) {
+        assert.strictEqual(targetPath, candidatePath);
+        return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+      },
+    });
+
+    assert.deepStrictEqual(candidates, [
+      siblingPackageJson,
+      realpathPackageJson,
+    ]);
+  });
+
+  it("skips reading unusually large shim files", () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const candidateDir = path.dirname(candidatePath);
+    const siblingPackageJson = path.join(candidateDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    let readCount = 0;
+
+    const candidates = getClaudePackageJsonCandidates(candidatePath, {
+      platform: "win32",
+      existsSync(packageJsonPath) {
+        return packageJsonPath === siblingPackageJson;
+      },
+      realpathSync() {
+        throw new Error("no symlink");
+      },
+      statSync() {
+        return { size: 1024 * 1024, isFile: () => true };
+      },
+      readFileSync() {
+        readCount++;
+        throw new Error("should not read large shims");
+      },
+    });
+
+    assert.strictEqual(readCount, 0);
+    assert.deepStrictEqual(candidates, [siblingPackageJson]);
+  });
+
+  it("reads Claude version from package.json when it contains a semver", () => {
+    const packageJsonPath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\package.json";
+
+    assert.deepStrictEqual(
+      getClaudeVersionFromPackageJson(packageJsonPath, {
+        readFileSync(targetPath) {
+          assert.strictEqual(targetPath, packageJsonPath);
+          return JSON.stringify({ version: "2.1.109" });
+        },
+      }),
+      {
+        version: "2.1.109",
+        source: packageJsonPath,
+        status: "known",
+      }
+    );
+
+    assert.strictEqual(
+      getClaudeVersionFromPackageJson(packageJsonPath, {
+        readFileSync() {
+          return JSON.stringify({ version: "latest" });
+        },
+      }),
+      null
+    );
+  });
+
+  it("reads Claude version from package.json asynchronously", async () => {
+    const packageJsonPath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\package.json";
+
+    assert.deepStrictEqual(
+      await getClaudeVersionFromPackageJsonAsync(packageJsonPath, {
+        async readFile(targetPath) {
+          assert.strictEqual(targetPath, packageJsonPath);
+          return JSON.stringify({ version: "2.1.109" });
+        },
+      }),
+      {
+        version: "2.1.109",
+        source: packageJsonPath,
+        status: "known",
+      }
+    );
+
+    assert.strictEqual(
+      await getClaudeVersionFromPackageJsonAsync(packageJsonPath, {
+        async readFile() {
+          return JSON.stringify({ version: "latest" });
+        },
+      }),
+      null
+    );
+  });
+
+  it("returns the first valid fallback version info from candidate package.json files", () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const candidateDir = path.dirname(candidatePath);
+    const siblingPackageJson = path.join(candidateDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    const realpathCli = "D:\\shim-store\\claude\\cli.js";
+    const realpathPackageJson = path.join(path.dirname(realpathCli), "package.json");
+
+    const result = readClaudeVersionFallback(candidatePath, {
+      platform: "win32",
+      existsSync(packageJsonPath) {
+        return packageJsonPath === siblingPackageJson || packageJsonPath === realpathPackageJson;
+      },
+      realpathSync() {
+        return realpathCli;
+      },
+      statSync() {
+        return { size: 256, isFile: () => true };
+      },
+      readFileSync(targetPath) {
+        if (targetPath === candidatePath) {
+          return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+        }
+        if (targetPath === siblingPackageJson) {
+          return JSON.stringify({ version: "latest" });
+        }
+        if (targetPath === realpathPackageJson) {
+          return JSON.stringify({ version: "2.1.109" });
+        }
+        throw new Error(`unexpected read: ${targetPath}`);
+      },
+    });
+
+    assert.deepStrictEqual(result, {
+      version: "2.1.109",
+      source: realpathPackageJson,
+      status: "known",
+    });
+  });
+
+  it("returns the first valid async fallback version info from candidate package.json files", async () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const candidateDir = path.dirname(candidatePath);
+    const siblingPackageJson = path.join(candidateDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    const realpathCli = "D:\\shim-store\\claude\\cli.js";
+    const realpathPackageJson = path.join(path.dirname(realpathCli), "package.json");
+    const existing = new Set([siblingPackageJson.toLowerCase(), realpathPackageJson.toLowerCase()]);
+
+    const result = await readClaudeVersionFallbackAsync(candidatePath, {
+      platform: "win32",
+      async access(packageJsonPath) {
+        if (!existing.has(packageJsonPath.toLowerCase())) {
+          throw new Error(`missing: ${packageJsonPath}`);
+        }
+      },
+      async realpath() {
+        return realpathCli;
+      },
+      async stat() {
+        return { size: 256, isFile: () => true };
+      },
+      async readFile(targetPath) {
+        if (targetPath === candidatePath) {
+          return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+        }
+        if (targetPath === siblingPackageJson) {
+          return JSON.stringify({ version: "latest" });
+        }
+        if (targetPath === realpathPackageJson) {
+          return JSON.stringify({ version: "2.1.109" });
+        }
+        throw new Error(`unexpected read: ${targetPath}`);
+      },
+    });
+
+    assert.deepStrictEqual(result, {
+      version: "2.1.109",
+      source: realpathPackageJson,
+      status: "known",
+    });
+  });
+
+  it("getClaudeVersionAsync uses async metadata fallback when exec probes fail", async () => {
+    const candidatePath = "C:\\Users\\Tester\\AppData\\Roaming\\npm\\claude.cmd";
+    const packageJsonPath = path.join(path.dirname(candidatePath), "node_modules", "@anthropic-ai", "claude-code", "package.json");
+
+    const result = await getClaudeVersionAsync({
+      platform: "win32",
+      candidates: [candidatePath],
+      resetCache: true,
+      async execFile() {
+        throw new Error("spawn failed");
+      },
+      async access(targetPath) {
+        if (targetPath !== packageJsonPath) throw new Error(`missing: ${targetPath}`);
+      },
+      async realpath() {
+        throw new Error("no realpath");
+      },
+      async stat() {
+        return { size: 0, isFile: () => true };
+      },
+      async readFile(targetPath) {
+        if (targetPath === packageJsonPath) return JSON.stringify({ version: "2.1.109" });
+        return "";
+      },
+    });
+
+    assert.deepStrictEqual(result, {
+      version: "2.1.109",
+      source: packageJsonPath,
+      status: "known",
+    });
+  });
+
+  it("getClaudeVersionAsync does not call sync filesystem probes", async () => {
+    const npmDir = "C:\\Users\\Tester\\AppData\\Roaming\\npm";
+    const candidatePath = path.join(npmDir, "claude.cmd");
+    const packageJsonPath = path.join(npmDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+
+    const throwSync = () => {
+      throw new Error("sync filesystem probe should not run");
+    };
+
+    const result = await getClaudeVersionAsync({
+      platform: "win32",
+      pathEnv: npmDir,
+      pathExt: ".CMD",
+      resetCache: true,
+      existsSync: throwSync,
+      statSync: throwSync,
+      readFileSync: throwSync,
+      realpathSync: throwSync,
+      async execFile() {
+        throw new Error("spawn failed");
+      },
+      async access(targetPath) {
+        if (targetPath !== candidatePath && targetPath !== packageJsonPath) {
+          throw new Error(`missing: ${targetPath}`);
+        }
+      },
+      async realpath() {
+        throw new Error("no realpath");
+      },
+      async stat() {
+        return { size: 0, isFile: () => true };
+      },
+      async readFile(targetPath) {
+        if (targetPath === packageJsonPath) return JSON.stringify({ version: "2.1.109" });
+        return "";
+      },
+    });
+
+    assert.deepStrictEqual(result, {
+      version: "2.1.109",
+      source: packageJsonPath,
+      status: "known",
+    });
+  });
+});
+
 describe("Hook installer version compatibility", () => {
+  it("uses PowerShell-safe command hooks on Windows", () => {
+    const settingsPath = makeTempSettings({});
+    registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const stopHooks = getCommandHookEntries(settings, "Stop", "clawd-hook.js");
+    assert.strictEqual(stopHooks.length, 1);
+    assert.strictEqual(stopHooks[0].shell, "powershell");
+    assert.ok(stopHooks[0].command.startsWith('& "node" "'), stopHooks[0].command);
+    assert.ok(stopHooks[0].command.endsWith('" Stop'), stopHooks[0].command);
+  });
+
+  it("keeps remote hooks on the legacy bash-compatible format", () => {
+    const hook = __test.buildCommandHookSpec("node", "/tmp/clawd-hook.js", "Stop", {
+      platform: "win32",
+      remote: true,
+    });
+
+    assert.deepStrictEqual(hook, {
+      type: "command",
+      command: 'CLAWD_REMOTE=1 "node" "/tmp/clawd-hook.js" Stop',
+    });
+  });
+
+  it("does not add a shell field for non-Windows hook registration", () => {
+    const settingsPath = makeTempSettings({});
+    registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "linux",
+      nodeBin: "/usr/bin/node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const stopHooks = getCommandHookEntries(settings, "Stop", "clawd-hook.js");
+    assert.strictEqual(stopHooks.length, 1);
+    assert.ok(!Object.prototype.hasOwnProperty.call(stopHooks[0], "shell"));
+    assert.ok(stopHooks[0].command.startsWith('"/usr/bin/node" "'), stopHooks[0].command);
+  });
+
   it("registers StopFailure when Claude Code is >= 2.1.78", () => {
     const settingsPath = makeTempSettings({});
     const result = registerHooks({
@@ -172,6 +696,67 @@ describe("Hook installer version compatibility", () => {
     assert.ok(!commands[0].includes('/old/path/'));
   });
 
+  it("updates stale Windows hook commands to PowerShell format", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: '"node" "/old/path/clawd-hook.js" Stop' }],
+          },
+        ],
+      },
+    });
+
+    const result = registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const stopHooks = getCommandHookEntries(settings, "Stop", "clawd-hook.js");
+    assert.strictEqual(result.updated, 1);
+    assert.strictEqual(stopHooks.length, 1);
+    assert.strictEqual(stopHooks[0].shell, "powershell");
+    assert.ok(stopHooks[0].command.startsWith("& "), stopHooks[0].command);
+    assert.ok(!stopHooks[0].command.includes("/old/path/"));
+  });
+
+  it("removes stale powershell shell metadata on non-Windows", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{
+              type: "command",
+              shell: "powershell",
+              command: '& "node" "/old/path/clawd-hook.js" Stop',
+            }],
+          },
+        ],
+      },
+    });
+
+    const result = registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "linux",
+      nodeBin: "/usr/bin/node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const stopHooks = getCommandHookEntries(settings, "Stop", "clawd-hook.js");
+    assert.strictEqual(result.updated, 1);
+    assert.strictEqual(stopHooks.length, 1);
+    assert.ok(!Object.prototype.hasOwnProperty.call(stopHooks[0], "shell"));
+    assert.ok(stopHooks[0].command.startsWith('"/usr/bin/node" "'), stopHooks[0].command);
+  });
+
   it("is idempotent on repeated registration", () => {
     const settingsPath = makeTempSettings({});
     registerHooks({
@@ -188,6 +773,34 @@ describe("Hook installer version compatibility", () => {
 
     assert.strictEqual(result.added, 0);
     assert.strictEqual(result.updated, 0);
+  });
+
+  it("is idempotent on repeated Windows registration", () => {
+    const settingsPath = makeTempSettings({});
+    const first = registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+    assert.ok(first.added > 0, "first run should add hooks");
+
+    const second = registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+    assert.strictEqual(second.added, 0);
+    assert.strictEqual(second.updated, 0);
+
+    const settings = readSettings(settingsPath);
+    const stopHooks = getCommandHookEntries(settings, "Stop", "clawd-hook.js");
+    assert.strictEqual(stopHooks.length, 1);
+    assert.strictEqual(stopHooks[0].shell, "powershell");
+    assert.ok(stopHooks[0].command.startsWith("& "), stopHooks[0].command);
   });
 
   it("preserves existing absolute node path when detection fails", () => {
@@ -219,6 +832,90 @@ describe("Hook installer version compatibility", () => {
     assert.ok(!commands[0].startsWith('"node"'), "should not downgrade to bare node");
   });
 
+  it("preserves an existing absolute Windows node path when detection fails", () => {
+    // Issue #317: startup auto-sync must not overwrite the user's manual
+    // `C:\Program Files\nodejs\node.exe` repair with bare `"node"`. install.js
+    // previously gated preservation on POSIX `/` prefixes, so Windows paths
+    // slipped through and got clobbered.
+    const existingWinPath = "C:\\Program Files\\nodejs\\node.exe";
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{
+              type: "command",
+              shell: "powershell",
+              command: `& "${existingWinPath}" "C:/app/hooks/clawd-hook.js" Stop`,
+            }],
+          },
+        ],
+      },
+    });
+
+    registerHooks({
+      silent: true,
+      settingsPath,
+      platform: "win32",
+      nodeBin: null,
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const commands = getClawdCommands(settings, "Stop");
+    assert.strictEqual(commands.length, 1);
+    assert.ok(commands[0].includes(existingWinPath), `expected ${existingWinPath} in: ${commands[0]}`);
+    assert.ok(!commands[0].includes('& "node"'), "should not downgrade to bare node");
+  });
+
+  it("uses PowerShell-safe auto-start hooks on Windows", () => {
+    const settingsPath = makeTempSettings({});
+    registerHooks({
+      silent: true,
+      settingsPath,
+      autoStart: true,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const autoStartHooks = getCommandHookEntries(settings, "SessionStart", "auto-start.js");
+    assert.strictEqual(autoStartHooks.length, 1);
+    assert.strictEqual(autoStartHooks[0].shell, "powershell");
+    assert.ok(autoStartHooks[0].command.startsWith('& "node" "'), autoStartHooks[0].command);
+  });
+
+  it("updates stale Windows auto-start hooks to PowerShell format", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        SessionStart: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: '"node" "/old/path/auto-start.js"' }],
+          },
+        ],
+      },
+    });
+
+    const result = registerHooks({
+      silent: true,
+      settingsPath,
+      autoStart: true,
+      platform: "win32",
+      nodeBin: "node",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    const autoStartHooks = getCommandHookEntries(settings, "SessionStart", "auto-start.js");
+    assert.ok(result.updated >= 1);
+    assert.strictEqual(autoStartHooks.length, 1);
+    assert.strictEqual(autoStartHooks[0].shell, "powershell");
+    assert.ok(autoStartHooks[0].command.startsWith("& "), autoStartHooks[0].command);
+    assert.ok(!autoStartHooks[0].command.includes("/old/path/"));
+  });
+
   it("checks macOS absolute Claude paths before PATH fallback", () => {
     const attempted = [];
     const expectedPath = path.join("/Users/tester", ".claude", "local", "claude");
@@ -243,5 +940,497 @@ describe("Hook installer version compatibility", () => {
       source: expectedPath,
       status: "known",
     });
+  });
+
+  it("falls back to npm shim sibling package.json on Windows when exec fails", () => {
+    const shimDir = "C:\\Users\\Tester\\AppData\\Roaming\\npm";
+    const shimPath = path.join(shimDir, "claude.cmd");
+    const packageJsonPath = path.join(shimDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+    const attempted = [];
+
+    const info = __test.getClaudeVersion({
+      platform: "win32",
+      pathEnv: shimDir,
+      pathExt: ".CMD",
+      existsSync(candidatePath) {
+        return candidatePath === shimPath || candidatePath === packageJsonPath;
+      },
+      execFileSync(command) {
+        attempted.push(command);
+        const err = new Error("spawnSync failed");
+        err.code = "EPERM";
+        throw err;
+      },
+      statSync(targetPath) {
+        assert.strictEqual(targetPath, shimPath);
+        return { size: 512, isFile: () => true };
+      },
+      readFileSync(targetPath) {
+        if (targetPath === shimPath) {
+          return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+        }
+        if (targetPath === packageJsonPath) {
+          return JSON.stringify({ version: "2.1.109" });
+        }
+        throw new Error(`unexpected read: ${targetPath}`);
+      },
+      realpathSync() {
+        throw new Error("not a symlink");
+      },
+    });
+
+    assert.deepStrictEqual(attempted, [shimPath, "claude"]);
+    assert.deepStrictEqual(info, {
+      version: "2.1.109",
+      source: packageJsonPath,
+      status: "known",
+    });
+  });
+
+  it("prefers a later exec-based version over an earlier metadata fallback", () => {
+    const oldShimDir = "C:\\OldClaude";
+    const newShimDir = "C:\\NewClaude";
+    const oldShimPath = path.join(oldShimDir, "claude.cmd");
+    const newShimPath = path.join(newShimDir, "claude.cmd");
+    const oldPackageJsonPath = path.join(oldShimDir, "node_modules", "@anthropic-ai", "claude-code", "package.json");
+
+    const info = __test.getClaudeVersion({
+      platform: "win32",
+      pathEnv: `${oldShimDir};${newShimDir}`,
+      pathExt: ".CMD",
+      existsSync(candidatePath) {
+        return candidatePath === oldShimPath
+          || candidatePath === newShimPath
+          || candidatePath === oldPackageJsonPath;
+      },
+      execFileSync(command) {
+        if (command === oldShimPath || command === "claude") {
+          const err = new Error("spawnSync failed");
+          err.code = "EPERM";
+          throw err;
+        }
+        if (command === newShimPath) return "2.1.109 (Claude Code)\n";
+        throw new Error(`unexpected exec: ${command}`);
+      },
+      statSync(targetPath) {
+        if (targetPath === oldShimPath) return { size: 512, isFile: () => true };
+        throw new Error(`unexpected stat: ${targetPath}`);
+      },
+      readFileSync(targetPath) {
+        if (targetPath === oldShimPath) {
+          return '@ECHO off\n"%dp0%\\node.exe" "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\n';
+        }
+        if (targetPath === oldPackageJsonPath) {
+          return JSON.stringify({ version: "2.1.5" });
+        }
+        throw new Error(`unexpected read: ${targetPath}`);
+      },
+      realpathSync() {
+        throw new Error("not a symlink");
+      },
+    });
+
+    assert.deepStrictEqual(info, {
+      version: "2.1.109",
+      source: newShimPath,
+      status: "known",
+    });
+  });
+});
+
+describe("Claude permission hook ownership", () => {
+  it("recognizes only exact Clawd PermissionRequest URLs on managed ports", () => {
+    for (const port of SERVER_PORTS) {
+      assert.strictEqual(
+        isClawdPermissionUrl(`http://127.0.0.1:${port}/permission`),
+        true,
+        `expected managed port ${port} to be Clawd-owned`
+      );
+    }
+
+    assert.strictEqual(isClawdPermissionUrl("http://127.0.0.1:8080/permission"), false);
+    assert.strictEqual(isClawdPermissionUrl("http://localhost:23333/permission"), false);
+    assert.strictEqual(isClawdPermissionUrl("https://127.0.0.1:23333/permission"), false);
+    assert.strictEqual(isClawdPermissionUrl("http://127.0.0.1:23333/permission?x=1"), false);
+    assert.strictEqual(isClawdPermissionUrl("http://127.0.0.1:23333/permission#frag"), false);
+    assert.strictEqual(isClawdPermissionUrl("http://user@127.0.0.1:23333/permission"), false);
+    assert.strictEqual(isClawdPermissionUrl("http://127.0.0.1/permission"), false);
+  });
+
+  it("preserves third-party local PermissionRequest URLs while adding Clawd HTTP hook", () => {
+    const clawdUrl = buildPermissionUrl(SERVER_PORTS[0]);
+    const settingsPath = makeTempSettings({
+      hooks: {
+        PermissionRequest: [
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://127.0.0.1:8080/permission", timeout: 100 }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://localhost:8080/permission", timeout: 100 }],
+          },
+        ],
+      },
+    });
+
+    registerHooks({
+      silent: true,
+      settingsPath,
+      port: SERVER_PORTS[0],
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    assert.deepStrictEqual(getHttpUrls(settings, "PermissionRequest"), [
+      "http://127.0.0.1:8080/permission",
+      "http://localhost:8080/permission",
+      clawdUrl,
+    ]);
+  });
+
+  it("updates stale Clawd PermissionRequest URLs on managed fallback ports", () => {
+    const expectedUrl = buildPermissionUrl(SERVER_PORTS[0]);
+    const staleUrl = buildPermissionUrl(SERVER_PORTS[SERVER_PORTS.length - 1]);
+    const settingsPath = makeTempSettings({
+      hooks: {
+        PermissionRequest: [
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: staleUrl, timeout: 600 }],
+          },
+        ],
+      },
+    });
+
+    const result = registerHooks({
+      silent: true,
+      settingsPath,
+      port: SERVER_PORTS[0],
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    assert.ok(result.updated >= 1);
+    assert.deepStrictEqual(getHttpUrls(settings, "PermissionRequest"), [expectedUrl]);
+  });
+});
+
+describe("Hook installer deprecated hook cleanup", () => {
+  it("does not register WorktreeCreate on fresh install (issue #127)", () => {
+    const settingsPath = makeTempSettings({});
+    registerHooks({
+      silent: true,
+      settingsPath,
+      claudeVersionInfo: { version: "2.1.112", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(settings.hooks, "WorktreeCreate"),
+      "WorktreeCreate should not be registered"
+    );
+  });
+
+  it("removes stale Clawd WorktreeCreate hook while preserving user-authored entries", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        WorktreeCreate: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/clawd-hook.js" WorktreeCreate' }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/user-worktree.js" WorktreeCreate' }],
+          },
+        ],
+      },
+    });
+
+    const result = registerHooks({
+      silent: true,
+      settingsPath,
+      claudeVersionInfo: { version: "2.1.112", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    assert.ok(Array.isArray(settings.hooks.WorktreeCreate), "user entry should be preserved");
+    assert.strictEqual(settings.hooks.WorktreeCreate.length, 1);
+    assert.strictEqual(
+      settings.hooks.WorktreeCreate[0].hooks[0].command,
+      'node "/tmp/user-worktree.js" WorktreeCreate'
+    );
+    assert.strictEqual(getClawdCommands(settings, "WorktreeCreate").length, 0);
+    assert.ok(result.removed >= 1);
+  });
+
+  it("deletes WorktreeCreate key when the only entry was the Clawd hook", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        WorktreeCreate: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/clawd-hook.js" WorktreeCreate' }],
+          },
+        ],
+      },
+    });
+
+    registerHooks({
+      silent: true,
+      settingsPath,
+      claudeVersionInfo: { version: "2.1.112", source: "test", status: "known" },
+    });
+
+    const settings = readSettings(settingsPath);
+    assert.ok(!Object.prototype.hasOwnProperty.call(settings.hooks, "WorktreeCreate"));
+  });
+});
+
+describe("Hook installer unregisterHooks", () => {
+  it("removes Clawd command hooks, HTTP hook, and auto-start while preserving third-party hooks", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        SessionStart: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", shell: "powershell", command: '& "node" "/tmp/auto-start.js"' }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "command", shell: "powershell", command: '& "node" "/tmp/clawd-hook.js" SessionStart' }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/third-party.js" SessionStart' }],
+          },
+        ],
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", shell: "powershell", command: '& "node" "/tmp/clawd-hook.js" Stop' }],
+          },
+        ],
+        PermissionRequest: [
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://127.0.0.1:23335/permission", timeout: 600 }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://localhost:8080/permission", timeout: 100 }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://127.0.0.1:8080/permission", timeout: 100 }],
+          },
+        ],
+      },
+    });
+
+    const result = unregisterHooks({ settingsPath });
+    const settings = readSettings(settingsPath);
+
+    assert.deepStrictEqual(result, { removed: 4, changed: true });
+    assert.deepStrictEqual(getClawdCommands(settings, "SessionStart"), []);
+    assert.deepStrictEqual(getClawdCommands(settings, "Stop"), []);
+    assert.deepStrictEqual(
+      settings.hooks.SessionStart[0].hooks[0].command,
+      'node "/tmp/third-party.js" SessionStart'
+    );
+    assert.deepStrictEqual(getHttpUrls(settings, "PermissionRequest"), [
+      "http://localhost:8080/permission",
+      "http://127.0.0.1:8080/permission",
+    ]);
+    assert.ok(!Object.prototype.hasOwnProperty.call(settings.hooks, "Stop"));
+  });
+
+  it("keeps third-party PermissionRequest hooks when no Clawd HTTP hook is present", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        PermissionRequest: [
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://localhost:8080/permission", timeout: 600 }],
+          },
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://127.0.0.1:8080/permission", timeout: 600 }],
+          },
+        ],
+      },
+    });
+
+    const result = unregisterHooks({ settingsPath });
+    const settings = readSettings(settingsPath);
+
+    assert.deepStrictEqual(result, { removed: 0, changed: false });
+    assert.deepStrictEqual(getHttpUrls(settings, "PermissionRequest"), [
+      "http://localhost:8080/permission",
+      "http://127.0.0.1:8080/permission",
+    ]);
+  });
+
+  it("recognizes stale Clawd PermissionRequest URLs on any managed port", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        PermissionRequest: [
+          {
+            matcher: "",
+            hooks: [{ type: "http", url: "http://127.0.0.1:23337/permission", timeout: 600 }],
+          },
+        ],
+      },
+    });
+
+    const result = unregisterHooks({ settingsPath });
+    const settings = readSettings(settingsPath);
+
+    assert.deepStrictEqual(result, { removed: 1, changed: true });
+    assert.deepStrictEqual(settings.hooks, {});
+  });
+
+  it("is idempotent when run repeatedly", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/clawd-hook.js" Stop' }],
+          },
+        ],
+      },
+    });
+
+    const first = unregisterHooks({ settingsPath });
+    const second = unregisterHooks({ settingsPath });
+
+    assert.deepStrictEqual(first, { removed: 1, changed: true });
+    assert.deepStrictEqual(second, { removed: 0, changed: false });
+  });
+
+  it("keeps empty hooks object when every Clawd entry is removed", () => {
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: 'node "/tmp/clawd-hook.js" Stop' }],
+          },
+        ],
+      },
+    });
+
+    unregisterHooks({ settingsPath });
+    const settings = readSettings(settingsPath);
+
+    assert.deepStrictEqual(settings.hooks, {});
+  });
+});
+
+describe("async hook installer parity", () => {
+  it("registerHooksAsync preserves an existing Node path before probing asynchronously", async () => {
+    const existingAbsPath = "/Users/tester/.nvm/versions/node/v20.11.0/bin/node";
+    const settingsPath = makeTempSettings({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [{ type: "command", command: `"${existingAbsPath}" "/app/hooks/clawd-hook.js" Stop` }],
+          },
+        ],
+      },
+    });
+
+    await registerHooksAsync({
+      silent: true,
+      settingsPath,
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+      async access() {
+        throw new Error("async node probing should not run when settings already has a node path");
+      },
+      async execFile() {
+        throw new Error("async shell probing should not run when settings already has a node path");
+      },
+      accessSync() {
+        throw new Error("sync node probing should not run");
+      },
+      execFileSync() {
+        throw new Error("sync shell probing should not run");
+      },
+    });
+
+    const commands = getClawdCommands(readSettings(settingsPath), "Stop");
+    assert.ok(commands.some((command) => command.includes(existingAbsPath)), commands.join("\n"));
+  });
+
+  it("registerHooksAsync resolves Node with async probes without calling sync probes", async () => {
+    const settingsPath = makeTempSettings({});
+    const nodeBin = "/opt/homebrew/bin/node";
+
+    await registerHooksAsync({
+      silent: true,
+      settingsPath,
+      platform: "darwin",
+      isElectron: true,
+      homeDir: "/Users/tester",
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+      async access(candidate) {
+        if (candidate === nodeBin) return;
+        throw new Error("ENOENT");
+      },
+      async execFile() {
+        throw new Error("shell probing should not run after a well-known path succeeds");
+      },
+      accessSync() {
+        throw new Error("sync access should not run");
+      },
+      execFileSync() {
+        throw new Error("sync exec should not run");
+      },
+    });
+
+    const commands = getClawdCommands(readSettings(settingsPath), "Stop");
+    assert.ok(commands.some((command) => command.startsWith(`"${nodeBin}" "`)), commands.join("\n"));
+  });
+
+  it("registerHooksAsync writes the same hook set as registerHooks", async () => {
+    const syncSettingsPath = makeTempSettings({});
+    const asyncSettingsPath = makeTempSettings({});
+
+    const syncResult = registerHooks({
+      silent: true,
+      settingsPath: syncSettingsPath,
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+    const asyncResult = await registerHooksAsync({
+      silent: true,
+      settingsPath: asyncSettingsPath,
+      claudeVersionInfo: { version: "2.1.78", source: "test", status: "known" },
+    });
+
+    assert.deepStrictEqual(readSettings(asyncSettingsPath), readSettings(syncSettingsPath));
+    assert.deepStrictEqual(asyncResult, syncResult);
+  });
+
+  it("unregisterHooksAsync removes the same entries as unregisterHooks", async () => {
+    const initial = {
+      hooks: {
+        Stop: [{ matcher: "", hooks: [{ type: "command", command: '"/usr/bin/node" "/tmp/clawd-hook.js"' }] }],
+        PermissionRequest: [{ matcher: "", hooks: [{ type: "http", url: "http://127.0.0.1:23333/permission" }] }],
+      },
+    };
+    const syncSettingsPath = makeTempSettings(initial);
+    const asyncSettingsPath = makeTempSettings(initial);
+
+    const syncResult = unregisterHooks({ settingsPath: syncSettingsPath });
+    const asyncResult = await unregisterHooksAsync({ settingsPath: asyncSettingsPath });
+
+    assert.deepStrictEqual(readSettings(asyncSettingsPath), readSettings(syncSettingsPath));
+    assert.deepStrictEqual(asyncResult, syncResult);
   });
 });

@@ -45,8 +45,25 @@ function getLaunchSizingWorkArea(prefs, fallbackWorkArea, findNearestWorkArea) {
   return fallbackWorkArea;
 }
 
+function getSavedPixelSize(prefs) {
+  const width = Number(prefs && prefs.savedPixelWidth);
+  const height = Number(prefs && prefs.savedPixelHeight);
+  if (!Number.isFinite(width) || width <= 0) return null;
+  if (!Number.isFinite(height) || height <= 0) return null;
+  return { width: Math.round(width), height: Math.round(height) };
+}
+
+function getLaunchPixelSize(prefs, fallbackSize) {
+  if (!prefs || !fallbackSize) return fallbackSize;
+  if (!prefs.keepSizeAcrossDisplays) return fallbackSize;
+  if (typeof prefs.size !== "string" || !prefs.size.startsWith("P:")) return fallbackSize;
+  return getSavedPixelSize(prefs) || fallbackSize;
+}
+
 module.exports = {
+  getLaunchPixelSize,
   getLaunchSizingWorkArea,
   getProportionalBasePx,
   getProportionalPixelSize,
+  getSavedPixelSize,
 };

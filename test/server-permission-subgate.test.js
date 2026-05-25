@@ -3,11 +3,20 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
-const { shouldBypassCCBubble, shouldBypassOpencodeBubble } = require("../src/server").__test;
+const {
+  shouldBypassCCBubble,
+  shouldBypassOpencodeBubble,
+} = require("../src/server").__test;
 
-function makeCtx({ enabled = true } = {}) {
+function makeCtx({ enabled = true, hideBubbles = false, permissionBubblesEnabled = true } = {}) {
   return {
     isAgentPermissionsEnabled: () => enabled,
+    hideBubbles,
+    getBubblePolicy: (kind) => (
+      kind === "permission"
+        ? { enabled: permissionBubblesEnabled && !hideBubbles, autoCloseMs: null }
+        : { enabled: !hideBubbles, autoCloseMs: 1000 }
+    ),
   };
 }
 
@@ -34,6 +43,34 @@ describe("shouldBypassCCBubble", () => {
 
   it("missing isAgentPermissionsEnabled → fail-open (don't suppress)", () => {
     assert.strictEqual(shouldBypassCCBubble({}, "Bash", "claude-code"), false);
+  });
+
+  it("bypasses when hideBubbles is on, even if the per-agent gate is on", () => {
+    const ctx = makeCtx({ enabled: true, hideBubbles: true });
+    assert.strictEqual(shouldBypassCCBubble(ctx, "Bash", "claude-code"), true);
+    assert.strictEqual(shouldBypassCCBubble(ctx, "Edit", "codebuddy"), true);
+  });
+
+  it("bypasses normal permission tools when the split permission category is off", () => {
+    const ctx = makeCtx({ enabled: true, permissionBubblesEnabled: false });
+    assert.strictEqual(shouldBypassCCBubble(ctx, "Bash", "claude-code"), true);
+    assert.strictEqual(shouldBypassCCBubble(ctx, "Edit", "codebuddy"), true);
+  });
+
+  it("hideBubbles does NOT bypass ExitPlanMode or AskUserQuestion — those would hang CC", () => {
+    const ctx = makeCtx({ enabled: true, hideBubbles: true });
+    assert.strictEqual(shouldBypassCCBubble(ctx, "ExitPlanMode", "claude-code"), false);
+    assert.strictEqual(shouldBypassCCBubble(ctx, "AskUserQuestion", "claude-code"), false);
+  });
+
+  it("split permission category does NOT bypass ExitPlanMode or AskUserQuestion", () => {
+    const ctx = makeCtx({ enabled: true, permissionBubblesEnabled: false });
+    assert.strictEqual(shouldBypassCCBubble(ctx, "ExitPlanMode", "claude-code"), false);
+    assert.strictEqual(shouldBypassCCBubble(ctx, "AskUserQuestion", "claude-code"), false);
+  });
+
+  it("hideBubbles works without isAgentPermissionsEnabled helper present", () => {
+    assert.strictEqual(shouldBypassCCBubble({ hideBubbles: true }, "Bash", "claude-code"), true);
   });
 });
 
@@ -62,3 +99,7 @@ describe("shouldBypassOpencodeBubble", () => {
     assert.strictEqual(shouldBypassOpencodeBubble({}), false);
   });
 });
+
+// D2/D3: shouldBypassAntigravityBubble and shouldBypassPiBubble are absent
+// because both integrations are state-only; no bubble path exists for a
+// subgate to gate.

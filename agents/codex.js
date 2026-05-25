@@ -1,24 +1,29 @@
-// Codex CLI / Codex Desktop agent configuration
-// Windows hooks completely disabled — uses JSONL log polling instead
-// Codex Desktop (Codex.app / Codex.exe) is an Electron GUI that spawns
-// the same codex-cli binary internally, so JSONL log polling works for both.
+// Codex CLI agent configuration
+// Official hooks are primary for lifecycle state; JSONL polling remains as
+// fallback and for events official hooks do not cover yet.
 
 module.exports = {
   id: "codex",
   name: "Codex CLI",
-  processNames: {
-    win: ["codex.exe", "Codex.exe"],
-    mac: ["codex", "Codex"],
-    linux: ["codex", "Codex"],
+  processNames: { win: ["codex.exe"], mac: ["codex"], linux: ["codex"] },
+  eventSource: "hook+log-poll",
+  eventMap: {
+    SessionStart: "idle",
+    UserPromptSubmit: "thinking",
+    PreToolUse: "working",
+    PermissionRequest: "notification",
+    PostToolUse: "working",
+    Stop: "codex-turn-end",
   },
-  eventSource: "log-poll",
-  // JSONL record type:subtype → pet state mapping
-  // ⚠️ Also duplicated in hooks/codex-remote-monitor.js (zero-dep requirement) — keep in sync
+  // JSONL record type:subtype → pet state mapping. The remote monitor keeps
+  // a zero-dep subset of this table; update both paths when adding shared
+  // Codex JSONL events.
   logEventMap: {
     "session_meta": "idle",
     "event_msg:task_started": "thinking",
     "event_msg:user_message": "thinking",
     "event_msg:agent_message": null, // text output only — working is reserved for function_call
+    "event_msg:guardian_assessment": "working", // Codex Desktop auto-review/approval is active work, not terminal idle
     "event_msg:exec_command_end": "working",
     "event_msg:patch_apply_end": "working",
     "event_msg:custom_tool_call_output": "working",
@@ -31,11 +36,11 @@ module.exports = {
   },
   capabilities: {
     httpHook: false,
-    permissionApproval: false,
-    // Read-only "Got it" notification, not an approval prompt — kept
-    // separate from permissionApproval so UI doesn't mislabel it.
+    permissionApproval: true,
+    // Official PermissionRequest is a real approval path. JSONL fallback still
+    // keeps interactiveBubble=true for older/no-hook sessions.
     interactiveBubble: true,
-    sessionEnd: false, // no SessionEnd event, rely on task_complete + timeout
+    sessionEnd: false, // no SessionEnd event; task_complete marks the turn done, process exit clears the session
     subagent: false,
   },
   logConfig: {
@@ -43,5 +48,9 @@ module.exports = {
     filePattern: "rollout-*.jsonl",
     pollIntervalMs: 1500,
   },
+  hookConfig: {
+    configFormat: "codex-hooks-json",
+  },
+  stdinFormat: "codexHookJson",
   pidField: "codex_pid",
 };

@@ -17,6 +17,8 @@ const os = require("os");
 const { writeJsonAtomic, asarUnpackedPath } = require("./json-utils");
 
 const PLUGIN_DIR_NAME = "opencode-plugin";
+const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".config", "opencode");
+const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "opencode.json");
 
 /**
  * Resolve the absolute path to hooks/opencode-plugin/ as seen from a running
@@ -131,7 +133,12 @@ function registerOpencodePlugin(options = {}) {
   return { added, skipped, created, configPath, pluginDir };
 }
 
-module.exports = { registerOpencodePlugin, resolvePluginDir };
+module.exports = {
+  DEFAULT_PARENT_DIR,
+  DEFAULT_CONFIG_PATH,
+  registerOpencodePlugin,
+  resolvePluginDir,
+};
 
 if (require.main === module) {
   try {

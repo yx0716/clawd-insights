@@ -6,6 +6,11 @@ const os = require("os");
 const GeminiLogMonitor = require("../agents/gemini-log-monitor");
 const geminiConfig = require("../agents/gemini-cli");
 
+const LEGACY_GEMINI_LOG_CONFIG = {
+  sessionDir: "~/.gemini/tmp",
+  pollIntervalMs: 1500,
+};
+
 // Helper: create temp dir mimicking ~/.gemini/tmp/{projectDir}/chats/
 function makeTempGeminiDir(projectDir = "animation") {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gemini-test-"));
@@ -18,7 +23,7 @@ function makeTempGeminiDir(projectDir = "animation") {
 function makeConfig(tmpDir) {
   return {
     ...geminiConfig,
-    logConfig: { ...geminiConfig.logConfig, sessionDir: tmpDir, pollIntervalMs: 100 },
+    logConfig: { ...LEGACY_GEMINI_LOG_CONFIG, sessionDir: tmpDir, pollIntervalMs: 100 },
   };
 }
 

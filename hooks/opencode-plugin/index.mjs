@@ -25,7 +25,7 @@ import { readFileSync, writeFileSync, mkdirSync, promises as fsp } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { randomBytes, timingSafeEqual } from "crypto";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 
 const CLAWD_DIR = join(homedir(), ".clawd");
 const RUNTIME_CONFIG_PATH = join(CLAWD_DIR, "runtime.json");
@@ -45,7 +45,7 @@ const AGENT_ID = "opencode";
 const ACTIVE_STATES_BLOCKING_THINKING = new Set(["working", "sweeping"]);
 
 // Process tree walk config — mirrors hooks/clawd-hook.js exactly, minus the
-// Claude-specific detection. See docs/plan-opencode-integration.md Phase 4.
+// Claude-specific detection. See docs/plans/plan-opencode-integration.md Phase 4.
 // Spike confirmed (2026-04-05): plugin runs in-process with opencode, so walk
 // starts at process.pid. Observed chains on Windows:
 //   WT:         opencode.exe → node.exe → powershell.exe → windowsterminal.exe
@@ -168,18 +168,41 @@ function getPortCandidates() {
   return ordered;
 }
 
-// Walk the process tree from process.pid until we hit a terminal app (for
-// window focus) or a system boundary (explorer.exe / launchd / systemd). The
-// walk keeps going past the first terminal match so we can pick the OUTERMOST
-// terminal — matters for Electron terminals like Antigravity where the chain
-// shows renderer→main, and we want the main process so Clawd can activate the
-// right window. Synchronous + cached; runs once at plugin init (~700-950ms on
-// Windows, 4-6 wmic shellouts). Never throws — returns null if the walk
-// completely fails.
-//
-// Mirrors hooks/clawd-hook.js getStablePid() but starts at process.pid (plugin
-// is in-process with opencode, not a child hook script) and skips the
-// Claude-specific binary detection.
+// One PS spawn per resolve, not per ancestor — PowerShell cold-start (~270 ms)
+// would dominate the walk otherwise. Returns empty Map on failure.
+function getWindowsProcessSnapshot() {
+  try {
+    const out = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile", "-NonInteractive", "-Command",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name | ConvertTo-Json -Compress",
+      ],
+      { encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }
+    );
+    const trimmed = (out || "").trim();
+    if (!trimmed) return new Map();
+    const parsed = JSON.parse(trimmed);
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    const map = new Map();
+    for (const proc of list) {
+      const pid = Number(proc && proc.ProcessId);
+      if (!Number.isFinite(pid)) continue;
+      map.set(pid, {
+        name: typeof proc.Name === "string" ? proc.Name.toLowerCase() : "",
+        ppid: Number(proc.ParentProcessId) || 0,
+      });
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+// Walks past the first terminal match to pick the OUTERMOST terminal —
+// matters for Electron terminals like Antigravity where the chain shows
+// renderer→main and we want the main process so Clawd activates the right
+// window. Cached after first call.
 function getStablePid() {
   if (_stablePid) return _stablePid;
   const isWin = platform() === "win32";
@@ -194,20 +217,17 @@ function getStablePid() {
   _pidChain = [];
   _detectedEditor = null;
 
+  const winSnapshot = isWin ? getWindowsProcessSnapshot() : null;
+
   for (let i = 0; i < 10 && pid && pid > 1; i++) {
     let name = "";
     let parentPid = 0;
     try {
       if (isWin) {
-        const out = execSync(
-          `wmic process where "ProcessId=${pid}" get Name,ParentProcessId /format:csv`,
-          { encoding: "utf8", timeout: 1500, windowsHide: true }
-        );
-        const lines = out.trim().split("\n").filter((l) => l.includes(","));
-        if (!lines.length) break;
-        const parts = lines[lines.length - 1].split(",");
-        name = (parts[1] || "").trim().toLowerCase();
-        parentPid = parseInt(parts[2], 10) || 0;
+        const info = winSnapshot.get(pid);
+        if (!info) break;
+        name = info.name;
+        parentPid = info.ppid;
       } else {
         const commOut = execSync(`ps -o comm= -p ${pid}`, { encoding: "utf8", timeout: 1000 }).trim();
         name = commOut.split("/").pop().toLowerCase();
@@ -415,7 +435,7 @@ function normalizeServerUrl(raw) {
 }
 
 // Handle v2 permission.asked event — see Phase 2 Spike in
-// docs/plan-opencode-integration.md. The payload has no sessionID in its
+// docs/plans/plan-opencode-integration.md. The payload has no sessionID in its
 // properties (only `id` = requestID), so we borrow _lastSessionId which is
 // kept fresh by session.*/message.part.updated events. Phase 1 dedup/state
 // machine logic does not run for permission events — they ride a parallel
@@ -551,9 +571,7 @@ export default async (ctx) => {
   _ctxClient = ctx && ctx.client ? ctx.client : null;
   _cwd = ctx && typeof ctx.directory === "string" ? ctx.directory : "";
   debugLog(`INIT directory=${_cwd} serverUrl=${_serverUrl} pid=${process.pid} hasClient=${!!_ctxClient}`);
-  // Resolve terminal PID synchronously at init. ~700-950ms wmic walk on
-  // Windows is acceptable because opencode's TUI is still booting — the user
-  // never sees it. After init, every POST reads the cached result.
+  // Sync init blocks the TUI boot path; later POSTs hit the cached result.
   getStablePid();
   startBridge();
 

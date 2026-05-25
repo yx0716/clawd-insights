@@ -1,0 +1,6 @@
+{
+  "id": "tiny-atlas-png",
+  "displayName": "Tiny Atlas PNG",
+  "description": "Deterministic Codex Pet atlas fixture for adapter tests.",
+  "spritesheetPath": "spritesheet.png"
+}

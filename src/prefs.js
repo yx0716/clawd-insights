@@ -18,8 +18,27 @@
 
 const fs = require("fs");
 const path = require("path");
+const { isPlainObject } = require("./theme-loader");
+const { normalizeShortcuts, getDefaultShortcuts } = require("./shortcut-actions");
+const { isValidDisplaySnapshot } = require("./work-area");
+const { normalizeRemoteSsh, getDefaults: getRemoteSshDefaults } = require("./remote-ssh-profile");
+const {
+  cloneDefaultTelegramApproval,
+  normalizeTelegramApproval,
+} = require("./telegram-approval-settings");
+const {
+  DEFAULT_HARDWARE_BUDDY_SETTINGS,
+  normalizeHardwareBuddySettings,
+} = require("./hardware-buddy-settings");
+const {
+  NOTIFICATION_DEFAULT_SECONDS,
+  UPDATE_DEFAULT_SECONDS,
+  PERMISSION_DEFAULT_SECONDS,
+  MAX_AUTO_CLOSE_SECONDS,
+} = require("./bubble-policy");
+const { normalizeSessionAliases } = require("./session-alias");
 
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 // ── Schema ──
 // Each field has: type, default OR defaultFactory, optional enum/normalize/validate.
@@ -33,9 +52,25 @@ const SCHEMA = {
   x: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
   y: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
   positionSaved: { type: "boolean", default: false },
+  positionThemeId: { type: "string", default: "" },
+  positionVariantId: { type: "string", default: "" },
+  // Snapshot of the display the pet sat on at save time. Used on next launch
+  // to distinguish "monitor got unplugged" (saved position is now stranded on
+  // a phantom screen) from "monitor still here" (saved position is still
+  // safe, even if a generic clamp would nudge it). `null` when no snapshot
+  // was captured (legacy prefs, headless CI, startup race).
+  positionDisplay: {
+    type: "object",
+    defaultFactory: () => null,
+    normalize: normalizePositionDisplay,
+  },
+  // Last realized pixel bounds. Used to restore proportional mode exactly
+  // when keepSizeAcrossDisplays is enabled.
+  savedPixelWidth: { type: "number", default: 0, validate: (v) => Number.isFinite(v) && v >= 0 },
+  savedPixelHeight: { type: "number", default: 0, validate: (v) => Number.isFinite(v) && v >= 0 },
   size: {
     type: "string",
-    default: "P:10",
+    default: "P:9",
     // Accept "S"/"M"/"L" (legacy) or "P:<num>" — full migration happens elsewhere.
     validate: (v) =>
       typeof v === "string" &&
@@ -47,9 +82,10 @@ const SCHEMA = {
   preMiniX: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
   preMiniY: { type: "number", default: 0, validate: (v) => Number.isFinite(v) },
   // Pure data prefs
-  lang: { type: "string", default: "en", enum: ["en", "zh"] },
+  lang: { type: "string", default: "en", enum: ["en", "zh", "zh-TW", "ko", "ja"] },
   showTray: { type: "boolean", default: true },
   showDock: { type: "boolean", default: true },
+  manageClaudeHooksAutomatically: { type: "boolean", default: true },
   autoStartWithClaude: { type: "boolean", default: false },
   // System-backed: actual truth lives in OS login items / autostart files.
   // `openAtLoginHydrated` starts false; main.js's startup hydrate helper imports
@@ -59,23 +95,88 @@ const SCHEMA = {
   openAtLogin: { type: "boolean", default: false },
   openAtLoginHydrated: { type: "boolean", default: false },
   bubbleFollowPet: { type: "boolean", default: false },
+  sessionHudEnabled: { type: "boolean", default: true },
+  sessionHudShowStateLabels: { type: "boolean", default: true },
+  sessionHudShowElapsed: { type: "boolean", default: true },
+  sessionHudCleanupDetached: { type: "boolean", default: false },
+  sessionHudAutoHide: { type: "boolean", default: true },
+  sessionHudPinned: { type: "boolean", default: false },
+  // Stale-cleanup intervals (ms). Defaults match the historical constants in
+  // state-stale-cleanup.js so upgrading users see no behavioral change.
+  // sessionStaleMs = 0 means "never drop a session by idle age".
+  sessionStaleMs: {
+    type: "number",
+    default: 600000,
+    validate: (v) =>
+      Number.isInteger(v) && (v === 0 || (v >= 60_000 && v <= 86_400_000)),
+  },
+  workingStaleMs: {
+    type: "number",
+    default: 300000,
+    validate: (v) => Number.isInteger(v) && v >= 30_000 && v <= 86_400_000,
+  },
+  detachedIdleStaleMs: {
+    type: "number",
+    default: 30000,
+    validate: (v) => Number.isInteger(v) && v >= 5_000 && v <= 300_000,
+  },
   hideBubbles: { type: "boolean", default: false },
-  showSessionId: { type: "boolean", default: false },
+  permissionBubblesEnabled: { type: "boolean", default: true },
+  notificationBubbleAutoCloseSeconds: {
+    type: "number",
+    default: NOTIFICATION_DEFAULT_SECONDS,
+    validate: (v) => Number.isInteger(v) && v >= 0 && v <= MAX_AUTO_CLOSE_SECONDS,
+  },
+  permissionBubbleAutoCloseSeconds: {
+    type: "number",
+    default: PERMISSION_DEFAULT_SECONDS,
+    validate: (v) => Number.isInteger(v) && v >= 0 && v <= MAX_AUTO_CLOSE_SECONDS,
+  },
+  updateBubbleAutoCloseSeconds: {
+    type: "number",
+    default: UPDATE_DEFAULT_SECONDS,
+    validate: (v) => Number.isInteger(v) && v >= 0 && v <= MAX_AUTO_CLOSE_SECONDS,
+  },
   soundMuted: { type: "boolean", default: false },
+  soundVolume: {
+    type: "number",
+    default: 1,
+    validate: (v) => Number.isFinite(v) && v >= 0 && v <= 1,
+  },
+  lowPowerIdleMode: { type: "boolean", default: false },
+  allowEdgePinning: { type: "boolean", default: false },
+  // When true, moving the pet between displays does not trigger a
+  // proportional pixel-size recomputation. The pet keeps its current
+  // window size; the size slider still works (per-display proportional).
+  keepSizeAcrossDisplays: { type: "boolean", default: false },
+  shortcuts: {
+    type: "object",
+    defaultFactory: () => getDefaultShortcuts(),
+    normalize: normalizeShortcuts,
+  },
   // Theme
   theme: { type: "string", default: "clawd" },
   // Phase 2/3 placeholders — schema reserves the keys so future migrations don't need v2.
   agents: {
     type: "object",
     defaultFactory: () => ({
-      "claude-code": { enabled: true, permissionsEnabled: true },
-      "codex": { enabled: true, permissionsEnabled: true },
-      "copilot-cli": { enabled: true, permissionsEnabled: true },
-      "cursor-agent": { enabled: true, permissionsEnabled: true },
-      "gemini-cli": { enabled: true, permissionsEnabled: true },
-      "codebuddy": { enabled: true, permissionsEnabled: true },
-      "kiro-cli": { enabled: true, permissionsEnabled: true },
-      "opencode": { enabled: true, permissionsEnabled: true },
+      "claude-code": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "codex": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true, permissionMode: "intercept" },
+      "copilot-cli": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "cursor-agent": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "gemini-cli": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      // Antigravity is state-only post-D2 — Clawd never surfaces a permission
+      // bubble for agy regardless of this flag (see server-route-permission.js
+      // antigravity branch). Default kept as false so legacy reads don't see a
+      // stale "true" implying bubbles are enabled.
+      "antigravity-cli": { enabled: true, permissionsEnabled: false },
+      "codebuddy": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "kiro-cli": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "kimi-cli": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "opencode": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "pi": { enabled: true, permissionsEnabled: false, notificationHookEnabled: true },
+      "openclaw": { enabled: true, permissionsEnabled: false, notificationHookEnabled: true },
+      "hermes": { enabled: true },
     }),
     normalize: normalizeAgents,
   },
@@ -84,10 +185,36 @@ const SCHEMA = {
     defaultFactory: () => ({}),
     normalize: normalizeThemeOverrides,
   },
-  aiConfig: {
+  // Phase 3b-swap: per-theme variant selection (e.g. {clawd: "chill", calico: "default"}).
+  // Missing key for a theme = use that theme's `default` variant. Unknown variantIds
+  // get lenient-fallback to default at load time (see theme-loader._resolveVariant).
+  themeVariant: {
     type: "object",
-    default: null,
-    normalize: normalizeAIConfig,
+    defaultFactory: () => ({}),
+    normalize: normalizeThemeVariant,
+  },
+  sessionAliases: {
+    type: "object",
+    defaultFactory: () => ({}),
+    normalize: normalizeSessionAliases,
+  },
+  // Remote SSH (Phase 2 plan-remote-ssh-one-click v7). Stores user-defined
+  // SSH tunnel profiles. The runtime is owned by `remote-ssh-runtime.js` —
+  // this field is data only.
+  remoteSsh: {
+    type: "object",
+    defaultFactory: () => getRemoteSshDefaults(),
+    normalize: normalizeRemoteSsh,
+  },
+  tgApproval: {
+    type: "object",
+    defaultFactory: () => cloneDefaultTelegramApproval(),
+    normalize: normalizeTelegramApproval,
+  },
+  hardwareBuddy: {
+    type: "object",
+    defaultFactory: () => ({ ...DEFAULT_HARDWARE_BUDDY_SETTINGS }),
+    normalize: normalizeHardwareBuddySettings,
   },
 };
 
@@ -136,6 +263,25 @@ function validate(raw) {
     }
     // else: keep default already in `out`
   }
+  normalizeStaleTriple(out);
+  return out;
+}
+
+// Hand-edited-file fallback: if a user manually inverted the pair in
+// clawd-prefs.json, clamp workingStaleMs down to sessionStaleMs at load time
+// so the live mirror is consistent. Primary enforcement lives in the
+// per-key validators in settings-actions.js and the
+// commandRegistry["sessionCleanup.setTriple"] command — this function is
+// only the boot-time safety net for files that bypass the controller.
+function normalizeStaleTriple(out) {
+  if (
+    Number.isFinite(out.sessionStaleMs) &&
+    out.sessionStaleMs > 0 &&
+    Number.isFinite(out.workingStaleMs) &&
+    out.workingStaleMs > out.sessionStaleMs
+  ) {
+    out.workingStaleMs = out.sessionStaleMs;
+  }
   return out;
 }
 
@@ -145,6 +291,14 @@ function validate(raw) {
 // v0 → v1: add `version`, `agents`, `themeOverrides` fields. Existing fields
 //   stay as-is and get re-validated downstream. Pre-existing prefs files have
 //   no `version` key — that's the v0 marker.
+// v1 → v2: historical Pi permission-subgate backfill. Version 2 is also the
+//   first schema version that includes Hermes in the built-in agent defaults.
+// v2 → v3: raise passive notification bubble default from 3s to 6s. Users
+//   who explicitly chose 3s in v2 are indistinguishable from defaulted-3 and
+//   are migrated too; other non-default values are preserved.
+// v3 → v4: Pi returns to a state-only integration. Clawd no longer inserts a
+//   permission prompt into Pi's default YOLO flow, so the Pi permission subgate
+//   is reset off.
 function migrate(raw) {
   if (!raw || typeof raw !== "object") return raw;
   const out = { ...raw };
@@ -164,65 +318,83 @@ function migrate(raw) {
       (typeof out.x === "number" && out.x !== 0) ||
       (typeof out.y === "number" && out.y !== 0);
   }
-  // v1 → v2: migrate single-provider aiConfig to multi-provider registry.
-  // The legacy fields (provider, apiKey, baseUrl, model) are preserved for
-  // backward compatibility — only the new providers/defaultProviders arrays
-  // are added. This migration is idempotent: if providers already exists, skip.
-  if (out.version < 2) {
-    const aiCfg = out.aiConfig;
-    if (aiCfg && typeof aiCfg === "object" && !Array.isArray(aiCfg.providers)) {
-      const PROVIDER_DEFAULTS = {
-        claude: { name: "Claude (Anthropic)", baseUrl: "https://api.anthropic.com", model: "claude-haiku-4-5-20251001" },
-        openai: { name: "OpenAI-Compatible", baseUrl: "https://api.openai.com", model: "gpt-4o-mini" },
-        ollama: { name: "Ollama (Local)", baseUrl: "http://localhost:11434", model: "qwen2.5:7b" },
-      };
-      const legacyType = typeof aiCfg.provider === "string" ? aiCfg.provider : null;
-      const defaults = legacyType && PROVIDER_DEFAULTS[legacyType];
-      if (defaults && (legacyType === "ollama" || aiCfg.apiKey)) {
-        // Generate a deterministic-ish ID from the legacy config so re-migration
-        // produces the same ID (avoids duplicate entries on repeated migrations).
-        const legacyId = `legacy-${legacyType}-migrated`;
-        const migratedProvider = {
-          id: legacyId,
-          name: defaults.name,
-          type: legacyType,
-          baseUrl: aiCfg.baseUrl || defaults.baseUrl,
-          apiKey: aiCfg.apiKey || "",
-          model: aiCfg.model || defaults.model,
-          enabled: true,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        out.aiConfig = {
-          ...aiCfg,
-          providers: [migratedProvider],
-          defaultProviders: { brief: legacyId, detail: legacyId, batch: legacyId },
-        };
-      } else {
-        // No usable legacy provider — just initialize empty registry
-        out.aiConfig = { ...aiCfg, providers: [], defaultProviders: {} };
-      }
+  // Backfill the split bubble settings from the old aggregate switch. This is
+  // intentionally field-level so users who already have the new keys keep them.
+  if (typeof out.hideBubbles === "boolean") {
+    if (out.permissionBubblesEnabled === undefined) {
+      out.permissionBubblesEnabled = !out.hideBubbles;
     }
+    if (out.notificationBubbleAutoCloseSeconds === undefined) {
+      out.notificationBubbleAutoCloseSeconds = out.hideBubbles ? 0 : NOTIFICATION_DEFAULT_SECONDS;
+    }
+    if (out.updateBubbleAutoCloseSeconds === undefined) {
+      out.updateBubbleAutoCloseSeconds = out.hideBubbles ? 0 : UPDATE_DEFAULT_SECONDS;
+    }
+  }
+  // v1 -> v2 historical backfill for the short-lived Pi permission subgate.
+  // v4 below resets it off again because Pi is state-only.
+  if (out.version < 2) {
+    if (!out.agents || typeof out.agents !== "object") out.agents = {};
+    const currentPi = out.agents.pi && typeof out.agents.pi === "object" ? out.agents.pi : {};
+    out.agents.pi = {
+      ...currentPi,
+      enabled: typeof currentPi.enabled === "boolean" ? currentPi.enabled : true,
+      permissionsEnabled: typeof currentPi.permissionsEnabled === "boolean"
+        ? currentPi.permissionsEnabled
+        : true,
+      notificationHookEnabled: typeof currentPi.notificationHookEnabled === "boolean"
+        ? currentPi.notificationHookEnabled
+        : true,
+    };
     out.version = 2;
   }
-  // v2 → v3: remove legacy flat fields now that all paths use the registry.
-  // The v1→v2 migration already promoted them into providers[]. Safe to delete.
   if (out.version < 3) {
-    if (out.aiConfig && typeof out.aiConfig === "object" && !Array.isArray(out.aiConfig)) {
-      const cleaned = { ...out.aiConfig };
-      delete cleaned.provider;
-      delete cleaned.apiKey;
-      delete cleaned.baseUrl;
-      delete cleaned.model;
-      out.aiConfig = cleaned;
+    if (out.notificationBubbleAutoCloseSeconds === 3) {
+      out.notificationBubbleAutoCloseSeconds = NOTIFICATION_DEFAULT_SECONDS;
     }
     out.version = 3;
+  }
+  if (out.version < 4) {
+    if (!out.agents || typeof out.agents !== "object") out.agents = {};
+    const currentPi = out.agents.pi && typeof out.agents.pi === "object" ? out.agents.pi : {};
+    out.agents.pi = {
+      ...currentPi,
+      enabled: typeof currentPi.enabled === "boolean" ? currentPi.enabled : true,
+      permissionsEnabled: false,
+      notificationHookEnabled: typeof currentPi.notificationHookEnabled === "boolean"
+        ? currentPi.notificationHookEnabled
+        : true,
+    };
+    out.version = 4;
+  }
+  if ((typeof out.version === "number" ? out.version : 0) < CURRENT_VERSION) {
+    out.version = CURRENT_VERSION;
   }
   // Future migrations slot in here as `if (out.version < N) { ... out.version = N }`.
   return out;
 }
 
-const AGENT_FLAGS = ["enabled", "permissionsEnabled"];
+const AGENT_FLAGS = ["enabled", "permissionsEnabled", "notificationHookEnabled"];
+const CODEX_PERMISSION_MODES = ["native", "intercept"];
+
+function normalizePositionDisplay(value) {
+  if (!isValidDisplaySnapshot(value)) return null;
+  const b = value.bounds;
+  const out = {
+    bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
+  };
+  const wa = value.workArea;
+  if (wa && typeof wa === "object"
+    && Number.isFinite(wa.x) && Number.isFinite(wa.y)
+    && Number.isFinite(wa.width) && Number.isFinite(wa.height)) {
+    out.workArea = { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+  }
+  if (typeof value.id === "number" && Number.isFinite(value.id)) out.id = value.id;
+  if (typeof value.scaleFactor === "number" && Number.isFinite(value.scaleFactor)) {
+    out.scaleFactor = value.scaleFactor;
+  }
+  return out;
+}
 
 function normalizeAgents(value, defaultsValue) {
   if (!value || typeof value !== "object") return defaultsValue;
@@ -230,44 +402,207 @@ function normalizeAgents(value, defaultsValue) {
   for (const id of Object.keys(value)) {
     const entry = value[id];
     if (!entry || typeof entry !== "object") continue;
-    const base = (defaultsValue && defaultsValue[id]) || { enabled: true, permissionsEnabled: true };
+    const base = (defaultsValue && defaultsValue[id])
+      || { enabled: true, permissionsEnabled: true, notificationHookEnabled: true };
     const merged = { ...base };
     let touched = false;
-    for (const flag of AGENT_FLAGS) {
+    const allowedFlags = AGENT_FLAGS.filter((flag) => Object.prototype.hasOwnProperty.call(base, flag));
+    for (const flag of allowedFlags) {
       if (typeof entry[flag] === "boolean") {
         merged[flag] = entry[flag];
         touched = true;
       }
+    }
+    if (id === "codex" && CODEX_PERMISSION_MODES.includes(entry.permissionMode)) {
+      merged.permissionMode = entry.permissionMode;
+      touched = true;
     }
     if (touched) out[id] = merged;
   }
   return out;
 }
 
+function normalizeTransitionOverride(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  if (typeof value.in === "number" && Number.isFinite(value.in)) out.in = value.in;
+  if (typeof value.out === "number" && Number.isFinite(value.out)) out.out = value.out;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeSlotOverride(entry, { allowDisabled = true } = {}) {
+  if (!isPlainObject(entry)) return null;
+  const out = {};
+  if (allowDisabled && entry.disabled === true) out.disabled = true;
+  if (typeof entry.file === "string" && entry.file) out.file = entry.file;
+  if (typeof entry.sourceThemeId === "string" && entry.sourceThemeId) out.sourceThemeId = entry.sourceThemeId;
+  if (typeof entry.durationMs === "number" && Number.isFinite(entry.durationMs)) out.durationMs = entry.durationMs;
+  const transition = normalizeTransitionOverride(entry.transition);
+  if (transition) out.transition = transition;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+const REACTION_KEYS = new Set(["drag", "clickLeft", "clickRight", "annoyed", "double"]);
+
+// Per-file hitbox override: { file.svg: boolean }.
+// true  = force the file INTO the wide-hitbox set (even if the theme author didn't list it)
+// false = force the file OUT of the wide-hitbox set (even if the theme author did list it)
+// absent = follow whatever the theme declares
+function normalizeHitboxOverrides(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  if (isPlainObject(value.wide)) {
+    const wide = {};
+    for (const [file, enabled] of Object.entries(value.wide)) {
+      if (typeof file !== "string" || !file) continue;
+      if (typeof enabled !== "boolean") continue;
+      wide[file] = enabled;
+    }
+    if (Object.keys(wide).length > 0) out.wide = wide;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeReactionOverridesMap(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  for (const [reactionKey, entry] of Object.entries(value)) {
+    if (!REACTION_KEYS.has(reactionKey)) continue;
+    const cleanEntry = normalizeSlotOverride(entry, { allowDisabled: false });
+    if (!cleanEntry) continue;
+    // drag has no duration semantically (it plays until pointer-up), so strip
+    // any durationMs written by a wayward import.
+    if (reactionKey === "drag" && Object.prototype.hasOwnProperty.call(cleanEntry, "durationMs")) {
+      delete cleanEntry.durationMs;
+    }
+    if (Object.keys(cleanEntry).length > 0) out[reactionKey] = cleanEntry;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeStateOverridesMap(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  for (const [stateKey, entry] of Object.entries(value)) {
+    if (typeof stateKey !== "string" || !stateKey) continue;
+    const cleanEntry = normalizeSlotOverride(entry, { allowDisabled: true });
+    if (cleanEntry) out[stateKey] = cleanEntry;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+// Sound overrides are per-sound-name (complete / confirm / theme-author-defined).
+// Structurally simpler than state overrides: only `file` matters (no transition,
+// duration, disabled, or sourceThemeId). We reuse normalizeSlotOverride to
+// strip the animation-only fields, then enforce path-segment safety on both
+// the key (used as filename stem when copying) and the file (joined into the
+// overrides dir at load time) — defence in depth against malicious themes or
+// hand-edited pref files.
+// Strips any path segments and rejects traversal-only names. Returns null if
+// the result isn't a usable basename, otherwise the (optionally capped) name.
+function _safeBasename(raw, { maxLen } = {}) {
+  if (typeof raw !== "string" || !raw) return null;
+  let name = raw.replace(/^.*[\/\\]/, "");
+  if (maxLen && name.length > maxLen) name = name.slice(0, maxLen);
+  if (!name || name === "." || name === "..") return null;
+  return name;
+}
+
+function normalizeSoundOverridesMap(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  for (const [soundName, entry] of Object.entries(value)) {
+    if (typeof soundName !== "string" || !soundName) continue;
+    if (!/^[a-zA-Z0-9_-]+$/.test(soundName)) continue;
+    const cleanEntry = normalizeSlotOverride(entry, { allowDisabled: false });
+    if (!cleanEntry) continue;
+    const safeFile = _safeBasename(cleanEntry.file);
+    if (!safeFile) continue;
+    const soundEntry = { file: safeFile };
+    // Preserves the user-picked filename; on-disk dest is renamed to
+    // `${soundName}${ext}`, so without this a same-ext replacement would
+    // render identically to the theme default in the UI.
+    if (isPlainObject(entry)) {
+      const safeOriginal = _safeBasename(entry.originalName, { maxLen: 256 });
+      if (safeOriginal) soundEntry.originalName = safeOriginal;
+    }
+    out[soundName] = soundEntry;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeFileKeyedOverrideMap(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  for (const [originalFile, entry] of Object.entries(value)) {
+    if (typeof originalFile !== "string" || !originalFile) continue;
+    const cleanEntry = normalizeSlotOverride(entry, { allowDisabled: false });
+    if (cleanEntry) out[originalFile] = cleanEntry;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeAutoReturnOverrides(value) {
+  if (!isPlainObject(value)) return null;
+  const out = {};
+  for (const [stateKey, duration] of Object.entries(value)) {
+    if (typeof stateKey !== "string" || !stateKey) continue;
+    if (typeof duration !== "number" || !Number.isFinite(duration)) continue;
+    out[stateKey] = duration;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 function normalizeThemeOverrides(value, defaultsValue) {
-  if (!value || typeof value !== "object") return defaultsValue;
+  if (!isPlainObject(value)) return defaultsValue;
   const out = {};
   for (const themeId of Object.keys(value)) {
     const themeMap = value[themeId];
-    if (!themeMap || typeof themeMap !== "object") continue;
+    if (!isPlainObject(themeMap)) continue;
     const cleanThemeMap = {};
-    for (const stateKey of Object.keys(themeMap)) {
-      const entry = themeMap[stateKey];
-      if (!entry || typeof entry !== "object") continue;
-      if (entry.disabled === true) {
-        cleanThemeMap[stateKey] = { disabled: true };
-        continue;
-      }
-      if (
-        typeof entry.sourceThemeId === "string" &&
-        typeof entry.file === "string"
-      ) {
-        cleanThemeMap[stateKey] = {
-          sourceThemeId: entry.sourceThemeId,
-          file: entry.file,
-        };
+
+    // Back-compat: older prefs wrote state entries directly under themeId.
+    const legacyStates = {};
+    for (const [key, entry] of Object.entries(themeMap)) {
+      if (key === "states" || key === "tiers" || key === "timings" || key === "idleAnimations" || key === "reactions" || key === "hitbox" || key === "sounds") continue;
+      const cleanEntry = normalizeSlotOverride(entry, { allowDisabled: true });
+      if (cleanEntry) legacyStates[key] = cleanEntry;
+    }
+
+    const explicitStates = normalizeStateOverridesMap(themeMap.states);
+    const states = explicitStates ? { ...legacyStates, ...explicitStates } : legacyStates;
+    if (Object.keys(states).length > 0) cleanThemeMap.states = states;
+
+    const tierGroups = isPlainObject(themeMap.tiers) ? themeMap.tiers : null;
+    const cleanTiers = {};
+    if (tierGroups) {
+      const working = normalizeFileKeyedOverrideMap(tierGroups.workingTiers);
+      const juggling = normalizeFileKeyedOverrideMap(tierGroups.jugglingTiers);
+      if (working) cleanTiers.workingTiers = working;
+      if (juggling) cleanTiers.jugglingTiers = juggling;
+    }
+    if (Object.keys(cleanTiers).length > 0) cleanThemeMap.tiers = cleanTiers;
+
+    const timings = isPlainObject(themeMap.timings) ? themeMap.timings : null;
+    if (timings) {
+      const cleanAutoReturn = normalizeAutoReturnOverrides(timings.autoReturn);
+      if (cleanAutoReturn) {
+        cleanThemeMap.timings = { autoReturn: cleanAutoReturn };
       }
     }
+
+    const idleAnimations = normalizeFileKeyedOverrideMap(themeMap.idleAnimations);
+    if (idleAnimations) cleanThemeMap.idleAnimations = idleAnimations;
+
+    const reactions = normalizeReactionOverridesMap(themeMap.reactions);
+    if (reactions) cleanThemeMap.reactions = reactions;
+
+    const hitbox = normalizeHitboxOverrides(themeMap.hitbox);
+    if (hitbox) cleanThemeMap.hitbox = hitbox;
+
+    const sounds = normalizeSoundOverridesMap(themeMap.sounds);
+    if (sounds) cleanThemeMap.sounds = sounds;
+
     if (Object.keys(cleanThemeMap).length > 0) {
       out[themeId] = cleanThemeMap;
     }
@@ -275,37 +610,16 @@ function normalizeThemeOverrides(value, defaultsValue) {
   return out;
 }
 
-function normalizeAIConfig(value, defaultsValue) {
+function normalizeThemeVariant(value, defaultsValue) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return defaultsValue;
   const out = {};
-  for (const key of ["defaultAnalysisProvider"]) {
-    if (typeof value[key] === "string" && value[key].trim()) {
-      out[key] = value[key];
-    }
+  for (const themeId of Object.keys(value)) {
+    const variantId = value[themeId];
+    if (typeof themeId !== "string" || !themeId) continue;
+    if (typeof variantId !== "string" || !variantId) continue;
+    out[themeId] = variantId;
   }
-  if (value.customCliPaths && typeof value.customCliPaths === "object" && !Array.isArray(value.customCliPaths)) {
-    const customCliPaths = {};
-    for (const key of ["claude", "codex"]) {
-      if (typeof value.customCliPaths[key] === "string" && value.customCliPaths[key].trim()) {
-        customCliPaths[key] = value.customCliPaths[key];
-      }
-    }
-    if (Object.keys(customCliPaths).length) out.customCliPaths = customCliPaths;
-  }
-  // Preserve multi-provider registry fields (added in v2)
-  if (Array.isArray(value.providers)) {
-    out.providers = value.providers.filter(
-      (p) => p && typeof p === "object" && typeof p.id === "string" && typeof p.name === "string"
-    );
-  }
-  if (value.defaultProviders && typeof value.defaultProviders === "object" && !Array.isArray(value.defaultProviders)) {
-    const dp = {};
-    for (const mode of ["brief", "detail", "batch"]) {
-      if (typeof value.defaultProviders[mode] === "string") dp[mode] = value.defaultProviders[mode];
-    }
-    if (Object.keys(dp).length) out.defaultProviders = dp;
-  }
-  return Object.keys(out).length ? out : defaultsValue;
+  return out;
 }
 
 // ── Disk I/O ──
@@ -365,9 +679,12 @@ module.exports = {
   SCHEMA,
   SCHEMA_KEYS,
   AGENT_FLAGS,
+  CODEX_PERMISSION_MODES,
   getDefaults,
   validate,
   migrate,
   load,
   save,
+  normalizeThemeOverrides,
+  normalizeShortcuts,
 };

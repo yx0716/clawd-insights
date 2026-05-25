@@ -6,7 +6,7 @@
 > "你好clawd，该你写周报了"
 
 [![Local-First](https://img.shields.io/badge/Local--First-8b5cf6)](#为什么需要它)
-[![License: MIT](https://img.shields.io/badge/License-MIT-3178c6)](./LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-3178c6)](./LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20(primary)-111827)](#上手指南)
 [![Powered by Claude · Codex](https://img.shields.io/badge/Powered_by-Claude%20%C2%B7%20Codex-d97757)](#上手指南)
 [![Built on Electron](https://img.shields.io/badge/Built_on-Electron-47848f)](#项目渊源--致谢)
@@ -223,13 +223,13 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 
 | 集成方式 | 原理 | 延迟 | 使用的 Agent |
 |---|---|---|---|
-| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 把事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI |
-| **日志轮询** | Clawd 每 ~1.5 秒扫描 Agent 写入的 JSONL 日志文件,检测新事件 | ~1.5 秒 | Codex CLI、Gemini CLI(备选) |
-| **In-process 插件** | 插件直接跑在 Agent 进程内部,零开销转发事件 | 零 | opencode |
+| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 把事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、Antigravity CLI、CodeBuddy、Kimi CLI |
+| **日志轮询** | Clawd 每 ~1.5 秒扫描 Agent 写入的 JSONL 日志文件,检测新事件 | ~1.5 秒 | Codex CLI、Gemini CLI(备选)、Kimi CLI(备选) |
+| **In-process 插件** | 插件直接跑在 Agent 进程内部,零开销转发事件 | 零 | opencode、openclaw、Hermes、Pi |
 
 所有 Agent 的事件最终都映射到同一套状态机:`idle → thinking → working → happy / error → sleeping`。桌面宠物根据当前状态播放对应的 SVG 动画,多个会话同时运行时自动切换到 juggling(杂耍)/ building(建造)/ conducting(指挥)动画。
 
-> **多 Agent 共存**:Claude Code、Codex、Copilot、Gemini、Cursor、Kiro、opencode 可以同时运行。Clawd 为每个 session 独立维护状态,取最高优先级作为桌面宠物当前显示。
+> **多 Agent 共存**:Claude Code、Codex、Copilot、Gemini、Cursor、Kiro、opencode、Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi 可以同时运行。Clawd 为每个 session 独立维护状态,取最高优先级作为桌面宠物当前显示。
 
 ### 通路 ②:离线分析 → 洞察面板
 
@@ -244,6 +244,21 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 洞察面板直接读这些文件,生成时间线和 AI 摘要。**不走 hooks,不依赖小clawd运行**——即使你从没启动过桌面宠物,只要本地有对话历史,面板就能工作。
 
 > **注**:目前分析面板的扫描器只覆盖上面三个 Agent。Copilot CLI、Gemini CLI、Kiro CLI、opencode 仍能驱动桌面宠物动画,但它们的本地历史尚未接入面板扫描链路。
+
+## 桌宠能力(与上游同步)
+
+除了分析层之外,本 fork 现在与 [`clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) 完整同步,纳入了它的全部桌宠能力:
+
+- **更广的 Agent 支持** —— 像素动画覆盖 **Claude Code、Codex CLI、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、opencode**,以及新合入的 **Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi**。
+- **WSL 与远程开发**(本次同步重点)—— Codex 官方支持 **WSL2**,Clawd 通过 Codex 官方 hooks 集成(JSONL 轮询作为兜底)。当 Agent 跑在远程主机或 WSL 独立的 Linux home 里时,**远程 SSH** 会通过 SSH 隧道把 hooks 部署过去,让桌宠也能感知这些会话;远程端必须使用 POSIX shell —— **Git Bash 或 WSL `bash`,而不是 Windows `cmd.exe`**。详见 [docs/guides/codex-wsl-clarification.zh-CN.md](docs/guides/codex-wsl-clarification.zh-CN.md) 与 [docs/guides/setup-guide.zh-CN.md](docs/guides/setup-guide.zh-CN.md)。
+- **图形化设置面板** —— 完整的设置窗口(Agent、主题、快捷键、远程 SSH、Telegram 审批),不必再手改配置文件。
+- **主题系统** —— 把螃蟹换成其他角色(如 Cloudling 主题),或用 `npm run create-theme` 自建主题。
+- **Telegram 审批** —— 在手机上远程批准/拒绝权限请求。
+- **Doctor 诊断** —— 内置健康检查,逐个验证 hook 安装与各 Agent 的集成状态。
+- **Session HUD 与快捷命令** —— 可选的屏上会话状态标签与快捷命令面板。
+- **经典能力** —— 权限气泡、极简模式、点击反应、眼球追踪、睡眠序列、多显示器支持全部保留。
+
+平台相关说明(Windows 终端聚焦、macOS 聚焦、已知限制)见 [docs/guides/](docs/guides/)。
 
 ## 常见问题
 
@@ -262,15 +277,15 @@ Clawd Insights 是构建在 [`rullerzhou-afk/clawd-on-desk`](https://github.com/
 
 这块面板就是新增的核心。它扫描你的本地历史记录(目前覆盖 Claude Code、Codex CLI、Cursor Agent,更多 agent 接入中),画出时间线,再让你自选的 LLM 为每一次会话生成摘要——全程不向任何第三方发送一个字节。
 
-从上游继承的多 Agent 状态追踪:**Claude Code**、**Codex CLI**、**Copilot CLI**、**Gemini CLI**、**Cursor Agent**、**Kiro CLI** 与 **opencode**。桌面宠物本身的完整功能(极简模式、点击反应、自定义主题、远程 SSH 等),请见[上游 README](https://github.com/rullerzhou-afk/clawd-on-desk)。
+从上游继承的多 Agent 状态追踪,并且本仓库现在与上游完整代码保持同步(WSL 与远程 SSH 支持、扩充的 Agent 阵容、图形化设置面板、主题系统、Telegram 审批、Doctor 诊断等)。桌面宠物本身的完整功能请见上方 [桌宠能力(与上游同步)](#桌宠能力与上游同步)。
 
 特别感谢 [@rullerzhou-afk](https://github.com/rullerzhou-afk) 和所有共同塑造原版 Clawd 的贡献者——没有这份基础,就没有这个项目。
 
 ## 许可证
 
-源代码:[MIT 许可证](LICENSE)。
+源代码:[GNU AGPL-3.0-only 许可证](LICENSE) —— 沿用自上游 `clawd-on-desk`(本仓库已纳入其代码)。第三方素材另见 [NOTICE.md](NOTICE.md)。
 
-**美术素材(assets/)不适用 MIT 许可。** 所有权利归各自版权持有人所有,详见 [assets/LICENSE](assets/LICENSE)。
+**美术素材(assets/)不适用 AGPL 许可。** 所有权利归各自版权持有人所有,详见 [assets/LICENSE](assets/LICENSE)。
 
 - **Clawd** 角色设计归属 [Anthropic](https://www.anthropic.com)。本项目为非官方粉丝作品,与 Anthropic 无官方关联。
 - **三花猫** 素材由 鹿鹿 ([@rullerzhou-afk](https://github.com/rullerzhou-afk)) 创作,保留所有权利。

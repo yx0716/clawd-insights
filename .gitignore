@@ -15,23 +15,53 @@ PLAN.md
 PLAN-*.md
 codex-*.md
 CHANGELOG-draft.md
-BACKLOG.md
-docs/*
-!docs/copilot-setup.md
-!docs/release-v0.5.5.md
-!docs/guide-theme-creation.md
-!docs/permission-hook-fail-deny-investigation.md
-!docs/state-mapping.md
-!docs/state-mapping.zh-CN.md
-!docs/setup-guide.md
-!docs/setup-guide.zh-CN.md
-!docs/known-limitations.md
-!docs/known-limitations.zh-CN.md
-!docs/self-check.md
+docs/**
+!docs/guides/
+!docs/guides/copilot-setup.md
+!docs/guides/guide-theme-creation.md
+!docs/guides/known-limitations.md
+!docs/guides/known-limitations.zh-CN.md
+!docs/guides/setup-guide.md
+!docs/guides/setup-guide.zh-CN.md
+!docs/guides/state-mapping.md
+!docs/guides/state-mapping.zh-CN.md
+!docs/guides/telegram-approval.md
+!docs/guides/codex-wsl-clarification.md
+!docs/guides/codex-wsl-clarification.zh-CN.md
+!docs/guides/codex-wsl-clarification.ko-KR.md
+!docs/investigations/
+!docs/investigations/permission-hook-fail-deny-investigation.md
+!docs/investigations/codex-subagent-session-meta.md
+!docs/project/
+!docs/project/agent-runtime-architecture.md
+!docs/project/release-process.md
+!docs/project/theme-state-ui.md
+!docs/cloudling/
+!docs/cloudling/specs/
+!docs/cloudling/specs/core-states.md
+!docs/cloudling/specs/special-states.md
+!docs/releases/
+!docs/releases/release-v0.5.5.md
+!docs/releases/release-v0.6.0.md
+!docs/releases/release-v0.6.1.md
+!docs/releases/release-v0.6.2.md
+!docs/releases/release-v0.6.3.md
+!docs/releases/release-v0.7.1.md
+!docs/releases/release-v0.8.0.md
+!docs/releases/release-v0.8.1.md
 
 # Temp files from testing
 .tmp_*
 *.tmp
+
+# Root-level scratch files (tmp-*.md / tmp-*.json / tmp-*.sh etc.)
+# Matches files like tmp-pr301-comment.md, tmp-issues.json at repo root only.
+/tmp-*
+
+# Local manual test / tuning scratch docs (root-level dotfile md)
+.*-test-*.md
+.*-tune-*.md
+.*-tune.md
 
 
 # Calico animation studio (WIP pipeline, not for distribution)
@@ -51,21 +81,26 @@ tools/check_dark.py
 # Debug logs
 logs/
 
+# Telegram approval sidecar build artifacts
+bin/cc-connect-clawd/*/cc-connect-clawd
+bin/cc-connect-clawd/*/cc-connect-clawd.exe
+!bin/cc-connect-clawd/
+!bin/cc-connect-clawd/README.md
+
 # GIF recording tools (not part of main project)
 scripts/*
 !scripts/remote-deploy.sh
 !scripts/run-clawdbot-stress.sh
 !scripts/monitor-clawd-resources.sh
+!scripts/monitor-clawd-power.ps1
 !scripts/validate-theme.js
+!scripts/create-theme.js
+!scripts/export-agent-icons.js
+!scripts/verify-sidecar-binaries.js
+!scripts/fetch-sidecar-binaries.js
 
 # oh-my-cursor state
 .omc/
 
 # Cursor local config (MCP, rules from omc setup)
 .cursor/
-
-# Kiro spec documents (dev-only, not for PR)
-.kiro/
-
-# Property-based test file (dev-only, uses fast-check, not in upstream test suite)
-test/registry-migration.test.js

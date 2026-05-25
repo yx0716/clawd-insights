@@ -2,7 +2,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
 const permission = require("../src/permission");
-const { computeBubbleStackLayout } = permission.__test;
+const { computeBubbleStackLayout, clampBubbleHeight } = permission.__test;
 
 // Common defaults so each test only spells out what's interesting.
 const BW = 340;
@@ -18,6 +18,28 @@ function layout(opts) {
     ...opts,
   });
 }
+
+describe("permission bubble height clamp", () => {
+  it("caps a tall measured bubble to the work area reserve", () => {
+    assert.strictEqual(clampBubbleHeight(1500, 900), 876);
+  });
+
+  it("rounds fractional measured heights up before clamping", () => {
+    assert.strictEqual(clampBubbleHeight(240.2, 900), 241);
+  });
+
+  it("supports an explicit reserve for product-tuned edge spacing", () => {
+    assert.strictEqual(clampBubbleHeight(1500, 900, 40), 860);
+  });
+
+  it("keeps invalid natural heights at zero", () => {
+    assert.strictEqual(clampBubbleHeight(0, 900), 0);
+  });
+
+  it("falls back to the natural height when work area height is unavailable", () => {
+    assert.strictEqual(clampBubbleHeight(500, 0), 500);
+  });
+});
 
 describe("permission bubble stack layout", () => {
   it("hangs the stack from the pet hitbox when there is room below", () => {
@@ -220,5 +242,68 @@ describe("permission bubble stack layout", () => {
     assert.strictEqual(bounds[0].y, 500);
     assert.strictEqual(bounds[1].y, 500 + 188 + 6);
     assert.strictEqual(bounds[2].y, 500 + (188 + 6) * 2);
+  });
+
+  it("reserves the HUD lane before placing bubbles below the pet", () => {
+    const bounds = layout({
+      followPet: true,
+      bubbleHeights: [150, 150],
+      workArea: FHD,
+      hitRect: { left: 800, top: 400, right: 920, bottom: 500 },
+      hudReservedOffset: 38,
+    });
+
+    assert.deepStrictEqual(bounds, [
+      { x: 690, y: 538, width: 340, height: 150 },
+      { x: 690, y: 694, width: 340, height: 150 },
+    ]);
+  });
+
+  it("includes the HUD reserve in the below-pet fit check", () => {
+    const common = {
+      followPet: true,
+      bubbleHeights: [190],
+      workArea: { x: 0, y: 0, width: 1920, height: 700 },
+      hitRect: { left: 800, top: 400, right: 920, bottom: 500 },
+    };
+
+    const withoutHud = layout(common);
+    const withHud = layout({ ...common, hudReservedOffset: 38 });
+
+    assert.strictEqual(withoutHud[0].y, 500, "without HUD it still fits below");
+    assert.strictEqual(withHud[0].x, 920, "with HUD reserve it falls to the side");
+    assert.notStrictEqual(withHud[0].y, 538);
+  });
+
+  it("ignores Hardware Buddy test entries when stacking visible bubbles", () => {
+    const runtime = permission({
+      win: { isDestroyed: () => false },
+      bubbleFollowPet: false,
+      getPetWindowBounds: () => ({ x: 0, y: 0, width: 80, height: 80 }),
+      getNearestWorkArea: () => FHD,
+      getHitRectScreen: () => null,
+      getHudReservedOffset: () => 0,
+    });
+    const assigned = [];
+    const bubble = (name) => ({
+      isDestroyed: () => false,
+      setBounds: (bounds) => assigned.push([name, bounds]),
+    });
+
+    runtime.addPendingPermission({ bubble: bubble("old"), measuredHeight: 200, suggestions: [] }, "test");
+    runtime.addPendingPermission({
+      bubble: null,
+      measuredHeight: 200,
+      suggestions: [],
+      isHardwareBuddyTest: true,
+    }, "test");
+    runtime.addPendingPermission({ bubble: bubble("new"), measuredHeight: 200, suggestions: [] }, "test");
+
+    runtime.repositionBubbles();
+
+    assert.deepStrictEqual(assigned, [
+      ["old", { x: 1572, y: 666, width: 340, height: 200 }],
+      ["new", { x: 1572, y: 872, width: 340, height: 200 }],
+    ]);
   });
 });

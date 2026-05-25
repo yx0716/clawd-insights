@@ -1,0 +1,909 @@
+const { formatDetail, truncate } = window.ClawdBubbleFormat;
+const card = document.getElementById("card");
+const toolPill = document.getElementById("toolPill");
+const toolPillText = document.getElementById("toolPillText");
+function stopMarquee() {
+  toolPill.classList.remove("is-marquee");
+  toolPill.style.removeProperty("--marquee-shift");
+}
+function startMarqueeIfOverflowing() {
+  const overflow = toolPillText.scrollWidth - toolPillText.clientWidth;
+  if (overflow <= 0) return;
+  toolPill.style.setProperty("--marquee-shift", `-${overflow}px`);
+  toolPill.classList.add("is-marquee");
+}
+toolPill.addEventListener("mouseenter", startMarqueeIfOverflowing);
+toolPill.addEventListener("mouseleave", stopMarquee);
+const commandBlock = document.getElementById("commandBlock");
+const elicitationForm = document.getElementById("elicitationForm");
+const elicitationProgress = document.getElementById("elicitationProgress");
+const btnAllow = document.getElementById("btnAllow");
+const btnDeny = document.getElementById("btnDeny");
+const suggestionsContainer = document.getElementById("suggestions");
+const headerTitle = document.querySelector(".header-title");
+const sessionTag = document.getElementById("sessionTag");
+let elicitationMode = false;
+let elicitationQuestions = [];
+let elicitationAnswers = {};
+let activeQuestionIndex = 0;
+let currentLang = "en";
+let heightReportFrame = 0;
+
+// Mirrors body { padding: 6px; } above. Keep this in sync if the body padding changes.
+const BUBBLE_BODY_PADDING_Y = 12;
+const MIN_ELICITATION_FORM_HEIGHT = 80;
+const ELICITATION_OTHER_KEY = "__other__";
+
+function setSessionTag(data) {
+  const parts = [];
+  if (data.sessionFolder) parts.push(data.sessionFolder);
+  if (data.sessionShortId) parts.push("#" + data.sessionShortId);
+  if (parts.length) {
+    sessionTag.textContent = parts.join(" \u00B7 ");
+    sessionTag.classList.add("visible");
+  } else {
+    sessionTag.textContent = "";
+    sessionTag.classList.remove("visible");
+  }
+}
+
+
+const BUBBLE_STRINGS = {
+  en: {
+    autoAcceptEdits: "Auto-accept edits",
+    switchToPlanMode: "Switch to plan mode",
+    allowInDir: "Allow {tool} in {dir}/",
+    alwaysAllowRule: "Always allow `{rule}`",
+    alwaysAllow: "Always allow",
+    permissionRequest: "Permission Request",
+    allow: "Allow",
+    deny: "Deny",
+    alwaysAllowBlanket: "Always Allow (blanket)",
+    alwaysAllowBlanketTitle: "Warning: opencode's 'always' rule auto-approves every subsequent tool call of the same category in this session (including rm and similar destructive commands). The rule lives only in memory — restart opencode to revoke.",
+    needsInput: "Needs Input",
+    goToTerminal: "Go to Terminal",
+    submitAnswer: "Submit Answer",
+    nextQuestion: "Next",
+    previousQuestion: "Back",
+    questionProgress: "{current} / {total}",
+    chooseOneOption: "Choose one option",
+    chooseAtLeastOneOption: "Multi-select, choose at least one",
+    questionLabel: "Question {index}",
+    other: "Other",
+    otherPlaceholder: "Type your answer…",
+    codexPermission: "Codex Permission",
+    kimiPermission: "Kimi Permission",
+    checkKimiTerminal: "Approve or reject this request in the Kimi terminal.",
+    gotIt: "Got it",
+    planReview: "Plan Review",
+    approve: "Approve",
+    reject: "Reject",
+  },
+  zh: {
+    autoAcceptEdits: "\u81EA\u52A8\u63A5\u53D7\u7F16\u8F91",
+    switchToPlanMode: "\u5207\u6362\u5230 Plan \u6A21\u5F0F",
+    allowInDir: "\u5141\u8BB8 {tool} \u5728 {dir}/",
+    alwaysAllowRule: "\u59CB\u7EC8\u5141\u8BB8 `{rule}`",
+    alwaysAllow: "\u59CB\u7EC8\u5141\u8BB8",
+    permissionRequest: "\u6743\u9650\u8BF7\u6C42",
+    allow: "\u6279\u51C6",
+    deny: "\u62D2\u7EDD",
+    alwaysAllowBlanket: "\u59CB\u7EC8\u5141\u8BB8\uFF08\u901A\u914D\uFF09",
+    alwaysAllowBlanketTitle: "\u8B66\u544A\uFF1Aopencode \u7684 always \u89C4\u5219\u4F1A\u8BA9\u672C\u6B21 session \u5185\u4E0B\u4E00\u6B21\u6240\u6709\u540C\u7C7B\u5DE5\u5177\u8C03\u7528\u81EA\u52A8\u653E\u884C\uFF08\u5305\u62EC rm \u7B49\u5371\u9669\u547D\u4EE4\uFF09\u3002\u8BE5\u89C4\u5219\u53EA\u5728\u5185\u5B58\u4E2D\uFF0C\u91CD\u542F opencode \u5373\u6062\u590D\u3002",
+    needsInput: "\u9700\u8981\u8F93\u5165",
+    goToTerminal: "\u524D\u5F80\u7EC8\u7AEF",
+    submitAnswer: "\u63D0\u4EA4\u56DE\u7B54",
+    nextQuestion: "\u4E0B\u4E00\u6B65",
+    previousQuestion: "\u4E0A\u4E00\u6B65",
+    questionProgress: "{current} / {total}",
+    chooseOneOption: "\u8BF7\u9009\u62E9\u4E00\u9879",
+    chooseAtLeastOneOption: "\u53EF\u591A\u9009\uFF0C\u81F3\u5C11\u9009\u62E9\u4E00\u9879",
+    questionLabel: "\u95EE\u9898 {index}",
+    other: "\u5176\u4ED6",
+    otherPlaceholder: "\u8F93\u5165\u4F60\u7684\u56DE\u7B54\u2026",
+    codexPermission: "Codex \u6743\u9650\u8BF7\u6C42",
+    kimiPermission: "Kimi \u6743\u9650\u8BF7\u6C42",
+    checkKimiTerminal: "\u8BF7\u5728 Kimi \u7EC8\u7AEF\u4E2D\u6279\u51C6\u6216\u62D2\u7EDD\u8BE5\u8BF7\u6C42\u3002",
+    gotIt: "\u77E5\u9053\u4E86",
+    planReview: "\u8BA1\u5212\u5BA1\u6279",
+    approve: "\u6279\u51C6",
+    reject: "\u62D2\u7EDD",
+  },
+  "zh-TW": {
+    autoAcceptEdits: "自動接受編輯",
+    switchToPlanMode: "切換到計劃模式",
+    allowInDir: "允許 {tool} 在 {dir}/",
+    alwaysAllowRule: "一律允許 `{rule}`",
+    alwaysAllow: "一律允許",
+    permissionRequest: "權限請求",
+    allow: "允許",
+    deny: "拒絕",
+    alwaysAllowBlanket: "一律允許（全部）",
+    alwaysAllowBlanketTitle: "警告：opencode 的 'always' 規則會自動允許本次工作階段中後續所有同類工具呼叫（包含 rm 等破壞性命令）。此規則只儲存在記憶體中，重新啟動 opencode 即可取消此規則。",
+    needsInput: "需要回應",
+    goToTerminal: "跳至終端機",
+    submitAnswer: "送出答案",
+    nextQuestion: "下一題",
+    previousQuestion: "上一題",
+    questionProgress: "{current} / {total}",
+    chooseOneOption: "請選擇一個選項",
+    chooseAtLeastOneOption: "可複選，請至少選擇一項",
+    questionLabel: "問題 {index}",
+    other: "其他",
+    otherPlaceholder: "輸入你的回答…",
+    codexPermission: "Codex 權限請求",
+    kimiPermission: "Kimi 權限請求",
+    checkKimiTerminal: "請在 Kimi 終端機中允許或拒絕此請求。",
+    gotIt: "了解",
+    planReview: "計畫審查",
+    approve: "允許",
+    reject: "拒絕",
+  },
+  ko: {
+    autoAcceptEdits: "\uD3B8\uC9D1 \uC790\uB3D9 \uC2B9\uC778",
+    switchToPlanMode: "Plan \uBAA8\uB4DC\uB85C \uC804\uD658",
+    allowInDir: "{dir}/\uC5D0\uC11C {tool} \uD5C8\uC6A9",
+    alwaysAllowRule: "\uD56D\uC0C1 \uD5C8\uC6A9 `{rule}`",
+    alwaysAllow: "\uD56D\uC0C1 \uD5C8\uC6A9",
+    permissionRequest: "\uAD8C\uD55C \uC694\uCCAD",
+    allow: "\uD5C8\uC6A9",
+    deny: "\uAC70\uBD80",
+    alwaysAllowBlanket: "\uD56D\uC0C1 \uD5C8\uC6A9 (\uC804\uCCB4)",
+    alwaysAllowBlanketTitle: "\uACBD\uACE0: opencode\uC758 'always' \uADDC\uCE59\uC740 \uC774 \uC138\uC158\uC5D0\uC11C \uAC19\uC740 \uC885\uB958\uC758 \uC774\uD6C4 \uBAA8\uB4E0 \uB3C4\uAD6C \uD638\uCD9C\uC744 \uC790\uB3D9 \uC2B9\uC778\uD569\uB2C8\uB2E4. (rm \uAC19\uC740 \uD30C\uAD34\uC801 \uBA85\uB839 \uD3EC\uD568) \uC774 \uADDC\uCE59\uC740 \uBA54\uBAA8\uB9AC\uC5D0\uB9CC \uB0A8\uC73C\uBA70, opencode\uB97C \uC7AC\uC2DC\uC791\uD558\uBA74 \uD574\uC81C\uB429\uB2C8\uB2E4.",
+    needsInput: "\uC785\uB825 \uD544\uC694",
+    goToTerminal: "\uD130\uBBF8\uB110\uB85C \uC774\uB3D9",
+    submitAnswer: "\uB2F5\uBCC0 \uC81C\uCD9C",
+    nextQuestion: "\uB2E4\uC74C",
+    previousQuestion: "\uC774\uC804",
+    questionProgress: "{current} / {total}",
+    chooseOneOption: "\uD56D\uBAA9 \uD558\uB098\uB97C \uC120\uD0DD\uD558\uC138\uC694",
+    chooseAtLeastOneOption: "\uC5EC\uB7EC \uD56D\uBAA9 \uC120\uD0DD \uAC00\uB2A5, \uCD5C\uC18C \uD558\uB098 \uC120\uD0DD",
+    questionLabel: "\uC9C8\uBB38 {index}",
+    other: "\uAE30\uD0C0",
+    otherPlaceholder: "\uC9C1\uC811 \uC785\uB825\u2026",
+    codexPermission: "Codex \uAD8C\uD55C \uC694\uCCAD",
+    kimiPermission: "Kimi \uAD8C\uD55C \uC694\uCCAD",
+    checkKimiTerminal: "Kimi \uD130\uBBF8\uB110\uC5D0\uC11C \uC774 \uC694\uCCAD\uC744 \uD5C8\uC6A9\uD558\uAC70\uB098 \uAC70\uBD80\uD558\uC138\uC694.",
+    gotIt: "\uD655\uC778",
+    planReview: "\uACC4\uD68D \uAC80\uD1A0",
+    approve: "\uC2B9\uC778",
+    reject: "\uAC70\uBD80",
+  },
+  ja: {
+    autoAcceptEdits: "編集を自動承認",
+    switchToPlanMode: "Plan モードに切り替え",
+    allowInDir: "{dir}/ で {tool} を許可",
+    alwaysAllowRule: "`{rule}` を常に許可",
+    alwaysAllow: "常に許可",
+    permissionRequest: "権限リクエスト",
+    allow: "許可",
+    deny: "拒否",
+    alwaysAllowBlanket: "常に許可（包括）",
+    alwaysAllowBlanketTitle: "警告: opencode の 'always' ルールは、このセッション内で同じ種類の以後すべてのツール呼び出しを自動承認します（rm などの破壊的なコマンドを含む）。このルールはメモリ上だけに保存され、opencode を再起動すると解除されます。",
+    needsInput: "入力が必要",
+    goToTerminal: "ターミナルへ移動",
+    submitAnswer: "回答を送信",
+    nextQuestion: "次へ",
+    previousQuestion: "戻る",
+    questionProgress: "{current} / {total}",
+    chooseOneOption: "選択肢を 1 つ選んでください",
+    chooseAtLeastOneOption: "複数選択、1 つ以上選んでください",
+    questionLabel: "質問 {index}",
+    other: "その他",
+    otherPlaceholder: "回答を入力…",
+    codexPermission: "Codex 権限リクエスト",
+    kimiPermission: "Kimi 権限リクエスト",
+    checkKimiTerminal: "Kimi ターミナルでこのリクエストを許可または拒否してください。",
+    gotIt: "了解",
+    planReview: "計画レビュー",
+    approve: "承認",
+    reject: "却下",
+  },
+};
+
+function bubbleText(lang, key, vars) {
+  const dict = BUBBLE_STRINGS[lang] || BUBBLE_STRINGS.en;
+  let value = dict[key] || BUBBLE_STRINGS.en[key] || key;
+  if (!vars) return value;
+  for (const [name, replacement] of Object.entries(vars)) {
+    value = value.replace(`{${name}}`, replacement);
+  }
+  return value;
+}
+
+function getSuggestionLabel(s, lang) {
+  if (s.type === "setMode") {
+    if (s.mode === "acceptEdits") return bubbleText(lang, "autoAcceptEdits");
+    if (s.mode === "plan") return bubbleText(lang, "switchToPlanMode");
+    return s.mode;
+  }
+  if (s.type === "addRules") {
+    // Support both flat (toolName/ruleContent) and nested (rules:[]) formats
+    const rule = Array.isArray(s.rules) && s.rules[0] ? s.rules[0] : s;
+    const rc = rule.ruleContent || s.ruleContent;
+    const tn = rule.toolName || s.toolName || "";
+    if (rc) {
+      if (rc.includes("**")) {
+        const dir = rc.split("**")[0].replace(/[\\/]$/, "").split(/[\\/]/).pop() || rc;
+        return bubbleText(lang, "allowInDir", { tool: tn, dir });
+      }
+      const short = rc.length > 30 ? rc.slice(0, 29) + "\u2026" : rc;
+      return bubbleText(lang, "alwaysAllowRule", { rule: short });
+    }
+  }
+  return bubbleText(lang, "alwaysAllow");
+}
+
+function disableAll() {
+  btnAllow.disabled = true;
+  btnDeny.disabled = true;
+  for (const btn of suggestionsContainer.children) btn.disabled = true;
+  for (const el of elicitationForm.querySelectorAll("input, textarea, button")) el.disabled = true;
+}
+
+function withUnconstrainedElicitationForm(fn) {
+  if (!elicitationMode) return fn();
+  const previousMaxHeight = elicitationForm.style.maxHeight;
+  const wasScrollable = card.classList.contains("elicitation-scrollable");
+
+  card.classList.remove("elicitation-scrollable");
+  elicitationForm.style.maxHeight = "";
+  try {
+    return fn();
+  } finally {
+    elicitationForm.style.maxHeight = previousMaxHeight;
+    card.classList.toggle("elicitation-scrollable", wasScrollable);
+  }
+}
+
+function measureNaturalBubbleHeight() {
+  return withUnconstrainedElicitationForm(() => {
+    return Math.ceil(Math.max(card.offsetHeight, card.scrollHeight) + BUBBLE_BODY_PADDING_Y);
+  });
+}
+
+function applyElicitationViewport() {
+  // Intentionally a no-op.
+  //
+  // Previously this function clamped the elicitation form's maxHeight and added
+  // the `elicitation-scrollable` class (overflow-y: auto). The scroll container
+  // caused arrow keys to scroll the div instead of navigating between radio
+  // options — even with preventDefault()/stopPropagation() on keydown — because
+  // Chromium's scroll-on-arrow default action fires before JS handlers in the
+  // bubble phase, not after.
+  //
+  // The correct approach: let the form grow to its natural height and drive
+  // window size through reportHeight() → IPC bubble-height → setBounds().
+  // permission.js clampBubbleHeight() already caps the window at workArea.height
+  // so content-heavy bubbles will never exceed the screen.
+  //
+  // Safety: "User answered in terminal" cannot be triggered by elicitation
+  // bubbles. That denial path is wired to PostToolUse/Stop hook events matched
+  // by toolUseId (server.js:694) — elicitation uses a completely separate
+  // code path (server.js:1008, isElicitation: true) and is explicitly excluded
+  // from the shortcut-navigation and resolve logic (permission.js:321, 630).
+}
+
+function scheduleBubbleHeightReport() {
+  if (heightReportFrame) cancelAnimationFrame(heightReportFrame);
+  heightReportFrame = requestAnimationFrame(() => {
+    heightReportFrame = 0;
+    window.bubbleAPI.reportHeight(measureNaturalBubbleHeight());
+    applyElicitationViewport();
+  });
+}
+
+function revealCard() {
+  card.classList.remove("hiding");
+  card.classList.add("visible");
+  scheduleBubbleHeightReport();
+}
+
+function resetBubbleContent() {
+  if (heightReportFrame) {
+    cancelAnimationFrame(heightReportFrame);
+    heightReportFrame = 0;
+  }
+  elicitationMode = false;
+  elicitationQuestions = [];
+  elicitationAnswers = {};
+  activeQuestionIndex = 0;
+  card.classList.remove("elicitation-scrollable");
+  commandBlock.style.display = "";
+  commandBlock.textContent = "";
+  elicitationForm.innerHTML = "";
+  elicitationForm.style.maxHeight = "";
+  elicitationForm.classList.remove("visible");
+  elicitationProgress.textContent = "";
+  elicitationProgress.classList.remove("visible");
+  toolPill.style.display = "";
+  stopMarquee();
+  btnAllow.style.display = "";
+  btnAllow.disabled = false;
+  btnDeny.style.display = "";
+  btnDeny.disabled = false;
+  suggestionsContainer.innerHTML = "";
+}
+
+function getQuestionLabel(question, questionIndex) {
+  return question.header || bubbleText(currentLang, "questionLabel", { index: questionIndex + 1 });
+}
+
+function ensureElicitationAnswer(questionIndex) {
+  if (!elicitationAnswers[questionIndex]) {
+    elicitationAnswers[questionIndex] = { selected: [], otherText: "" };
+  }
+  return elicitationAnswers[questionIndex];
+}
+
+function isElicitationOtherSelected(questionIndex) {
+  const answer = elicitationAnswers[questionIndex];
+  return !!(answer && answer.selected.includes(ELICITATION_OTHER_KEY));
+}
+
+function setElicitationSelection(question, questionIndex, optionKey, checked) {
+  const answer = ensureElicitationAnswer(questionIndex);
+  if (question.multiSelect) {
+    const next = new Set(answer.selected);
+    if (checked) next.add(optionKey);
+    else next.delete(optionKey);
+    answer.selected = [...next];
+  } else if (checked) {
+    answer.selected = [optionKey];
+  }
+}
+
+function getOptionAnswerLabel(question, optionKey) {
+  const optionIndex = Number(optionKey);
+  const options = Array.isArray(question.options) ? question.options : [];
+  const option = Number.isInteger(optionIndex) ? options[optionIndex] : null;
+  return option && option.label ? option.label : "";
+}
+
+function getElicitationAnswerText(questionIndex) {
+  const question = elicitationQuestions[questionIndex];
+  const answer = elicitationAnswers[questionIndex];
+  if (!question || !answer || !answer.selected.length) return "";
+
+  const parts = [];
+  for (const optionKey of answer.selected) {
+    if (optionKey === ELICITATION_OTHER_KEY) {
+      const otherText = answer.otherText.trim();
+      if (!otherText) return "";
+      parts.push(otherText);
+    } else {
+      const answerLabel = getOptionAnswerLabel(question, optionKey);
+      if (answerLabel) parts.push(answerLabel);
+    }
+  }
+  return parts.join(", ");
+}
+
+function isElicitationAnswerComplete(questionIndex) {
+  return !!getElicitationAnswerText(questionIndex);
+}
+
+function updateElicitationSubmitState() {
+  if (!elicitationMode) return;
+  const total = elicitationQuestions.length;
+  const currentComplete = total > 0 && isElicitationAnswerComplete(activeQuestionIndex);
+  const allComplete = total > 0 && elicitationQuestions.every((_, i) => isElicitationAnswerComplete(i));
+  const isLastQuestion = activeQuestionIndex >= total - 1;
+
+  elicitationProgress.textContent = total > 0
+    ? bubbleText(currentLang, "questionProgress", { current: activeQuestionIndex + 1, total })
+    : "";
+  elicitationProgress.classList.toggle("visible", total > 0);
+
+  btnDeny.textContent = bubbleText(currentLang, "previousQuestion");
+  btnDeny.disabled = activeQuestionIndex <= 0;
+  btnAllow.textContent = isLastQuestion
+    ? bubbleText(currentLang, "submitAnswer")
+    : bubbleText(currentLang, "nextQuestion");
+  btnAllow.disabled = isLastQuestion ? !allComplete : !currentComplete;
+}
+
+function collectElicitationAnswers() {
+  const answers = {};
+
+  for (let i = 0; i < elicitationQuestions.length; i++) {
+    const question = elicitationQuestions[i];
+    if (!question || typeof question.question !== "string" || !question.question) return null;
+
+    const answerText = getElicitationAnswerText(i);
+    if (!answerText) return null;
+    answers[question.question] = answerText;
+  }
+
+  return answers;
+}
+
+function createQuestionSummary(question, questionIndex) {
+  const summaryButton = document.createElement("button");
+  summaryButton.type = "button";
+  summaryButton.className = "question-summary";
+
+  const title = document.createElement("span");
+  title.className = "question-summary-title";
+  title.textContent = getQuestionLabel(question, questionIndex);
+  summaryButton.appendChild(title);
+
+  const answer = document.createElement("span");
+  answer.className = "question-summary-answer";
+  answer.textContent = getElicitationAnswerText(questionIndex);
+  summaryButton.appendChild(answer);
+
+  summaryButton.addEventListener("click", () => {
+    activeQuestionIndex = questionIndex;
+    renderElicitationStep();
+  });
+  return summaryButton;
+}
+
+function createElicitationQuestionCard(question, questionIndex) {
+  const questionCard = document.createElement("div");
+  questionCard.className = "question-card";
+
+  const header = document.createElement("div");
+  header.className = "question-header";
+  header.textContent = getQuestionLabel(question, questionIndex);
+  questionCard.appendChild(header);
+
+  const text = document.createElement("div");
+  text.className = "question-text";
+  text.textContent = question.question || "";
+  questionCard.appendChild(text);
+
+  const hint = document.createElement("div");
+  hint.className = "question-hint";
+  hint.textContent = question.multiSelect
+    ? bubbleText(currentLang, "chooseAtLeastOneOption")
+    : bubbleText(currentLang, "chooseOneOption");
+  questionCard.appendChild(hint);
+
+  const optionList = document.createElement("div");
+  optionList.className = "option-list";
+
+  const answer = ensureElicitationAnswer(questionIndex);
+  const options = Array.isArray(question.options) ? question.options : [];
+  options.forEach((option, optionIndex) => {
+    const optionKey = String(optionIndex);
+    const label = document.createElement("label");
+    label.className = "option-item";
+
+    const input = document.createElement("input");
+    input.type = question.multiSelect ? "checkbox" : "radio";
+    input.name = `elicitation-${questionIndex}`;
+    input.value = option.label || "";
+    input.setAttribute("data-answer", option.label || "");
+    input.checked = answer.selected.includes(optionKey);
+
+    const copy = document.createElement("span");
+    copy.className = "option-item-copy";
+
+    const optionLabel = document.createElement("span");
+    optionLabel.className = "option-item-label";
+    optionLabel.textContent = option.label || String(optionIndex + 1);
+    copy.appendChild(optionLabel);
+
+    if (option.description) {
+      const optionDescription = document.createElement("span");
+      optionDescription.className = "option-item-description";
+      optionDescription.textContent = option.description;
+      copy.appendChild(optionDescription);
+    }
+
+    label.appendChild(input);
+    label.appendChild(copy);
+    optionList.appendChild(label);
+
+    input.addEventListener("change", () => {
+      setElicitationSelection(question, questionIndex, optionKey, input.checked);
+      updateElicitationSubmitState();
+    });
+  });
+
+  // CC's AskUserQuestion protocol auto-provides "Other" in terminal UI but
+  // not in question.options — we inject it client-side.
+  const otherLabel = document.createElement("label");
+  otherLabel.className = "option-item option-item-other";
+
+  const otherInput = document.createElement("input");
+  otherInput.type = question.multiSelect ? "checkbox" : "radio";
+  otherInput.name = `elicitation-${questionIndex}`;
+  otherInput.value = ELICITATION_OTHER_KEY;
+  otherInput.setAttribute("data-other", "true");
+  otherInput.checked = answer.selected.includes(ELICITATION_OTHER_KEY);
+
+  const otherCopy = document.createElement("span");
+  otherCopy.className = "option-item-copy";
+  const otherText = document.createElement("span");
+  otherText.className = "option-item-label";
+  otherText.textContent = bubbleText(currentLang, "other");
+  otherCopy.appendChild(otherText);
+
+  otherLabel.appendChild(otherInput);
+  otherLabel.appendChild(otherCopy);
+  optionList.appendChild(otherLabel);
+
+  const otherTextarea = document.createElement("textarea");
+  otherTextarea.className = "option-item-textarea";
+  otherTextarea.placeholder = bubbleText(currentLang, "otherPlaceholder");
+  otherTextarea.value = answer.otherText || "";
+  otherTextarea.setAttribute("data-other-textarea", "true");
+  otherTextarea.classList.toggle("visible", isElicitationOtherSelected(questionIndex));
+  otherTextarea.addEventListener("input", () => {
+    ensureElicitationAnswer(questionIndex).otherText = otherTextarea.value;
+    updateElicitationSubmitState();
+  });
+  // Enter activates the primary action when it is enabled; Shift+Enter inserts a newline.
+  // ArrowUp from the start of Other returns focus to the last preset option.
+  otherTextarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      if (!btnAllow.disabled) btnAllow.click();
+      return;
+    }
+    if (e.key === "ArrowUp" && !e.shiftKey && !e.isComposing) {
+      const atStart = otherTextarea.selectionStart === 0 && otherTextarea.selectionEnd === 0;
+      const isEmpty = otherTextarea.value.length === 0;
+      const shouldEscape = isEmpty || atStart;
+      if (shouldEscape) {
+        e.preventDefault();
+        const presetInputs = optionList.querySelectorAll(`input[name="elicitation-${questionIndex}"]:not([data-other])`);
+        const target = presetInputs[presetInputs.length - 1];
+        if (target) {
+          target.focus();
+          if (!question.multiSelect) target.click();
+        }
+      }
+    }
+  });
+  optionList.appendChild(otherTextarea);
+
+  const updateOtherTextarea = ({ updateSubmitState = true } = {}) => {
+    const selected = isElicitationOtherSelected(questionIndex);
+    otherTextarea.classList.toggle("visible", selected);
+    if (updateSubmitState) updateElicitationSubmitState();
+    scheduleBubbleHeightReport();
+    if (selected) {
+      requestAnimationFrame(() => otherTextarea.focus());
+    }
+  };
+
+  otherInput.addEventListener("change", () => {
+    setElicitationSelection(question, questionIndex, ELICITATION_OTHER_KEY, otherInput.checked);
+    updateOtherTextarea();
+  });
+  // ArrowDown on Other moves focus into the textarea when it is visible.
+  otherInput.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" && !e.shiftKey && !e.isComposing) {
+      const ta = optionList.querySelector("[data-other-textarea]");
+      if (ta && ta.classList.contains("visible")) {
+        e.preventDefault();
+        ta.focus();
+      }
+    }
+  });
+  if (!question.multiSelect) {
+    optionList.querySelectorAll("input[type=radio]").forEach(r => {
+      if (r !== otherInput) {
+        r.addEventListener("change", () => updateOtherTextarea({ updateSubmitState: false }));
+      }
+    });
+  }
+
+  questionCard.appendChild(optionList);
+  return questionCard;
+}
+
+function renderElicitationTerminalFallback() {
+  const btn = document.createElement("button");
+  btn.className = "btn-suggestion";
+  btn.textContent = bubbleText(currentLang, "goToTerminal");
+  btn.addEventListener("click", () => {
+    btn.textContent = "...";
+    disableAll();
+    // Use plain "deny" — permission.js's elicitation branch already calls
+    // focusTerminalForSession after sending the Elicitation deny response.
+    // "deny-and-focus" hides the bubble without writing to perm.res, which
+    // would leave the blocking Elicitation HTTP hook open.
+    window.bubbleAPI.decide("deny");
+  });
+  suggestionsContainer.appendChild(btn);
+}
+
+function renderElicitationStep() {
+  const total = elicitationQuestions.length;
+  if (total === 0) {
+    activeQuestionIndex = 0;
+  } else if (activeQuestionIndex >= total) {
+    activeQuestionIndex = total - 1;
+  } else if (activeQuestionIndex < 0) {
+    activeQuestionIndex = 0;
+  }
+
+  elicitationForm.innerHTML = "";
+  for (let i = 0; i < total; i++) {
+    const question = elicitationQuestions[i];
+    if (i === activeQuestionIndex) {
+      elicitationForm.appendChild(createElicitationQuestionCard(question, i));
+    } else if (isElicitationAnswerComplete(i)) {
+      elicitationForm.appendChild(createQuestionSummary(question, i));
+    }
+  }
+
+  updateElicitationSubmitState();
+  scheduleBubbleHeightReport();
+
+  // Auto-focus the first preset radio on render so arrow keys work immediately
+  // without requiring a click first. Uses rAF so the DOM is painted before we
+  // query it. If a radio is already checked (navigating back to a previously
+  // answered question), keep that selection instead of resetting it.
+  requestAnimationFrame(() => {
+    const question = elicitationQuestions[activeQuestionIndex];
+    if (!question) return;
+    const alreadyChecked = elicitationForm.querySelector(
+      `input[name="elicitation-${activeQuestionIndex}"]:checked`
+    );
+    if (alreadyChecked) { alreadyChecked.focus(); return; }
+    const first = elicitationForm.querySelector(
+      `input[name="elicitation-${activeQuestionIndex}"]:not([data-other])`
+    );
+    if (first) first.focus();
+  });
+}
+
+function renderElicitationForm(data) {
+  elicitationQuestions = data.toolInput && Array.isArray(data.toolInput.questions)
+    ? data.toolInput.questions
+    : [];
+  elicitationAnswers = {};
+  activeQuestionIndex = 0;
+  elicitationForm.classList.add("visible");
+  commandBlock.style.display = "none";
+  suggestionsContainer.innerHTML = "";
+  renderElicitationTerminalFallback();
+  renderElicitationStep();
+}
+
+function show(data) {
+  resetBubbleContent();
+  currentLang = data.lang || "en";
+  elicitationMode = data.isElicitation || false;
+  setSessionTag(data);
+
+  // opencode branch — Phase 2. Three differences from CC:
+  //   1. tool names are lowercase (edit/bash/write) — we PascalCase them so
+  //      existing tool-pill CSS rules match (data-tool="Edit" etc).
+  //   2. toolInput shape is opencode-native ({filepath,diff}/{command}/{url}),
+  //      not CC's {file_path,command,pattern}. Custom picker below.
+  //   3. "Always Allow" button maps to reply="always" via "opencode-always"
+  //      behavior (handleDecide special-cases this).
+  if (data.isOpencode) {
+    headerTitle.textContent = bubbleText(data.lang, "permissionRequest");
+
+    const rawName = data.toolName || "unknown";
+    const displayName = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+    toolPillText.textContent = displayName;
+    toolPill.setAttribute("data-tool", displayName);
+    toolPill.style.display = "";
+
+    // Command block preview: prefer concrete fields, then dedupe patterns,
+    // then fall back to raw JSON. opencode edit metadata often repeats the
+    // filepath (e.g. "foo.md, foo.md") — the Set dedupes that.
+    const input = (data.toolInput && typeof data.toolInput === "object") ? data.toolInput : {};
+    let detail = "";
+    if (typeof input.filepath === "string" && input.filepath) {
+      detail = [...new Set(input.filepath.split(",").map(s => s.trim()).filter(Boolean))].join(", ");
+    } else if (typeof input.command === "string" && input.command) {
+      detail = input.command;
+    } else if (typeof input.url === "string" && input.url) {
+      detail = input.url;
+    } else if (Array.isArray(data.opencodePatterns) && data.opencodePatterns.length) {
+      detail = [...new Set(data.opencodePatterns)].join(", ");
+    } else {
+      try { detail = JSON.stringify(input); } catch { detail = "(n/a)"; }
+    }
+    commandBlock.textContent = truncate(detail, 200);
+
+    btnAllow.textContent = bubbleText(data.lang, "allow");
+    btnDeny.textContent = bubbleText(data.lang, "deny");
+    btnAllow.style.display = "";
+    btnDeny.style.display = "";
+    btnAllow.disabled = false;
+    btnDeny.disabled = false;
+
+    // Always Allow button — shown only when opencode provided persist candidates.
+    // ⚠ opencode's reply="always" is a BLANKET session rule: a single click
+    // auto-approves every subsequent tool call of the same category in this
+    // session (e.g. ALL bash commands including rm -rf). Unlike Claude Code,
+    // opencode does not scope "always" to the specific pattern of this request.
+    // We keep the button to respect opencode's native UX, but the label + tooltip
+    // make the blast radius explicit.
+    suggestionsContainer.innerHTML = "";
+    if (Array.isArray(data.opencodeAlways) && data.opencodeAlways.length > 0) {
+      const btn = document.createElement("button");
+      btn.className = "btn-suggestion";
+      btn.textContent = bubbleText(data.lang, "alwaysAllowBlanket");
+      btn.title = bubbleText(data.lang, "alwaysAllowBlanketTitle");
+      btn.addEventListener("click", () => {
+        disableAll();
+        window.bubbleAPI.decide("opencode-always");
+      });
+      suggestionsContainer.appendChild(btn);
+    }
+
+    revealCard();
+    return;
+  }
+
+  if (elicitationMode) {
+    // Elicitation mode — answer directly in the bubble, with terminal fallback.
+    headerTitle.textContent = bubbleText(data.lang, "needsInput");
+    toolPill.style.display = "none";
+    renderElicitationForm(data);
+    btnAllow.style.display = "";
+    btnDeny.style.display = "";
+    revealCard();
+    return;
+  }
+
+  // Codex notify mode — informational bubble with Dismiss button only
+  if (data.toolName === "CodexExec") {
+    headerTitle.textContent = bubbleText(data.lang, "codexPermission");
+    toolPillText.textContent = "CODEX";
+    toolPill.setAttribute("data-tool", "CodexExec");
+    toolPill.style.display = "";
+    commandBlock.textContent = (data.toolInput && data.toolInput.command) || "(unknown)";
+    btnAllow.textContent = bubbleText(data.lang, "gotIt");
+    btnAllow.disabled = false;
+    btnDeny.style.display = "none";
+    suggestionsContainer.innerHTML = "";
+    revealCard();
+    return;
+  }
+
+  // Kimi notify mode — informational bubble with Dismiss button only
+  if (data.toolName === "KimiPermission") {
+    headerTitle.textContent = bubbleText(data.lang, "kimiPermission");
+    toolPillText.textContent = "KIMI";
+    toolPill.setAttribute("data-tool", "KimiPermission");
+    toolPill.style.display = "";
+    commandBlock.textContent = (data.toolInput && data.toolInput.command) || bubbleText(data.lang, "checkKimiTerminal");
+    btnAllow.textContent = bubbleText(data.lang, "gotIt");
+    btnAllow.disabled = false;
+    btnDeny.style.display = "none";
+    suggestionsContainer.innerHTML = "";
+    revealCard();
+    return;
+  }
+
+  const isPlanReview = data.toolName === "ExitPlanMode";
+
+  // Header
+  headerTitle.textContent = isPlanReview
+    ? bubbleText(data.lang, "planReview")
+    : bubbleText(data.lang, "permissionRequest");
+  toolPill.style.display = isPlanReview ? "none" : "";
+  btnDeny.style.display = isPlanReview ? "none" : "";
+
+  // Tool pill
+  toolPillText.textContent = data.toolName || "Unknown";
+  toolPill.setAttribute("data-tool", data.toolName || "");
+
+  // Command block (textContent only — never innerHTML)
+  commandBlock.textContent = formatDetail(data.toolName, data.toolInput, { isAntigravity: !!data.isAntigravity });
+
+  // Button labels
+  btnAllow.textContent = isPlanReview ? bubbleText(data.lang, "approve") : bubbleText(data.lang, "allow");
+  btnDeny.textContent = isPlanReview ? bubbleText(data.lang, "reject") : bubbleText(data.lang, "deny");
+
+  // Dynamic suggestion buttons
+  suggestionsContainer.innerHTML = "";
+  if (isPlanReview) {
+    // "Go to Terminal" button — deny + focus terminal
+    const btn = document.createElement("button");
+    btn.className = "btn-suggestion";
+    btn.textContent = bubbleText(data.lang, "goToTerminal");
+    btn.addEventListener("click", () => {
+      disableAll();
+      window.bubbleAPI.decide("deny-and-focus");
+    });
+    suggestionsContainer.appendChild(btn);
+  } else if (Array.isArray(data.suggestions)) {
+    const seenLabels = new Set();
+    data.suggestions.forEach((s, i) => {
+      const label = getSuggestionLabel(s, data.lang);
+      if (seenLabels.has(label)) return;
+      seenLabels.add(label);
+      const btn = document.createElement("button");
+      btn.className = "btn-suggestion";
+      btn.textContent = label;
+      btn.addEventListener("click", () => {
+        disableAll();
+        window.bubbleAPI.decide("suggestion:" + i);
+      });
+      suggestionsContainer.appendChild(btn);
+    });
+  }
+  // Re-enable buttons
+  btnAllow.disabled = false;
+  btnDeny.disabled = false;
+
+  revealCard();
+}
+
+function hide() {
+  card.classList.remove("visible");
+  card.classList.add("hiding");
+}
+
+function handleElicitationPrimaryAction() {
+  if (!isElicitationAnswerComplete(activeQuestionIndex)) {
+    updateElicitationSubmitState();
+    return;
+  }
+
+  if (activeQuestionIndex < elicitationQuestions.length - 1) {
+    activeQuestionIndex += 1;
+    renderElicitationStep();
+    return;
+  }
+
+  const answers = collectElicitationAnswers();
+  if (!answers) {
+    updateElicitationSubmitState();
+    return;
+  }
+
+  btnAllow.textContent = "...";
+  disableAll();
+  window.bubbleAPI.decide({ type: "elicitation-submit", answers });
+}
+
+function handleElicitationBackAction() {
+  if (activeQuestionIndex <= 0) {
+    updateElicitationSubmitState();
+    return;
+  }
+  activeQuestionIndex -= 1;
+  renderElicitationStep();
+}
+
+btnAllow.addEventListener("click", () => {
+  if (elicitationMode) {
+    handleElicitationPrimaryAction();
+    return;
+  }
+  btnAllow.textContent = "...";
+  disableAll();
+  window.bubbleAPI.decide("allow");
+});
+
+btnDeny.addEventListener("click", () => {
+  if (elicitationMode) {
+    handleElicitationBackAction();
+    return;
+  }
+  btnDeny.textContent = "...";
+  disableAll();
+  window.bubbleAPI.decide("deny");
+});
+
+// Elicitation-only Enter-to-submit: selecting a preset radio/checkbox then
+// pressing Enter should send. textarea has its own Enter handler so we skip
+// it here to avoid double-submit. Deliberately gated on elicitationMode so
+// regular permission bubbles never auto-Allow on Enter.
+document.addEventListener("keydown", (e) => {
+  if (!elicitationMode) return;
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+  if (e.target && e.target.tagName === "TEXTAREA") return;
+  if (btnAllow.disabled) return;
+  e.preventDefault();
+  btnAllow.click();
+});
+
+window.addEventListener("resize", applyElicitationViewport);
+window.bubbleAPI.onPermissionShow(show);
+window.bubbleAPI.onPermissionHide(hide);
