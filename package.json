@@ -1,6 +1,6 @@
 {
   "name": "clawd-insights",
-  "version": "0.6.0",
+  "version": "0.3.0",
   "description": "A desktop pet fork with a RescueTime-style analytics dashboard and AI-generated coding session insights.",
   "main": "src/main.js",
   "scripts": {
