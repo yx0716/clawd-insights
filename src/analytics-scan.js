@@ -694,7 +694,15 @@ module.exports = function initAnalyticsScan(ctx) {
         try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
       }
     } else if (agent === "codex") {
-      // Search date-structured dirs
+      // Codex rollout filenames embed their date (rollout-YYYY-MM-DDThh-mm-ss-<uuid>),
+      // so resolve the exact day dir from the name. This avoids missing sessions
+      // older than the recent-day fallback window below.
+      const dateMatch = /(\d{4})-(\d{2})-(\d{2})T/.exec(sessionId);
+      if (dateMatch) {
+        const filePath = path.join(CODEX_SESSIONS, dateMatch[1], dateMatch[2], dateMatch[3], sessionId + ".jsonl");
+        try { fs.accessSync(filePath); return filePath; } catch { /* fall through */ }
+      }
+      // Fallback: search recent date-structured dirs.
       const now = new Date();
       for (let dayOffset = 0; dayOffset < 30; dayOffset++) {
         const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOffset);

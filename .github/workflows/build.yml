@@ -78,6 +78,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          body_path: docs/releases/release-${{ github.ref_name }}.md
+          generate_release_notes: true
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
