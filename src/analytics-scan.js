@@ -34,6 +34,9 @@ module.exports = function initAnalyticsScan(ctx) {
     path.join(home, ".claude", "projects"),
     xdgConfig ? path.join(xdgConfig, "claude", "projects") : null
   );
+  const CLAUDE_INTERNAL_PROJECTS = firstExistingDir(
+    path.join(home, ".claude-internal", "projects")
+  );
   const CODEX_SESSIONS = firstExistingDir(
     path.join(home, ".codex", "sessions"),
     xdgData ? path.join(xdgData, "codex", "sessions") : null
@@ -258,9 +261,9 @@ module.exports = function initAnalyticsScan(ctx) {
     return blocks;
   }
 
-  // ── Claude Code Scanner ──
+  // ── Claude-compatible Scanner (used by claude-code and claude-internal) ──
 
-  function scanClaudeProject(projectDir, projectName, startTs, endTs) {
+  function scanClaudeProject(projectDir, projectName, startTs, endTs, agentId = "claude-code") {
     const sessions = [];
     let files;
     try { files = fs.readdirSync(projectDir); } catch { return sessions; }
@@ -278,7 +281,7 @@ module.exports = function initAnalyticsScan(ctx) {
 
       const sessionId = file.replace(".jsonl", "");
       const sess = {
-        id: sessionId, agent: "claude-code", project: projectName,
+        id: sessionId, agent: agentId, project: projectName,
         fullPath: cwdFromDirName(path.basename(projectDir)),
         title: null, cwd: null, messages: 0, toolCalls: {},
         firstTs: null, lastTs: null, turns: 0, blocks: [], firstUserMsg: null,
@@ -364,6 +367,21 @@ module.exports = function initAnalyticsScan(ctx) {
       if (!stat.isDirectory()) continue;
       const projName = projectFromDirName(dir);
       sessions.push(...scanClaudeProject(full, projName, startTs, endTs));
+    }
+    return sessions;
+  }
+
+  function scanAllClaudeInternal(startTs, endTs) {
+    const sessions = [];
+    let dirs;
+    try { dirs = fs.readdirSync(CLAUDE_INTERNAL_PROJECTS); } catch { return sessions; }
+    for (const dir of dirs) {
+      const full = path.join(CLAUDE_INTERNAL_PROJECTS, dir);
+      let stat;
+      try { stat = fs.statSync(full); } catch { continue; }
+      if (!stat.isDirectory()) continue;
+      const projName = projectFromDirName(dir);
+      sessions.push(...scanClaudeProject(full, projName, startTs, endTs, "claude-internal"));
     }
     return sessions;
   }
@@ -554,6 +572,7 @@ module.exports = function initAnalyticsScan(ctx) {
 
     const allSessions = [
       ...scanAllClaude(startTs, endTs),
+      ...scanAllClaudeInternal(startTs, endTs),
       ...scanCodex(startTs, endTs),
       ...scanCursor(startTs, endTs),
     ];
@@ -685,12 +704,13 @@ module.exports = function initAnalyticsScan(ctx) {
   // ── Session Detail (for AI analysis) ──
 
   function findSessionFile(sessionId, agent) {
-    if (agent === "claude-code") {
+    if (agent === "claude-code" || agent === "claude-internal") {
+      const projectsRoot = agent === "claude-internal" ? CLAUDE_INTERNAL_PROJECTS : CLAUDE_PROJECTS;
       // Search all project dirs for sessionId.jsonl
       let dirs;
-      try { dirs = fs.readdirSync(CLAUDE_PROJECTS); } catch { return null; }
+      try { dirs = fs.readdirSync(projectsRoot); } catch { return null; }
       for (const dir of dirs) {
-        const filePath = path.join(CLAUDE_PROJECTS, dir, sessionId + ".jsonl");
+        const filePath = path.join(projectsRoot, dir, sessionId + ".jsonl");
         try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
       }
     } else if (agent === "codex") {
@@ -821,7 +841,7 @@ module.exports = function initAnalyticsScan(ctx) {
         let d;
         try { d = JSON.parse(line); } catch { continue; }
 
-        if (agent === "claude-code") {
+        if (agent === "claude-code" || agent === "claude-internal") {
           const ts = d.timestamp ? new Date(d.timestamp).getTime() : null;
           if (ts) detail.timestamps.push(ts);
           if (d.type === "custom-title" && d.customTitle) detail.title = d.customTitle;
