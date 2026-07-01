@@ -30,6 +30,7 @@ module.exports = function initAnalyticsWatcher() {
   const candidates = [
     path.join(home, ".claude", "projects"),
     xdgConfig ? path.join(xdgConfig, "claude", "projects") : null,
+    path.join(home, ".claude-internal", "projects"),
     path.join(home, ".codex", "sessions"),
     xdgData ? path.join(xdgData, "codex", "sessions") : null,
     path.join(home, ".cursor", "projects"),

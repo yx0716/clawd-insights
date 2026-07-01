@@ -12,6 +12,7 @@ const {
 
 const AUTO_REPAIRABLE_AGENT_IDS = new Set([
   "claude-code",
+  "claude-internal",
   "codex",
   "cursor-agent",
   "gemini-cli",

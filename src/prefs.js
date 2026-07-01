@@ -161,6 +161,7 @@ const SCHEMA = {
     type: "object",
     defaultFactory: () => ({
       "claude-code": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "claude-internal": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
       "codex": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true, permissionMode: "intercept" },
       "copilot-cli": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
       "cursor-agent": { enabled: true, permissionsEnabled: true, notificationHookEnabled: true },

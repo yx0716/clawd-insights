@@ -2,6 +2,7 @@
 // Used by main.js for process detection and session tracking
 
 const claudeCode = require("./claude-code");
+const claudeInternal = require("./claude-internal");
 const codex = require("./codex");
 const copilotCli = require("./copilot-cli");
 const geminiCli = require("./gemini-cli");
@@ -17,6 +18,7 @@ const hermes = require("./hermes");
 
 const AGENTS = [
   claudeCode,
+  claudeInternal,
   codex,
   copilotCli,
   geminiCli,
