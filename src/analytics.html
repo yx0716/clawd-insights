@@ -2935,6 +2935,17 @@
           <div class="cli-test-result" id="claudeTestResult"></div>
         </div>
         <div class="settings-field">
+          <label for="settingsTclaudePath" id="settingsTclaudePathLabel">tclaude binary path <span
+              style="color:var(--text-muted);font-weight:400" id="settingsTclaudePathOptional">(optional
+              override)</span></label>
+          <div class="cli-path-row">
+            <input id="settingsTclaudePath" type="text" autocomplete="off" spellcheck="false"
+              placeholder="/path/to/tclaude">
+            <button type="button" data-test-cli="tclaude">Test</button>
+          </div>
+          <div class="cli-test-result" id="tclaudeTestResult"></div>
+        </div>
+        <div class="settings-field">
           <label for="settingsCodexPath" id="settingsCodexPathLabel">Codex binary path <span
               style="color:var(--text-muted);font-weight:400" id="settingsCodexPathOptional">(optional
               override)</span></label>
@@ -3152,6 +3163,7 @@
         defaultAnalysisProviderHint: "新 session 分析和 Pre-analyze 弹窗都会默认使用这里选中的 provider。留空时，Clawd 会使用上方第一个可用 provider。",
         optionalOverride: "（可选覆盖）",
         claudePathLabel: "Claude 可执行路径 ",
+        tclaudePathLabel: "tclaude 可执行路径 ",
         codexPathLabel: "Codex 可执行路径 ",
         test: "测试",
         codexPathHint: "如果自动检测失败（比如 NVM/fnm/Volta 安装），请在终端运行 <code>which codex</code>，然后把路径贴到这里。",
@@ -3355,6 +3367,7 @@
         defaultAnalysisProviderHint: "New session analysis and the Pre-analyze modal use this provider by default. If empty, Clawd picks the first available provider above.",
         optionalOverride: "(optional override)",
         claudePathLabel: "Claude binary path ",
+        tclaudePathLabel: "tclaude binary path ",
         codexPathLabel: "Codex binary path ",
         test: "Test",
         codexPathHint: "If auto-detection fails (for example NVM/fnm/Volta installs), run <code>which codex</code> in your terminal and paste the path here.",
@@ -3556,6 +3569,8 @@
       document.getElementById("defaultAnalysisProviderHint").textContent = t("defaultAnalysisProviderHint");
       document.getElementById("settingsClaudePathLabel").childNodes[0].textContent = t("claudePathLabel");
       document.getElementById("settingsClaudePathOptional").textContent = t("optionalOverride");
+      document.getElementById("settingsTclaudePathLabel").childNodes[0].textContent = t("tclaudePathLabel");
+      document.getElementById("settingsTclaudePathOptional").textContent = t("optionalOverride");
       document.getElementById("settingsCodexPathLabel").childNodes[0].textContent = t("codexPathLabel");
       document.getElementById("settingsCodexPathOptional").textContent = t("optionalOverride");
       document.getElementById("settingsCodexPathHint").innerHTML = t("codexPathHint");
@@ -3657,6 +3672,7 @@
       const opt = typeof input === "string" ? getAnalysisOptionById(input) : input;
       const providerId = typeof input === "string" ? input : (opt && (opt.id || opt.provider));
       if (opt) {
+        if (opt.id === "tclaude") return "tclaude";
         if (opt.type === "claude-cli" || opt.id === "claude-code") return "Claude Code";
         if (opt.type === "codex-cli" || opt.id === "codex") return "Codex";
         if (opt.type === "api") {
@@ -3668,6 +3684,7 @@
         return opt.label || providerId || "AI";
       }
       if (providerId === "claude-code") return "Claude Code";
+      if (providerId === "tclaude") return "tclaude";
       if (providerId === "codex") return "Codex";
       if (providerId === "api:claude") return "Claude API";
       if (providerId === "api:openai") return "OpenAI API";
@@ -4032,7 +4049,8 @@
       if (!opt) return "AI";
       // Build base label
       let base;
-      if (opt.type === "claude-cli" || opt.id === "claude-code") base = "Claude Code (local)";
+      if (opt.id === "tclaude") base = "tclaude (local)";
+      else if (opt.type === "claude-cli" || opt.id === "claude-code") base = "Claude Code (local)";
       else if (opt.type === "codex-cli" || opt.id === "codex") base = "Codex (local)";
       else if (opt.type === "api") base = opt.label || `${opt.provider || "API"} API`;
       else base = opt.label || opt.type || "AI";
@@ -7138,9 +7156,12 @@
       // Custom CLI path overrides
       const customCli = (cfg && cfg.customCliPaths) || {};
       document.getElementById("settingsClaudePath").value = customCli.claude || "";
+      document.getElementById("settingsTclaudePath").value = customCli.tclaude || "";
       document.getElementById("settingsCodexPath").value = customCli.codex || "";
       document.getElementById("claudeTestResult").textContent = "";
       document.getElementById("claudeTestResult").className = "cli-test-result";
+      document.getElementById("tclaudeTestResult").textContent = "";
+      document.getElementById("tclaudeTestResult").className = "cli-test-result";
       document.getElementById("codexTestResult").textContent = "";
       document.getElementById("codexTestResult").className = "cli-test-result";
       // Populate the "Default Analysis Provider" dropdown with currently
@@ -7185,10 +7206,10 @@
       const el = document.getElementById("cliDiag");
       if (!el) return;
       const rows = [];
-      for (const key of ["claude", "codex"]) {
+      for (const key of ["claude", "tclaude", "codex"]) {
         const info = diag[key] || {};
         const dotClass = info.found ? "found" : "missing";
-        const label = key === "claude" ? "Claude Code" : "Codex";
+        const label = key === "claude" ? "Claude Code" : key === "tclaude" ? "tclaude" : "Codex";
         const pathHtml = info.found
           ? `<span class="cli-diag-path" title="${escapeHtml(info.path || "")}">${escapeHtml(info.path || "")}</span>`
           : `<span class="cli-diag-path" style="color:#C62828">${escapeHtml(t("notDetected"))}</span>`;
@@ -7227,8 +7248,12 @@
     }
 
     async function testCustomCliPath(key) {
-      const inputId = key === "claude" ? "settingsClaudePath" : "settingsCodexPath";
-      const resultId = key === "claude" ? "claudeTestResult" : "codexTestResult";
+      const inputId = key === "claude" ? "settingsClaudePath"
+        : key === "tclaude" ? "settingsTclaudePath"
+        : "settingsCodexPath";
+      const resultId = key === "claude" ? "claudeTestResult"
+        : key === "tclaude" ? "tclaudeTestResult"
+        : "codexTestResult";
       const inp = document.getElementById(inputId);
       const out = document.getElementById(resultId);
       const raw = inp.value.trim();
@@ -7263,9 +7288,11 @@
     async function saveSettings() {
       // Custom CLI overrides
       const claudePath = document.getElementById("settingsClaudePath").value.trim();
+      const tclaudePath = document.getElementById("settingsTclaudePath").value.trim();
       const codexPath = document.getElementById("settingsCodexPath").value.trim();
       const payload = { customCliPaths: {} };
       if (claudePath) payload.customCliPaths.claude = claudePath;
+      if (tclaudePath) payload.customCliPaths.tclaude = tclaudePath;
       if (codexPath) payload.customCliPaths.codex = codexPath;
 
       // Default analysis provider for the Pre-analyze modal
@@ -7293,9 +7320,12 @@
         await window.analyticsAPI.clearAIConfig();
         setSettingsStatus(t("cleared"), "success");
         document.getElementById("settingsClaudePath").value = "";
+        document.getElementById("settingsTclaudePath").value = "";
         document.getElementById("settingsCodexPath").value = "";
         document.getElementById("claudeTestResult").textContent = "";
         document.getElementById("claudeTestResult").className = "cli-test-result";
+        document.getElementById("tclaudeTestResult").textContent = "";
+        document.getElementById("tclaudeTestResult").className = "cli-test-result";
         document.getElementById("codexTestResult").textContent = "";
         document.getElementById("codexTestResult").className = "cli-test-result";
         // Re-run diagnostics since clearing the override changes detection
