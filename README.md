@@ -36,7 +36,7 @@
 </table>
 
 
-**Clawd Insights automatically scans the conversations you've already had with Claude Code, Claude Internal, Codex CLI, Cursor and other agents, and turns them into a timeline plus AI-generated session summaries.** No more scrolling through endless chat history — it builds the knowledge cards for you.
+**Clawd Insights automatically scans the conversations you've already had with Claude Code, Claude Internal, tclaude, Codex CLI, Cursor and other agents, and turns them into a timeline plus AI-generated session summaries.** No more scrolling through endless chat history — it builds the knowledge cards for you.
 
 Every conversation leaves an **imprint**. No idea you tried, no bug you wrestled with, no decision you made together with the Agent is ever wasted — they all come back into view in the **Analytics Dashboard**.
 
@@ -57,7 +57,7 @@ A small crab appears on your desktop — on macOS, right-click it to open the **
 | Capability | What you get |
 |---|---|
 | **Timeline view** | Visualize every session by date / project / agent / duration — at a glance, see when you worked, on what, and for how long |
-| **Local history scan** | Reads `~/.claude/projects/`, `~/.claude-internal/projects/`, `~/.codex/sessions/`, `~/.cursor/projects/` directly. No upload, no telemetry |
+| **Local history scan** | Reads `~/.claude/projects/`, `~/.claude-internal/projects/`, `~/.tclaude/projects/`, `~/.codex/sessions/`, `~/.cursor/projects/` directly. No upload, no telemetry |
 | **AI session review** | Per-session summary from the *user's* point of view: what you were trying to do, what you walked away with, key topics, time breakdown |
 | **Flexible backends** | Local `claude` CLI, local `codex` CLI, or fall back to a configured API provider / Ollama — your choice, your keys. Add any number of **custom OpenAI-compatible endpoints** (Zhipu AI, DeepSeek, OpenRouter…) for cheap session analysis |
 | **Batch pre-analysis** | Pre-compute summaries for recent sessions and reuse provider-aware cached results |
@@ -254,13 +254,13 @@ While an agent works (calling tools, waiting for input, erroring out, finishing 
 
 | Mode | How it works | Latency | Agents |
 |---|---|---|---|
-| **Command hook** | Agent fires an event → automatically runs a script → script HTTP-POSTs the event to Clawd's local server (`127.0.0.1:23333`) | Near zero | Claude Code, Claude Internal, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, Antigravity CLI, CodeBuddy, Kimi CLI |
+| **Command hook** | Agent fires an event → automatically runs a script → script HTTP-POSTs the event to Clawd's local server (`127.0.0.1:23333`) | Near zero | Claude Code, Claude Internal, tclaude, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, Antigravity CLI, CodeBuddy, Kimi CLI |
 | **Log polling** | Clawd scans the agent's JSONL log file every ~1.5 s and detects new entries | ~1.5 s | Codex CLI, Gemini CLI (fallback), Kimi CLI (fallback) |
 | **In-process plugin** | Plugin runs inside the agent's own runtime, forwarding events with zero overhead | Zero | opencode, openclaw, Hermes, Pi |
 
 All events map to the same state machine: `idle → thinking → working → happy / error → sleeping`. The pet plays the matching SVG animation. When multiple sessions run simultaneously, it auto-switches to juggling / building / conducting animations.
 
-> **Multi-agent coexistence**: Claude Code, Claude Internal, Codex, Copilot, Gemini, Cursor, Kiro, opencode, Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi can all run at the same time. Clawd tracks each session independently and displays the highest-priority state.
+> **Multi-agent coexistence**: Claude Code, Claude Internal, tclaude, Codex, Copilot, Gemini, Cursor, Kiro, opencode, Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi can all run at the same time. Clawd tracks each session independently and displays the highest-priority state.
 
 ### Path ②: Offline analysis → insights dashboard
 
@@ -270,6 +270,7 @@ Every conversation you have with an agent is saved as JSONL on your disk:
 |---|---|
 | Claude Code | `~/.claude/projects/` |
 | Claude Internal | `~/.claude-internal/projects/` |
+| tclaude | `~/.tclaude/projects/` |
 | Codex CLI | `~/.codex/sessions/` |
 | Cursor Agent | `~/.cursor/projects/` |
 
@@ -281,7 +282,7 @@ The insights dashboard reads these files directly to generate timelines and AI s
 
 Beyond the analytics layer, this fork now tracks the full desktop-pet feature set from [`clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk):
 
-- **Broader agent support** — pixel-art reactions for **Claude Code, Claude Internal, Codex CLI, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, opencode**, plus the newly merged **Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi**.
+- **Broader agent support** — pixel-art reactions for **Claude Code, Claude Internal, tclaude, Codex CLI, Copilot CLI, Gemini CLI, Cursor Agent, Kiro CLI, opencode**, plus the newly merged **Antigravity CLI, CodeBuddy, Hermes, Kimi CLI, openclaw, and Pi**.
 - **WSL & remote development** *(focus of this sync)* — Codex officially supports **WSL2**, and Clawd integrates through Codex's official hooks (with JSONL polling as a fallback). For an agent running on a remote box or inside WSL's separate Linux home, **Remote SSH** deploys the hooks over an SSH tunnel so the pet reacts to those sessions too. The remote side must use a POSIX shell — **Git Bash or WSL `bash`, not Windows `cmd.exe`**. See [docs/guides/codex-wsl-clarification.md](docs/guides/codex-wsl-clarification.md) and [docs/guides/setup-guide.md](docs/guides/setup-guide.md).
 - **GUI settings panel** — a full settings window (agents, themes, shortcuts, Remote SSH, Telegram approval) replaces hand-editing config files.
 - **Theming** — swap the crab for alternate characters (e.g. the Cloudling theme) or build your own with `npm run create-theme`.
@@ -307,7 +308,7 @@ Yes. You can use the timeline view alone (completely free, no LLM required), or 
 
 Clawd Insights is the **analytics layer** built on top of [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk), the lovely desktop pet that turns your coding agent's state into pixel art. Everything that makes the pet delightful — animations, permission bubbles, multi-agent state tracking, mini mode, the lot — is still here, untouched. What this fork adds is one extra question: **what if every conversation you've ever had with the agent was searchable, summarised, and waiting for you on a single dashboard?**
 
-That dashboard is the new piece. It scans your local history (Claude Code, Claude Internal, Codex CLI, Cursor Agent today; more agents on the way), draws a timeline, and lets your own LLM write per-session summaries — all without sending a byte to a third party.
+That dashboard is the new piece. It scans your local history (Claude Code, Claude Internal, tclaude, Codex CLI, Cursor Agent today; more agents on the way), draws a timeline, and lets your own LLM write per-session summaries — all without sending a byte to a third party.
 
 Multi-agent state tracking carried over from upstream — and this repo now stays in sync with the full upstream codebase (WSL & Remote SSH support, the expanded agent roster, the GUI settings panel, theming, Telegram approval, doctor diagnostics, and more). For the desktop pet's own feature list, see [Desktop pet capabilities](#desktop-pet-capabilities-synced-from-upstream) above.
 
