@@ -36,7 +36,7 @@
 </table>
 
 
-**这是Agent会话分析面板。** 它将自动扫描你和 Claude Code、Claude Internal、Codex、Cursor 等 Agent 已经进行的对话,生成时间线和会话智能分析摘要。再也不用翻漫长的对话历史,clawd-insights 将帮你快速整理知识卡片。
+**这是Agent会话分析面板。** 它将自动扫描你和 Claude Code、Claude Internal、tclaude、Codex、Cursor 等 Agent 已经进行的对话,生成时间线和会话智能分析摘要。再也不用翻漫长的对话历史,clawd-insights 将帮你快速整理知识卡片。
 
 每一段对话都留下了**痕迹**,所有你尝试的想法、解决的 bug、和 Agent 讨论做出的决定,都将在 **Analytics Dashboard** 中一一呈现。
 
@@ -58,7 +58,7 @@ git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && n
 | 能力 | 说明 |
 |---|---|
 | **时间线视图** | 按日期 / 项目 / Agent / 时长可视化所有会话——一眼看清自己什么时候在忙什么、忙了多久 |
-| **本地历史扫描** | 直接读 `~/.claude/projects/`、`~/.claude-internal/projects/`、`~/.codex/sessions/`、`~/.cursor/projects/`,不上传、无遥测 |
+| **本地历史扫描** | 直接读 `~/.claude/projects/`、`~/.claude-internal/projects/`、`~/.tclaude/projects/`、`~/.codex/sessions/`、`~/.cursor/projects/`,不上传、无遥测 |
 | **AI 会话复盘** | 从**用户视角**总结每段对话:你想做什么、最后拿到了什么、关键话题、时间分配 |
 | **灵活分析后端** | 本地 `claude` CLI、本地 `codex` CLI,或回退到你配置的 API provider / Ollama——你的选择,你的 key |
 | **批量预分析** | 对最近会话批量预生成摘要,按 provider 隔离的缓存可复用 |
@@ -223,13 +223,13 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 
 | 集成方式 | 原理 | 延迟 | 使用的 Agent |
 |---|---|---|---|
-| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 把事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Claude Internal、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、Antigravity CLI、CodeBuddy、Kimi CLI |
+| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 把事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Claude Internal、tclaude、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、Antigravity CLI、CodeBuddy、Kimi CLI |
 | **日志轮询** | Clawd 每 ~1.5 秒扫描 Agent 写入的 JSONL 日志文件,检测新事件 | ~1.5 秒 | Codex CLI、Gemini CLI(备选)、Kimi CLI(备选) |
 | **In-process 插件** | 插件直接跑在 Agent 进程内部,零开销转发事件 | 零 | opencode、openclaw、Hermes、Pi |
 
 所有 Agent 的事件最终都映射到同一套状态机:`idle → thinking → working → happy / error → sleeping`。桌面宠物根据当前状态播放对应的 SVG 动画,多个会话同时运行时自动切换到 juggling(杂耍)/ building(建造)/ conducting(指挥)动画。
 
-> **多 Agent 共存**:Claude Code、Claude Internal、Codex、Copilot、Gemini、Cursor、Kiro、opencode、Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi 可以同时运行。Clawd 为每个 session 独立维护状态,取最高优先级作为桌面宠物当前显示。
+> **多 Agent 共存**:Claude Code、Claude Internal、tclaude、Codex、Copilot、Gemini、Cursor、Kiro、opencode、Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi 可以同时运行。Clawd 为每个 session 独立维护状态,取最高优先级作为桌面宠物当前显示。
 
 ### 通路 ②:离线分析 → 洞察面板
 
@@ -239,6 +239,7 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 |---|---|
 | Claude Code | `~/.claude/projects/` |
 | Claude Internal | `~/.claude-internal/projects/` |
+| tclaude | `~/.tclaude/projects/` |
 | Codex CLI | `~/.codex/sessions/` |
 | Cursor Agent | `~/.cursor/projects/` |
 
@@ -250,7 +251,7 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 
 除了分析层之外,本 fork 现在与 [`clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) 完整同步,纳入了它的全部桌宠能力:
 
-- **更广的 Agent 支持** —— 像素动画覆盖 **Claude Code、Claude Internal、Codex CLI、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、opencode**,以及新合入的 **Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi**。
+- **更广的 Agent 支持** —— 像素动画覆盖 **Claude Code、Claude Internal、tclaude、Codex CLI、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、opencode**,以及新合入的 **Antigravity CLI、CodeBuddy、Hermes、Kimi CLI、openclaw、Pi**。
 - **WSL 与远程开发**(本次同步重点)—— Codex 官方支持 **WSL2**,Clawd 通过 Codex 官方 hooks 集成(JSONL 轮询作为兜底)。当 Agent 跑在远程主机或 WSL 独立的 Linux home 里时,**远程 SSH** 会通过 SSH 隧道把 hooks 部署过去,让桌宠也能感知这些会话;远程端必须使用 POSIX shell —— **Git Bash 或 WSL `bash`,而不是 Windows `cmd.exe`**。详见 [docs/guides/codex-wsl-clarification.zh-CN.md](docs/guides/codex-wsl-clarification.zh-CN.md) 与 [docs/guides/setup-guide.zh-CN.md](docs/guides/setup-guide.zh-CN.md)。
 - **图形化设置面板** —— 完整的设置窗口(Agent、主题、快捷键、远程 SSH、Telegram 审批),不必再手改配置文件。
 - **主题系统** —— 把螃蟹换成其他角色(如 Cloudling 主题),或用 `npm run create-theme` 自建主题。
@@ -276,7 +277,7 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 
 Clawd Insights 是构建在 [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) 之上的**洞察分析层**——上游是一只把 coding agent 状态变成像素画的可爱桌面宠物,所有让它讨喜的部分(动画、权限气泡、多 Agent 状态追踪、极简模式等等)都被原封不动地保留了下来。这个 fork 多问了一件事:**如果你和 Agent 的每一次对话,都能被搜索、被总结、汇集到同一块面板上,会怎样?**
 
-这块面板就是新增的核心。它扫描你的本地历史记录(目前覆盖 Claude Code、Claude Internal、Codex CLI、Cursor Agent,更多 agent 接入中),画出时间线,再让你自选的 LLM 为每一次会话生成摘要——全程不向任何第三方发送一个字节。
+这块面板就是新增的核心。它扫描你的本地历史记录(目前覆盖 Claude Code、Claude Internal、tclaude、Codex CLI、Cursor Agent,更多 agent 接入中),画出时间线,再让你自选的 LLM 为每一次会话生成摘要——全程不向任何第三方发送一个字节。
 
 从上游继承的多 Agent 状态追踪,并且本仓库现在与上游完整代码保持同步(WSL 与远程 SSH 支持、扩充的 Agent 阵容、图形化设置面板、主题系统、Telegram 审批、Doctor 诊断等)。桌面宠物本身的完整功能请见上方 [桌宠能力(与上游同步)](#桌宠能力与上游同步)。
 

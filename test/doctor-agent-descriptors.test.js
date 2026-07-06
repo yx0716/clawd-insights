@@ -14,6 +14,8 @@ describe("doctor agent descriptors", () => {
       AGENT_DESCRIPTORS.map((entry) => entry.agentId),
       [
         "claude-code",
+        "claude-internal",
+        "tclaude",
         "codex",
         "copilot-cli",
         "cursor-agent",

@@ -37,6 +37,9 @@ module.exports = function initAnalyticsScan(ctx) {
   const CLAUDE_INTERNAL_PROJECTS = firstExistingDir(
     path.join(home, ".claude-internal", "projects")
   );
+  const TCLAUDE_PROJECTS = firstExistingDir(
+    path.join(home, ".tclaude", "projects")
+  );
   const CODEX_SESSIONS = firstExistingDir(
     path.join(home, ".codex", "sessions"),
     xdgData ? path.join(xdgData, "codex", "sessions") : null
@@ -261,7 +264,7 @@ module.exports = function initAnalyticsScan(ctx) {
     return blocks;
   }
 
-  // ── Claude-compatible Scanner (used by claude-code and claude-internal) ──
+  // ── Claude-compatible Scanner (used by claude-code, claude-internal and tclaude) ──
 
   function scanClaudeProject(projectDir, projectName, startTs, endTs, agentId = "claude-code") {
     const sessions = [];
@@ -382,6 +385,21 @@ module.exports = function initAnalyticsScan(ctx) {
       if (!stat.isDirectory()) continue;
       const projName = projectFromDirName(dir);
       sessions.push(...scanClaudeProject(full, projName, startTs, endTs, "claude-internal"));
+    }
+    return sessions;
+  }
+
+  function scanAllTclaude(startTs, endTs) {
+    const sessions = [];
+    let dirs;
+    try { dirs = fs.readdirSync(TCLAUDE_PROJECTS); } catch { return sessions; }
+    for (const dir of dirs) {
+      const full = path.join(TCLAUDE_PROJECTS, dir);
+      let stat;
+      try { stat = fs.statSync(full); } catch { continue; }
+      if (!stat.isDirectory()) continue;
+      const projName = projectFromDirName(dir);
+      sessions.push(...scanClaudeProject(full, projName, startTs, endTs, "tclaude"));
     }
     return sessions;
   }
@@ -573,6 +591,7 @@ module.exports = function initAnalyticsScan(ctx) {
     const allSessions = [
       ...scanAllClaude(startTs, endTs),
       ...scanAllClaudeInternal(startTs, endTs),
+      ...scanAllTclaude(startTs, endTs),
       ...scanCodex(startTs, endTs),
       ...scanCursor(startTs, endTs),
     ];
@@ -704,8 +723,12 @@ module.exports = function initAnalyticsScan(ctx) {
   // ── Session Detail (for AI analysis) ──
 
   function findSessionFile(sessionId, agent) {
-    if (agent === "claude-code" || agent === "claude-internal") {
-      const projectsRoot = agent === "claude-internal" ? CLAUDE_INTERNAL_PROJECTS : CLAUDE_PROJECTS;
+    if (agent === "claude-code" || agent === "claude-internal" || agent === "tclaude") {
+      const projectsRoot = agent === "tclaude"
+        ? TCLAUDE_PROJECTS
+        : agent === "claude-internal"
+          ? CLAUDE_INTERNAL_PROJECTS
+          : CLAUDE_PROJECTS;
       // Search all project dirs for sessionId.jsonl
       let dirs;
       try { dirs = fs.readdirSync(projectsRoot); } catch { return null; }
@@ -841,7 +864,7 @@ module.exports = function initAnalyticsScan(ctx) {
         let d;
         try { d = JSON.parse(line); } catch { continue; }
 
-        if (agent === "claude-code" || agent === "claude-internal") {
+        if (agent === "claude-code" || agent === "claude-internal" || agent === "tclaude") {
           const ts = d.timestamp ? new Date(d.timestamp).getTime() : null;
           if (ts) detail.timestamps.push(ts);
           if (d.type === "custom-title" && d.customTitle) detail.title = d.customTitle;

@@ -3,6 +3,7 @@
 
 const claudeCode = require("./claude-code");
 const claudeInternal = require("./claude-internal");
+const tclaude = require("./tclaude");
 const codex = require("./codex");
 const copilotCli = require("./copilot-cli");
 const geminiCli = require("./gemini-cli");
@@ -19,6 +20,7 @@ const hermes = require("./hermes");
 const AGENTS = [
   claudeCode,
   claudeInternal,
+  tclaude,
   codex,
   copilotCli,
   geminiCli,
