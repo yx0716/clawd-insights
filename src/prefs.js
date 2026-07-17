@@ -266,6 +266,8 @@ const SCHEMA = {
       // fired inside a Task subagent. Only claude-code carries the flag —
       // normalizeAgents drops it for agents whose default entry lacks it.
       "claude-code": { integrationInstalled: true, enabled: true, permissionsEnabled: true, subagentPermissionsEnabled: true, notificationHookEnabled: true },
+      "claude-internal": { integrationInstalled: true, enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
+      "tclaude": { integrationInstalled: true, enabled: true, permissionsEnabled: true, notificationHookEnabled: true },
       "codex": { integrationInstalled: true, enabled: true, permissionsEnabled: true, notificationHookEnabled: true, permissionMode: "intercept", nativeNotificationSoundEnabled: false },
       "copilot-cli": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },
       "cursor-agent": { integrationInstalled: false, enabled: false, permissionsEnabled: true, notificationHookEnabled: true },

@@ -4,6 +4,8 @@ const path = require("path");
 const { getAgent } = require("../../agents/registry");
 
 const claude = require("../../hooks/install");
+const claudeInternal = require("../../hooks/install-claude-internal");
+const tclaude = require("../../hooks/install-tclaude");
 const codex = require("../../hooks/codex-install");
 const copilot = require("../../hooks/copilot-install");
 const cursor = require("../../hooks/cursor-install");
@@ -39,6 +41,28 @@ const AGENT_DESCRIPTORS = Object.freeze([
     eventSource: agentEventSource("claude-code"),
     parentDir: claude.DEFAULT_PARENT_DIR,
     configPath: claude.DEFAULT_CONFIG_PATH,
+    configMode: "file",
+    autoInstall: true,
+    marker: "clawd-hook.js",
+    nested: true,
+  }),
+  Object.freeze({
+    agentId: "claude-internal",
+    agentName: agentName("claude-internal"),
+    eventSource: agentEventSource("claude-internal"),
+    parentDir: claudeInternal.DEFAULT_PARENT_DIR,
+    configPath: claudeInternal.DEFAULT_CONFIG_PATH,
+    configMode: "file",
+    autoInstall: true,
+    marker: "clawd-hook.js",
+    nested: true,
+  }),
+  Object.freeze({
+    agentId: "tclaude",
+    agentName: agentName("tclaude"),
+    eventSource: agentEventSource("tclaude"),
+    parentDir: tclaude.DEFAULT_PARENT_DIR,
+    configPath: tclaude.DEFAULT_CONFIG_PATH,
     configMode: "file",
     autoInstall: true,
     marker: "clawd-hook.js",

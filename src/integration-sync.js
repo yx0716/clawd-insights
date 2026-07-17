@@ -118,6 +118,36 @@ function createIntegrationSyncRuntime(options = {}) {
     }
   }
 
+  function syncClaudeInternalHooks() {
+    try {
+      if (typeof ctx.syncClaudeInternalHooksImpl === "function") return ctx.syncClaudeInternalHooksImpl();
+      const { registerClaudeInternalHooks } = require("../hooks/install-claude-internal.js");
+      const { added, updated } = registerClaudeInternalHooks({ silent: true, port: getHookServerPort() });
+      if (added > 0 || updated > 0) {
+        console.log(`Clawd: synced Claude Internal hooks (added ${added}, updated ${updated})`);
+      }
+      return { status: "ok", added, updated };
+    } catch (err) {
+      console.warn("Clawd: failed to sync Claude Internal hooks:", err.message);
+      return { status: "error", message: err && err.message ? err.message : "Failed to sync Claude Internal hooks" };
+    }
+  }
+
+  function syncTclaudeHooks() {
+    try {
+      if (typeof ctx.syncTclaudeHooksImpl === "function") return ctx.syncTclaudeHooksImpl();
+      const { registerTclaudeHooks } = require("../hooks/install-tclaude.js");
+      const { added, updated } = registerTclaudeHooks({ silent: true, port: getHookServerPort() });
+      if (added > 0 || updated > 0) {
+        console.log(`Clawd: synced tclaude hooks (added ${added}, updated ${updated})`);
+      }
+      return { status: "ok", added, updated };
+    } catch (err) {
+      console.warn("Clawd: failed to sync tclaude hooks:", err.message);
+      return { status: "error", message: err && err.message ? err.message : "Failed to sync tclaude hooks" };
+    }
+  }
+
   function syncGeminiHooks() {
     try {
       if (typeof ctx.syncGeminiHooksImpl === "function") return ctx.syncGeminiHooksImpl();
@@ -459,6 +489,8 @@ function createIntegrationSyncRuntime(options = {}) {
   }
 
   const AGENT_INTEGRATION_SYNCERS = Object.freeze({
+    "claude-internal": syncClaudeInternalHooks,
+    "tclaude": syncTclaudeHooks,
     "gemini-cli": syncGeminiHooks,
     "antigravity-cli": syncAntigravityHooks,
     "cursor-agent": syncCursorHooks,
@@ -601,6 +633,8 @@ function createIntegrationSyncRuntime(options = {}) {
 
   return {
     syncClawdHooks,
+    syncClaudeInternalHooks,
+    syncTclaudeHooks,
     syncGeminiHooks,
     syncAntigravityHooks,
     syncCursorHooks,

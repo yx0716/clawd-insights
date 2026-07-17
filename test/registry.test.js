@@ -8,6 +8,8 @@ describe("Agent Registry", () => {
     const ids = agents.map((a) => a.id);
     assert.deepStrictEqual(ids, [
       "claude-code",
+      "claude-internal",
+      "tclaude",
       "codex",
       "copilot-cli",
       "gemini-cli",

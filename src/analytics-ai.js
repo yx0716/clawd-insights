@@ -196,6 +196,7 @@ module.exports = function initAnalyticsAI(ctx) {
   // hot-reload happens to invoke setConfig before the original `let` lines
   // further down in the file are executed.
   let cachedClaudePath = undefined; // undefined = not searched, null = not found
+  let cachedTclaudePath = undefined;
   let cachedCodexPath = undefined;
   // Per-binary CLI capability cache (Map<binaryPath, Set<flag>>). Populated
   // lazily by getCliCapabilities() the first time a CLI is invoked, so we can
@@ -768,6 +769,7 @@ module.exports = function initAnalyticsAI(ctx) {
   // "right path" would still report the old result until app restart.
   function invalidateCliCaches() {
     cachedClaudePath = undefined;
+    cachedTclaudePath = undefined;
     cachedCodexPath = undefined;
     // Drop the capability cache too — when the user re-points a CLI, the new
     // binary might be a totally different version with a different flag set.
@@ -825,6 +827,41 @@ module.exports = function initAnalyticsAI(ctx) {
 
     cachedClaudePath = findCommandBinary("claude", extraCandidates);
     return cachedClaudePath;
+  }
+
+  // ── tclaude CLI detection ──
+  // tclaude is the Tencent fork of Claude Code: same CLI protocol, different
+  // binary name (`tclaude`) and config dir (~/.tclaude). We reuse the exact
+  // Claude Code invocation path (callClaudeCLI / callClaudeCLIWithSystem) and
+  // only need to locate the binary + read its default model.
+  function findTclaudeBinary() {
+    if (ctx.disableCliDiscoveryForTests) return null;
+    const custom = getCustomCliPath("tclaude");
+    if (custom) return custom;
+    if (cachedTclaudePath !== undefined) return cachedTclaudePath;
+    const extraCandidates = [];
+
+    // Homebrew (macOS)
+    const brewDirs = ["/opt/homebrew/bin/tclaude", "/usr/local/bin/tclaude"];
+    for (const p of brewDirs) extraCandidates.push(p);
+
+    // Windows npm / installer candidates
+    if (isWin) {
+      const home = os.homedir();
+      const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+      extraCandidates.push(path.join(localAppData, "Programs", "tclaude", "tclaude.exe"));
+      const progFiles = process.env.PROGRAMFILES || "C:\\Program Files";
+      extraCandidates.push(path.join(progFiles, "tclaude", "tclaude.exe"));
+    }
+
+    // Linux-specific paths
+    if (process.platform === "linux") {
+      extraCandidates.push("/usr/local/bin/tclaude");
+      extraCandidates.push("/home/linuxbrew/.linuxbrew/bin/tclaude");
+    }
+
+    cachedTclaudePath = findCommandBinary("tclaude", extraCandidates);
+    return cachedTclaudePath;
   }
 
   // ── Codex CLI detection ──
@@ -1638,6 +1675,17 @@ module.exports = function initAnalyticsAI(ctx) {
     return null;
   }
 
+  // tclaude keeps its config in ~/.tclaude/settings.json (same shape as Claude Code).
+  function getTclaudeDefaultModel() {
+    try {
+      const settingsPath = path.join(os.homedir(), ".tclaude", "settings.json");
+      const text = fs.readFileSync(settingsPath, "utf8");
+      const cfg = JSON.parse(text);
+      if (cfg && typeof cfg.model === "string") return cfg.model;
+    } catch { /* ignore */ }
+    return null;
+  }
+
   function getCodexDefaultModel() {
     try {
       const cfgPath = path.join(os.homedir(), ".codex", "config.toml");
@@ -1656,6 +1704,7 @@ module.exports = function initAnalyticsAI(ctx) {
   function getCliDiagnostics() {
     const out = {
       claude: null,
+      tclaude: null,
       codex: null,
       searchDirs: [],
       bundleCandidates: [],
@@ -1675,6 +1724,15 @@ module.exports = function initAnalyticsAI(ctx) {
       version: claudePath ? getCliVersion(claudePath) : null,
       custom: !!getCustomCliPath("claude"),
       cooldown: getProviderCooldown("claude-code"),
+    };
+
+    const tclaudePath = findTclaudeBinary();
+    out.tclaude = {
+      found: !!tclaudePath,
+      path: tclaudePath || null,
+      version: tclaudePath ? getCliVersion(tclaudePath) : null,
+      custom: !!getCustomCliPath("tclaude"),
+      cooldown: getProviderCooldown("tclaude"),
     };
 
     const codexPath = findCodexBinary();
@@ -1719,6 +1777,21 @@ module.exports = function initAnalyticsAI(ctx) {
         type: "claude-cli",
         label: "Claude Code",
         path: claudePath,
+        version,
+        model,
+        pricingKey,
+      });
+    }
+    const tclaudePath = findTclaudeBinary();
+    if (tclaudePath && !getProviderCooldown("tclaude")) {
+      const version = getCliVersion(tclaudePath);
+      const model = getTclaudeDefaultModel();
+      const pricingKey = resolvePricingKey(model);
+      options.push({
+        id: "tclaude",
+        type: "claude-cli",
+        label: "tclaude",
+        path: tclaudePath,
         version,
         model,
         pricingKey,
@@ -2126,6 +2199,32 @@ module.exports = function initAnalyticsAI(ctx) {
         cliPath = null;
         callFn = null;
       }
+    } else if (preferredProvider === "tclaude") {
+      // tclaude speaks the same CLI protocol as Claude Code — reuse callClaudeCLI.
+      cliProviderId = "tclaude";
+      cliPath = findTclaudeBinary();
+      cliName = "tclaude-cli";
+      callFn = callClaudeCLI;
+      const cooldown = getProviderCooldown(cliProviderId);
+      if (cooldown) {
+        cliError = cooldown.reason;
+        if (!loggedProviderCooldowns.has(cliProviderId)) {
+          loggedProviderCooldowns.add(cliProviderId);
+          console.warn(`Clawd analytics: ${cliProviderId} temporarily disabled:`, cooldown.reason);
+        }
+        cliPath = null;
+        callFn = null;
+      }
+      if (!cliPath && !cliError) {
+        return maybeCacheAnalysisResult(cacheKey, {
+          summary: "tclaude CLI 未找到。请确认已安装 tclaude，或在设置中手动指定其可执行路径。",
+          keyTopics: [],
+          outcomes: [],
+          timeBreakdown: [],
+          suggestions: [],
+          _provider: "tclaude-not-found",
+        });
+      }
     } else if (preferredProvider.startsWith("api:")) {
       forcedApiProvider = preferredProvider.slice(4);
     } else {
@@ -2155,6 +2254,7 @@ module.exports = function initAnalyticsAI(ctx) {
         if (!runtimeModel) {
           if (cliProviderId === "codex") runtimeModel = getCodexDefaultModel();
           else if (cliProviderId === "claude-code") runtimeModel = getClaudeDefaultModel();
+          else if (cliProviderId === "tclaude") runtimeModel = getTclaudeDefaultModel();
         }
         const runtimeCostUsd = typeof cliResult.costUsd === "number" ? cliResult.costUsd : null;
         // Compute estimated cost: prefer CLI-provided cost, else use pricing table
@@ -2430,7 +2530,7 @@ module.exports = function initAnalyticsAI(ctx) {
     let preferred = options && typeof options.provider === "string" ? options.provider : "";
     if (!preferred) {
       const available = getAvailableAnalysisProviders();
-      const firstCli = available.find((p) => p.id === "claude-code" || p.id === "codex");
+      const firstCli = available.find((p) => p.id === "claude-code" || p.id === "tclaude" || p.id === "codex");
       if (firstCli) preferred = firstCli.id;
       else {
         const cfg = getConfig();
@@ -2457,6 +2557,28 @@ module.exports = function initAnalyticsAI(ctx) {
       } catch (err) {
         console.warn("Clawd knowledge-compound claude-code error:", err.message);
         return { error: true, summary: `Claude CLI 执行失败：${err.message}` };
+      }
+    }
+
+    // Route 1b: tclaude CLI — Tencent fork of Claude Code, same CLI protocol.
+    if (preferred === "tclaude") {
+      const tclaudePath = findTclaudeBinary();
+      if (!tclaudePath) return { error: true, summary: "tclaude CLI 未找到。请安装 tclaude 或改用其他 provider。" };
+      try {
+        const { text, usage, model, costUsd } = await callClaudeCLIWithSystem(tclaudePath, prompt, systemPrompt);
+        const parsed = extractFirstJsonObject(text);
+        if (parsed) {
+          parsed._provider = "tclaude";
+          parsed._model = model || getTclaudeDefaultModel() || "unknown";
+          parsed._analysisMs = Date.now() - startTime;
+          if (usage) parsed._usage = usage;
+          if (typeof costUsd === "number") parsed._cost = { usd: costUsd, source: "cli" };
+          return parsed;
+        }
+        return { error: true, summary: "tclaude CLI 返回内容无法解析为 JSON。" };
+      } catch (err) {
+        console.warn("Clawd knowledge-compound tclaude error:", err.message);
+        return { error: true, summary: `tclaude CLI 执行失败：${err.message}` };
       }
     }
 
@@ -2802,6 +2924,19 @@ module.exports = function initAnalyticsAI(ctx) {
           if (result && result.text) {
             const _timing = logTiming("codex-cli", `${items.length} sessions`);
             return { text: result.text, _provider: "codex", _timing };
+          }
+        } catch (e) { /* fall through */ }
+      }
+    } else if (provider === "tclaude") {
+      // Same CLI protocol as Claude Code — reuse callClaudeCLIWithSystem.
+      const tclaudePath = findTclaudeBinary();
+      if (tclaudePath) {
+        try {
+          const sysPrompt = "你是一个对话分析助手。请按用户的要求直接返回 markdown 文本，不要返回 JSON，不要把回答包在 code block 里。";
+          const { text } = await callClaudeCLIWithSystem(tclaudePath, prompt, sysPrompt);
+          if (text) {
+            const _timing = logTiming("tclaude-cli", `${items.length} sessions`);
+            return { text, _provider: "tclaude", _timing };
           }
         } catch (e) { /* fall through */ }
       }
