@@ -205,7 +205,7 @@
   function renderWelcome() {
     const wrap = el("div", { class: "welcome" });
     wrap.appendChild(heroNode("hero-art hero-lg"));
-    wrap.appendChild(el("h2", { class: "step-title" }, i18n("tutorialWelcomeTitle", "Welcome to Clawd on Desk")));
+    wrap.appendChild(el("h2", { class: "step-title" }, i18n("tutorialWelcomeTitle", "Welcome to Clawd Insights")));
     wrap.appendChild(el("p", { class: "step-sub" }, i18n("tutorialWelcomeBody",
       "Clawd follows the AI tools you choose, then reacts on your desktop when they work, wait for approval, or finish.")));
     wrap.appendChild(renderLangPicker());

@@ -479,7 +479,7 @@ function initUpdater(ctx, deps = {}) {
         hostname: "github.com",
         path: "/yx0716/clawd-insights/releases/latest",
         headers: {
-          "User-Agent": "Clawd-on-Desk",
+          "User-Agent": "Clawd-Insights",
           Accept: "text/html,*/*",
         },
       }, (res) => {
@@ -510,7 +510,7 @@ function initUpdater(ctx, deps = {}) {
 
   function fetchLatestReleaseFromApi() {
     return new Promise((resolve, reject) => {
-      const headers = { "User-Agent": "Clawd-on-Desk" };
+      const headers = { "User-Agent": "Clawd-Insights" };
       if (lastReleaseEtag) headers["If-None-Match"] = lastReleaseEtag;
       const req = httpsGet({
         hostname: "api.github.com",

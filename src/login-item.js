@@ -20,7 +20,10 @@ const os = require("os");
 const path = require("path");
 
 const AUTOSTART_DIR = path.join(os.homedir(), ".config", "autostart");
-const AUTOSTART_FILE = path.join(AUTOSTART_DIR, "clawd-on-desk.desktop");
+const AUTOSTART_FILE = path.join(AUTOSTART_DIR, "clawd-insights.desktop");
+// Fork builds up to v0.4.0 (and upstream) wrote this filename; keep removing
+// it so the rename never leaves a second, stale autostart entry behind.
+const LEGACY_AUTOSTART_FILE = path.join(AUTOSTART_DIR, "clawd-on-desk.desktop");
 
 function getLoginItemSettings({ isPackaged, openAtLogin, execPath, appPath }) {
   if (isPackaged) return { openAtLogin };
@@ -33,7 +36,7 @@ function getLoginItemSettings({ isPackaged, openAtLogin, execPath, appPath }) {
 
 function linuxGetOpenAtLogin() {
   try {
-    return fs.existsSync(AUTOSTART_FILE);
+    return fs.existsSync(AUTOSTART_FILE) || fs.existsSync(LEGACY_AUTOSTART_FILE);
   } catch {
     return false;
   }
@@ -48,7 +51,7 @@ function linuxSetOpenAtLogin(enable, { execCmd } = {}) {
       [
         "[Desktop Entry]",
         "Type=Application",
-        "Name=Clawd on Desk",
+        "Name=Clawd Insights",
         `Exec=${execCmd}`,
         "Hidden=false",
         "NoDisplay=false",
@@ -56,11 +59,18 @@ function linuxSetOpenAtLogin(enable, { execCmd } = {}) {
       ].join("\n") + "\n";
     fs.mkdirSync(AUTOSTART_DIR, { recursive: true });
     fs.writeFileSync(AUTOSTART_FILE, desktop);
-  } else {
     try {
-      fs.unlinkSync(AUTOSTART_FILE);
+      fs.unlinkSync(LEGACY_AUTOSTART_FILE);
     } catch (err) {
       if (err && err.code !== "ENOENT") throw err;
+    }
+  } else {
+    for (const file of [AUTOSTART_FILE, LEGACY_AUTOSTART_FILE]) {
+      try {
+        fs.unlinkSync(file);
+      } catch (err) {
+        if (err && err.code !== "ENOENT") throw err;
+      }
     }
   }
 }

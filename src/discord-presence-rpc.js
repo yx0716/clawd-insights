@@ -45,7 +45,7 @@ function buildPresencePayload(session, privacy = {}) {
   const activity = {
     details: agentLabel(session && session.agentId),
     state: COARSE_LABEL[coarse],
-    assets: { large_image: CLAWD_ICON_URL, large_text: "Clawd on Desk" },
+    assets: { large_image: CLAWD_ICON_URL, large_text: "Clawd Insights" },
   };
   if (privacy.privacyShowProject && session && session.cwd) {
     // win32.basename splits on both \ and /, so a Windows cwd seen on a POSIX
