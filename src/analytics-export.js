@@ -25,6 +25,19 @@ function pushAnalysisSection(lines, heading, analysis, includeTimeBreakdown) {
     : [];
   if (keyTopics.length) lines.push(`- 话题：${keyTopics.join(" / ")}`);
 
+  // STAR fields (detail mode); mirrors the dashboard section order
+  const situation = String(analysis.situation || "").trim();
+  if (situation) lines.push(`- 背景：${situation}`);
+  const task = String(analysis.task || "").trim();
+  if (task) lines.push(`- 目标：${task}`);
+  const actions = Array.isArray(analysis.actions)
+    ? analysis.actions.map(item => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (actions.length) {
+    lines.push("- 做法：");
+    actions.forEach(item => lines.push(`  - ${item}`));
+  }
+
   const outcomes = Array.isArray(analysis.outcomes)
     ? analysis.outcomes.map(formatOutcome).filter(Boolean)
     : [];
@@ -58,7 +71,7 @@ function pushAnalysisSection(lines, heading, analysis, includeTimeBreakdown) {
     suggestions.forEach(item => lines.push(`  - ${item}`));
   }
 
-  if (!summary && !keyTopics.length && !outcomes.length && !(includeTimeBreakdown && Array.isArray(analysis.timeBreakdown) && analysis.timeBreakdown.length) && !suggestions.length) {
+  if (!summary && !keyTopics.length && !situation && !task && !actions.length && !outcomes.length && !(includeTimeBreakdown && Array.isArray(analysis.timeBreakdown) && analysis.timeBreakdown.length) && !suggestions.length) {
     lines.push("- 无可用分析内容");
   }
 

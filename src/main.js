@@ -1935,7 +1935,17 @@ agentRuntime = createAgentRuntimeMain({
 });
 
 // ── HTTP server — delegated to src/server.js ──
+// Integration ownership (fork): packaged builds own the shared machine state
+// (hook installs in ~/.claude/settings.json etc., ~/.clawd/runtime.json). A
+// source checkout run via `npm start` stays passive so it never steals hooks
+// from an installed build; set CLAWD_DEV_TAKE_HOOKS=1 to opt a dev run into
+// full ownership (e.g. when developing hook/state features with no install).
+const isIntegrationOwner = app.isPackaged || process.env.CLAWD_DEV_TAKE_HOOKS === "1";
+if (!isIntegrationOwner) {
+  console.log("[clawd] dev instance: hook/integration takeover disabled (CLAWD_DEV_TAKE_HOOKS=1 to enable)");
+}
 const _serverCtx = {
+  isIntegrationOwner,
   get manageClaudeHooksAutomatically() { return manageClaudeHooksAutomatically; },
   get autoStartWithClaude() { return autoStartWithClaude; },
   get doNotDisturb() { return doNotDisturb; },

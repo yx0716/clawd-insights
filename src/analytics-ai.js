@@ -1388,6 +1388,21 @@ module.exports = function initAnalyticsAI(ctx) {
     required: ["summary", "keyTopics", "outcomes", "timeBreakdown", "suggestions"],
   };
 
+  // Detail-mode variant: STAR structure. situation/task/actions carry S/T/A;
+  // R is the existing outcomes array. Strict mode requires every property to
+  // be listed in `required`, so this must stay a separate schema — forcing
+  // these fields on brief mode would make it emit empty strings for them.
+  const ANALYSIS_OUTPUT_SCHEMA_DETAIL = {
+    ...ANALYSIS_OUTPUT_SCHEMA,
+    properties: {
+      ...ANALYSIS_OUTPUT_SCHEMA.properties,
+      situation: { type: "string" },
+      task: { type: "string" },
+      actions: { type: "array", items: { type: "string" } },
+    },
+    required: [...ANALYSIS_OUTPUT_SCHEMA.required, "situation", "task", "actions"],
+  };
+
   // Knowledge compound output schema — passed to codex via --output-schema so
   // strict mode produces topAssets/unlinkedConnections/behaviorObservation
   // (matches the renderer in analytics.html). Without this, codex returns the
@@ -1837,7 +1852,13 @@ module.exports = function initAnalyticsAI(ctx) {
 
   // v3: prompt rewrite — plain-spoken tone (no forced warmth/exclamations),
   // natural-phrase headlines instead of forced 3-4 char verb-object compounds
-  const ANALYSIS_CACHE_VERSION = 3;
+  // v4: summary covers the main thread only (side work goes to outcomes) and
+  // must be fluent prose — hard length caps were producing telegraphic Chinese
+  // v5: detail mode is STAR-structured (situation/task/actions + outcomes as R)
+  // v6: fluency — every clause needs an explicit subject; no coined verb
+  // abbreviations (补同步/漏跑-style); cause/process details belong to
+  // situation/actions, not the summary
+  const ANALYSIS_CACHE_VERSION = 6;
   const sessionAnalysisCache = new Map(); // `${sessionId}:${provider}` → result
 
   function analysisCacheKey(sessionId, provider) {
@@ -1887,6 +1908,9 @@ module.exports = function initAnalyticsAI(ctx) {
         // Strip internal fields, keep only what daily reflection needs
         const slim = {
           summary: result.summary || "",
+          situation: result.situation || "",
+          task: result.task || "",
+          actions: result.actions || [],
           keyTopics: result.keyTopics || [],
           outcomes: result.outcomes || [],
           timeBreakdown: result.timeBreakdown || [],
@@ -1939,7 +1963,8 @@ module.exports = function initAnalyticsAI(ctx) {
     p += ',"keyTopics":["话题1","话题2"]';
     p += ',"outcomes":[{"headline":"成果短语","detail":"一句话具体说明"}]}\n';
     p += "要求：\n";
-    p += "- summary：≤ 40 字，像同事在工作群里同步进展：先把事实说准，再求简短。\n";
+    p += "- summary：≤ 40 字，像同事在工作群里同步进展：先把事实说准，再求简短。做了多件事时只说主线，次要的放 outcomes。\n";
+    p += "- summary 必须是通顺的完整句子：每个分句有明确主语，保留'把、到、的、了'这类虚词；不要生造缩略动词（'补同步''漏跑'这类），字数不够就少讲一件事。\n";
     p += "- summary 禁止：感叹号；'搞定了''漂亮''辛苦了''加油'这类寒暄；比喻、拟人、俏皮话。宁可平淡，不要俏皮。\n";
     p += "  例：写'每日 review 自动同步到 GitHub，不再因电脑重启中断'，不要写'搞定了！合盖也不怕断更了'。\n";
     p += "- keyTopics：2-3 个，每个 ≤ 8 字。\n";
@@ -1949,22 +1974,29 @@ module.exports = function initAnalyticsAI(ctx) {
     return p;
   }
 
-  // ── Detail mode prompt (full analysis) ──
+  // ── Detail mode prompt (full analysis, STAR-structured) ──
   function buildSessionDetailPrompt(detail) {
     let p = "你是一个对话分析助手。以下是用户与 AI 编程 agent 的对话记录摘要。\n";
-    p += "请从**用户视角**深度分析：用户想做什么、获得了什么成果、时间花在哪里。\n";
+    p += "请从**用户视角**按 STAR 梳理这次会话：背景（situation）、目标（task）、做法（actions）、结果（outcomes），以及时间花在哪里。\n";
     p += "不要描述 agent 的工作流程，而是关注用户的意图和收获。\n\n";
     p += buildSessionContext(detail);
     p += "\n请返回 JSON（不要 markdown code block），格式：\n";
-    p += '{"summary":"≤50字概括：做了什么+结果如何"';
+    p += '{"summary":"≤60字概括主线成果"';
+    p += ',"situation":"背景","task":"目标"';
+    p += ',"actions":["关键动作或决策"]';
     p += ',"keyTopics":["话题1","话题2","话题3"]';
     p += ',"outcomes":[{"headline":"成果短语","detail":"展开说明关键认知"}]';
     p += ',"timeBreakdown":[{"activity":"活动描述","percent":百分比}]';
     p += ',"suggestions":["建议"]}\n';
     p += "要求：\n";
-    p += "- summary：**严格 ≤ 50 字**，一句话说清'做了什么 + 结果如何'。不要铺垫背景，不要描述过程。\n";
+    p += "- summary：≤ 60 字，说清'做了什么 + 结果如何'。多件事只讲主线的一两件（次要的交给 outcomes），原因和过程细节交给 situation 和 actions，不要都挤进 summary。可以用分号拆成两个短句。\n";
+    p += "- summary 必须是通顺的白话句子：每个分句都有明确的主语，保留'把、到、的、了'这类虚词，动词带完整宾语——写'电脑睡眠后 cron 没有执行'，不要写'合盖睡眠导致 cron 漏跑'。\n";
+    p += "- 所有字段都不要生造缩略动词，用常规说法：'补齐了缺失内容'而非'补同步'，'同步中断'而非'断更'，'改用 launchd'而非'迁 launchd'。字数不够就少讲一件事，不要靠造词压缩。\n";
+    p += "- situation（S 背景）：≤ 40 字，说清为什么做这件事——用户当时面对的问题或状态。\n";
+    p += "- task（T 目标）：≤ 30 字，用户这次想达成什么。不要和 situation 重复。\n";
+    p += "- actions（A 做法）：2-4 条，按先后顺序写关键动作和决策，中途的改道要点出来（如'发现 cron 合盖后不执行，改用 launchd'）；每条 ≤ 25 字，写通顺短句，不要电报体。\n";
+    p += "- outcomes（R 结果）：3-5 条。headline 是概括该成果的自然短语（≤ 10 字，如'权限弹窗去重''同步任务上线'），不加标点，不要千篇一律压成三字动宾词；detail 一句话展开关键认知。\n";
     p += "- keyTopics：3-5 个关键话题，每个 ≤ 10 字。\n";
-    p += "- outcomes：3-5 条。headline 是概括该成果的自然短语（≤ 10 字，如'权限弹窗去重''同步任务上线'），不加标点，不要千篇一律压成三字动宾词；detail 一句话展开关键认知。\n";
     p += "- timeBreakdown：3-5 条，从用户视角描述时间分配（'讨论架构设计'而非'调用 Read 工具'）。\n";
     p += "- suggestions：1-2 条简短实用的建议。做得好可以返回空数组。\n";
     p += "- 语言平实准确，不用感叹号、寒暄语和比喻；宁可平淡，不要俏皮。\n";
@@ -2248,7 +2280,12 @@ module.exports = function initAnalyticsAI(ctx) {
 
     if (cliPath && callFn) {
       try {
-        const cliResult = await callFn(cliPath, prompt, { cwd: detail.cwd });
+        // Detail mode carries the STAR fields — codex strict mode needs the
+        // matching schema or it would reject/drop them (callClaudeCLI ignores
+        // the extra option).
+        const cliResult = await callFn(cliPath, prompt, analysisMode === "detail"
+          ? { cwd: detail.cwd, outputSchema: ANALYSIS_OUTPUT_SCHEMA_DETAIL }
+          : { cwd: detail.cwd });
         const text = cliResult.text;
         const usage = cliResult.usage;
         // Resolve model: prefer runtime (from jsonl events), fall back to

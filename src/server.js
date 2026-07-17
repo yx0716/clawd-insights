@@ -66,7 +66,16 @@ const nowFn = typeof ctx.now === "function" ? ctx.now : Date.now;
 const clearRuntimeConfigFn = ctx.clearRuntimeConfig || clearRuntimeConfig;
 const getPortCandidatesFn = ctx.getPortCandidates || getPortCandidates;
 const readRuntimePortFn = ctx.readRuntimePort || readRuntimePort;
-const writeRuntimeConfigFn = ctx.writeRuntimeConfig || writeRuntimeConfig;
+// Integration ownership (fork): a secondary instance (dev `npm start` next to
+// an installed build) must not steal shared machine state — the hook routing
+// file (~/.clawd/runtime.json) or agent hook installs in user configs. Only
+// ctx.isIntegrationOwner === false demotes; absent means owner (upstream ctx
+// shapes and tests stay untouched). Hooks fail over to port probing, so a
+// non-owner instance still receives events when it is the only one running.
+const isIntegrationOwner = ctx.isIntegrationOwner !== false;
+const writeRuntimeConfigFn = isIntegrationOwner
+  ? (ctx.writeRuntimeConfig || writeRuntimeConfig)
+  : () => false;
 // #681. Injectable so tests never read the developer's real ~/.clawd/runtime.json
 // (whose contents depend on whether Clawd happens to be running right now).
 const readRuntimeIdentityFn = ctx.readRuntimeIdentity
@@ -115,7 +124,7 @@ function clearRecentHookEvents(agentId) {
 }
 
 function shouldManageClaudeHooks() {
-  return ctx.manageClaudeHooksAutomatically !== false;
+  return isIntegrationOwner && ctx.manageClaudeHooksAutomatically !== false;
 }
 
 function isAgentEnabled(agentId) {
@@ -124,6 +133,7 @@ function isAgentEnabled(agentId) {
 }
 
 function shouldSyncAgentIntegration(agentId) {
+  if (!isIntegrationOwner) return false;
   if (typeof ctx.shouldSyncAgentIntegration === "function") {
     return ctx.shouldSyncAgentIntegration(agentId) !== false;
   }
@@ -697,6 +707,10 @@ return {
   stopIntegrationForAgent,
   startClaudeSettingsWatcher,
   stopClaudeSettingsWatcher,
+  // Integration ownership gates (fork) — exposed for Doctor surfaces and
+  // test/server-integration-owner.test.js.
+  shouldManageClaudeHooks,
+  shouldSyncAgentIntegration,
   cleanup,
 };
 

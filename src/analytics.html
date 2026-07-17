@@ -3193,6 +3193,10 @@
         confirmAnalyze: "使用 <span class=\"provider\">{provider}</span> 进行分析？<br><span style=\"font-size:11px;color:var(--text-muted)\">会消耗少量 tokens</span>",
         analyze: "开始分析",
         outcomes: "结果",
+        starContext: "背景与目标",
+        starSituation: "背景",
+        starTask: "目标",
+        starActions: "做法",
         timeBreakdown: "时间分布",
         suggestions: "建议",
         showingCachedFrom: "当前显示的是 {provider} 的缓存",
@@ -3398,6 +3402,10 @@
         confirmAnalyze: "Use <span class=\"provider\">{provider}</span> to analyze?<br><span style=\"font-size:11px;color:var(--text-muted)\">Consumes a small amount of tokens</span>",
         analyze: "Analyze",
         outcomes: "Outcomes",
+        starContext: "Context & Goal",
+        starSituation: "Situation",
+        starTask: "Task",
+        starActions: "Approach",
         timeBreakdown: "Time Breakdown",
         suggestions: "Suggestions",
         showingCachedFrom: "Showing cached analysis from {provider}",
@@ -5563,6 +5571,9 @@
       if (!result || typeof result !== "object") return null;
       return {
         summary: result.summary || "",
+        situation: result.situation || "",
+        task: result.task || "",
+        actions: Array.isArray(result.actions) ? result.actions : [],
         keyTopics: Array.isArray(result.keyTopics) ? result.keyTopics : [],
         outcomes: Array.isArray(result.outcomes) ? result.outcomes : [],
         timeBreakdown: Array.isArray(result.timeBreakdown) ? result.timeBreakdown : [],
@@ -6221,6 +6232,17 @@
         lines.push(`**Topics**: ${r.keyTopics.join(" / ")}`);
         lines.push("");
       }
+      if (r.situation || r.task) {
+        if (r.situation) lines.push(`**${t("starSituation")}**：${r.situation}`);
+        if (r.task) lines.push(`**${t("starTask")}**：${r.task}`);
+        lines.push("");
+      }
+      if (Array.isArray(r.actions) && r.actions.length) {
+        lines.push(`## ${t("starActions")}`);
+        lines.push("");
+        for (const a of r.actions) lines.push(`- ${a}`);
+        lines.push("");
+      }
       if (Array.isArray(r.outcomes) && r.outcomes.length) {
         lines.push(`## ${t("outcomes")}`);
         lines.push("");
@@ -6303,7 +6325,26 @@
         h += '</div>';
       }
 
-      // Outcomes section
+      // STAR: Situation + Task section (detail mode; brief results skip it)
+      if (r.situation || r.task) {
+        h += '<div class="analysis-section" style="border-left:3px solid #ED8936">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#ED8936">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
+        h += '<ul class="analysis-insights">';
+        if (r.situation) h += `<li><strong>${escapeHtml(t("starSituation"))}</strong>${escapeHtml("：")}${escapeHtml(r.situation)}</li>`;
+        if (r.task) h += `<li><strong>${escapeHtml(t("starTask"))}</strong>${escapeHtml("：")}${escapeHtml(r.task)}</li>`;
+        h += '</ul></div>';
+      }
+
+      // STAR: Actions section
+      if (Array.isArray(r.actions) && r.actions.length) {
+        h += '<div class="analysis-section" style="border-left:3px solid #9F7AEA">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#9F7AEA">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
+        h += '<ul class="analysis-insights">';
+        r.actions.forEach(a => { h += `<li>${escapeHtml(String(a))}</li>`; });
+        h += '</ul></div>';
+      }
+
+      // Outcomes section (STAR: Result)
       if (r.outcomes && r.outcomes.length) {
         h += '<div class="analysis-section" style="border-left:3px solid #48BB78">';
         h += `<div class="analysis-section-header"><span class="section-icon" style="color:#48BB78">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
@@ -7702,6 +7743,9 @@
       // Replace in summary, outcomes, suggestions
       const replacePaths = (s) => s ? s.replace(/\/Users\/jyx/g, "/Users/dev") : s;
       if (r.summary) r.summary = replacePaths(r.summary);
+      if (r.situation) r.situation = replacePaths(r.situation);
+      if (r.task) r.task = replacePaths(r.task);
+      if (r.actions) r.actions = r.actions.map(replacePaths);
       if (r.outcomes) r.outcomes = r.outcomes.map(o => {
         if (o && typeof o === "object" && !Array.isArray(o)) {
           return { ...o, headline: replacePaths(o.headline), detail: replacePaths(o.detail) };
