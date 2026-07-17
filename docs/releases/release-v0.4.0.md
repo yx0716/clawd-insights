@@ -30,6 +30,8 @@ New on the fork side:
 
 - **Update checks now target this fork** — the in-app updater previously queried the upstream clawd-on-desk releases, announcing upstream versions and linking to upstream downloads. It now checks `yx0716/clawd-insights`; the About panel links here too.
 - **Two dashboards, disambiguated** — the upstream session dashboard is now labeled "Session Dashboard", and the fork's Analytics Dashboard sits above it in the tray and context menus.
+- **Installed builds and source checkouts coexist** — integration ownership is claim-if-vacant: an installed build owns the Claude hooks and event routing; `npm start` next to it stays passive instead of stealing them (still fully functional on a source-only machine; `CLAWD_DEV_TAKE_HOOKS=1` forces a dev run to take over).
+- **Branding scrub** — tutorial titles, the About header, Discord presence text, and the Linux autostart entry now say Clawd Insights (the legacy `clawd-on-desk.desktop` autostart entry is cleaned up automatically).
 
 ## 📦 Packaging & Build
 
