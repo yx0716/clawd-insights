@@ -26,7 +26,12 @@ New on the fork side:
 - **Linux** — Wayland smoke workflow and continued AppImage/deb support.
 - Plus the usual round of settings, fullscreen, focus, and state-mapping fixes.
 
+## 🐛 Fixes
+
+- **Update checks now target this fork** — the in-app updater previously queried the upstream clawd-on-desk releases, announcing upstream versions and linking to upstream downloads. It now checks `yx0716/clawd-insights`; the About panel links here too.
+- **Two dashboards, disambiguated** — the upstream session dashboard is now labeled "Session Dashboard", and the fork's Analytics Dashboard sits above it in the tray and context menus.
+
 ## 📦 Packaging & Build
 
 - Built by the GitHub Actions pipeline: Windows `nsis` installers for **x64** and **ARM64** (`.exe`), macOS **dmg**, and Linux **AppImage** + **deb**.
-- Installers are unsigned; on macOS use right-click → Open on first launch, on Windows accept the SmartScreen prompt.
+- Installers are unsigned; on macOS use right-click → Open on first launch (or approve under System Settings → Privacy & Security), on Windows accept the SmartScreen prompt.
