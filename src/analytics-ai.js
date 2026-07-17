@@ -1835,7 +1835,9 @@ module.exports = function initAnalyticsAI(ctx) {
 
   // ── Session-level AI analysis ──
 
-  const ANALYSIS_CACHE_VERSION = 2;
+  // v3: prompt rewrite — plain-spoken tone (no forced warmth/exclamations),
+  // natural-phrase headlines instead of forced 3-4 char verb-object compounds
+  const ANALYSIS_CACHE_VERSION = 3;
   const sessionAnalysisCache = new Map(); // `${sessionId}:${provider}` → result
 
   function analysisCacheKey(sessionId, provider) {
@@ -1927,19 +1929,21 @@ module.exports = function initAnalyticsAI(ctx) {
     return { ok: true };
   }
 
-  // ── Brief mode prompt (default: concise + emotional value) ──
+  // ── Brief mode prompt (default: concise, plain-spoken) ──
   function buildSessionBriefPrompt(detail) {
     let p = "你是用户的编程搭档。以下是用户与 AI agent 的对话摘要。\n";
-    p += "请用简短、温暖的方式总结这段对话的核心收获。\n\n";
+    p += "请用简短、平实的中文总结这段对话的核心收获。\n\n";
     p += buildSessionContext(detail);
     p += "\n请返回 JSON（不要 markdown code block），格式：\n";
-    p += '{"summary":"1 句话概括核心收获，带情感色彩"';
+    p += '{"summary":"1 句话概括核心收获"';
     p += ',"keyTopics":["话题1","话题2"]';
-    p += ',"outcomes":[{"headline":"3-4字成果","detail":"一句话具体说明"}]}\n';
+    p += ',"outcomes":[{"headline":"成果短语","detail":"一句话具体说明"}]}\n';
     p += "要求：\n";
-    p += "- summary：≤ 40 字，像队友一样说。用'搞定了''漂亮''辛苦了'这类语气，不要干列事实。\n";
+    p += "- summary：≤ 40 字，像同事在工作群里同步进展：先把事实说准，再求简短。\n";
+    p += "- summary 禁止：感叹号；'搞定了''漂亮''辛苦了''加油'这类寒暄；比喻、拟人、俏皮话。宁可平淡，不要俏皮。\n";
+    p += "  例：写'每日 review 自动同步到 GitHub，不再因电脑重启中断'，不要写'搞定了！合盖也不怕断更了'。\n";
     p += "- keyTopics：2-3 个，每个 ≤ 8 字。\n";
-    p += "- outcomes：最多 2 条，headline 不加标点，detail 要具体。\n";
+    p += "- outcomes：最多 2 条。headline 是 ≤ 10 字的自然短语（如'定时同步上线'），不加标点，不要硬压成三字动宾词；detail 要具体。\n";
     p += "- 所有字段用中文。不要返回 suggestions 和 timeBreakdown。\n";
     p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
     return p;
@@ -1954,15 +1958,16 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "\n请返回 JSON（不要 markdown code block），格式：\n";
     p += '{"summary":"≤50字概括：做了什么+结果如何"';
     p += ',"keyTopics":["话题1","话题2","话题3"]';
-    p += ',"outcomes":[{"headline":"3-4字短语","detail":"展开说明关键认知"}]';
+    p += ',"outcomes":[{"headline":"成果短语","detail":"展开说明关键认知"}]';
     p += ',"timeBreakdown":[{"activity":"活动描述","percent":百分比}]';
     p += ',"suggestions":["建议"]}\n';
     p += "要求：\n";
     p += "- summary：**严格 ≤ 50 字**，一句话说清'做了什么 + 结果如何'。不要铺垫背景，不要描述过程。\n";
     p += "- keyTopics：3-5 个关键话题，每个 ≤ 10 字。\n";
-    p += "- outcomes：3-5 条。headline 用 3-4 字（如'修路径''搭布局''定方案'），不加标点；detail 一句话展开关键认知。\n";
+    p += "- outcomes：3-5 条。headline 是概括该成果的自然短语（≤ 10 字，如'权限弹窗去重''同步任务上线'），不加标点，不要千篇一律压成三字动宾词；detail 一句话展开关键认知。\n";
     p += "- timeBreakdown：3-5 条，从用户视角描述时间分配（'讨论架构设计'而非'调用 Read 工具'）。\n";
     p += "- suggestions：1-2 条简短实用的建议。做得好可以返回空数组。\n";
+    p += "- 语言平实准确，不用感叹号、寒暄语和比喻；宁可平淡，不要俏皮。\n";
     p += "- 所有字段用中文。确保 JSON 完整闭合。\n";
     p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
     return p;
@@ -2802,7 +2807,7 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "2-4 条具体成果（解决了什么问题、上线了什么、想清楚了什么）。\n\n";
     p += "## 时间分布\n";
     p += "粗略估算各项目/主题占的时间比例（百分比即可）。\n\n";
-    p += "要求：全程中文，口吻像队友复盘，不要套话；只用上面提供的简报内容，不要编造未提及的内容。";
+    p += "要求：全程中文，口吻像同事复盘，语言平实，不用感叹号、寒暄语和比喻，不要套话；只用上面提供的简报内容，不要编造未提及的内容。";
     return p;
   }
 

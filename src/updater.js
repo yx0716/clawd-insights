@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs");
 const electron = require("electron");
 
-const RELEASES_LATEST_URL = "https://github.com/rullerzhou-afk/clawd-on-desk/releases/latest";
+const RELEASES_LATEST_URL = "https://github.com/yx0716/clawd-insights/releases/latest";
 
 function makeTranslate(ctx) {
   return (key, fallback) => {
@@ -477,7 +477,7 @@ function initUpdater(ctx, deps = {}) {
     return new Promise((resolve, reject) => {
       const req = httpsGet({
         hostname: "github.com",
-        path: "/rullerzhou-afk/clawd-on-desk/releases/latest",
+        path: "/yx0716/clawd-insights/releases/latest",
         headers: {
           "User-Agent": "Clawd-on-Desk",
           Accept: "text/html,*/*",
@@ -514,7 +514,7 @@ function initUpdater(ctx, deps = {}) {
       if (lastReleaseEtag) headers["If-None-Match"] = lastReleaseEtag;
       const req = httpsGet({
         hostname: "api.github.com",
-        path: "/repos/rullerzhou-afk/clawd-on-desk/releases/latest",
+        path: "/repos/yx0716/clawd-insights/releases/latest",
         headers,
       }, (res) => {
         // 304 Not Modified — drain and serve the cached release.
