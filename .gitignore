@@ -44,6 +44,8 @@ docs/**
 !docs/cloudling/specs/core-states.md
 !docs/cloudling/specs/special-states.md
 !docs/releases/
+!docs/releases/release-v0.3.0.md
+!docs/releases/release-v0.4.0.md
 !docs/releases/release-v0.5.5.md
 !docs/releases/release-v0.6.0.md
 !docs/releases/release-v0.6.1.md
