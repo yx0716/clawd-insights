@@ -3232,6 +3232,7 @@
         rangePast7Days: "过去 7 天",
         preAnalyzeTitle: "预分析 Sessions",
         preAnalyzeSub: "选择要预分析的范围。剩余 session 也可以点开后再分析。",
+        provider: "AI Provider：",
         scope: "范围：",
         todaySessions: "今天（{count} 个 sessions）",
         last3DaysSessions: "最近 3 天（{count} 个 sessions）",
@@ -3436,6 +3437,7 @@
         rangePast7Days: "Past 7 days",
         preAnalyzeTitle: "Pre-analyze Sessions",
         preAnalyzeSub: "Select a scope to pre-analyze. Remaining sessions can still be analyzed on click.",
+        provider: "Provider:",
         scope: "Scope:",
         todaySessions: "Today ({count} sessions)",
         last3DaysSessions: "Last 3 days ({count} sessions)",
@@ -5449,8 +5451,12 @@
       return sess ? sess.agent : "claude-code";
     }
 
+    // Resolves to the effective provider id (truthy) once the user consents,
+    // false when they cancel, null when no provider is configured. The consent
+    // dialog can switch the backend, so callers that captured a provider id
+    // beforehand should prefer the returned one.
     async function ensureAnalysisConsent(providerId) {
-      if (analysisConsented) return true;
+      if (analysisConsented) return providerId || selectedAnalysisAgent;
       if (!analysisOptions.length) try { analysisOptions = await window.analyticsAPI.getAnalysisOptions(); } catch { }
       if (!analysisProvider) try { analysisProvider = await window.analyticsAPI.getAnalysisProvider(); } catch { }
       const selectedOption = getAnalysisOptionById(providerId) || getSelectedAnalysisOption() || analysisProvider;
@@ -5463,10 +5469,20 @@
         return null;
       }
       if (selectedOption.id) selectedAnalysisAgent = selectedOption.id;
-      const ok = await showConfirm(selectedOption);
-      if (!ok) return false;
+      const chosenId = await showConfirm(selectedOption);
+      if (!chosenId) return false;
+      const proposedId = selectedOption.id || selectedOption.provider;
+      const chosenOption = typeof chosenId === "string" ? getAnalysisOptionById(chosenId) : null;
+      if (chosenOption && chosenOption.id) selectedAnalysisAgent = chosenOption.id;
+      if (chosenOption && chosenId !== proposedId) {
+        // User switched backend in the dialog: persist it as the new default
+        // (same behavior as the batch-analysis modal's Start button) and
+        // refresh the session cards so provider tags reflect the switch.
+        try { await window.analyticsAPI.saveAIConfig({ defaultAnalysisProvider: chosenId }); } catch { }
+        if (currentData) renderEvents(currentData);
+      }
       analysisConsented = true;
-      return true;
+      return (chosenOption && (chosenOption.id || chosenOption.provider)) || proposedId || true;
     }
 
     async function requestSessionAnalysis(sessionId, agent, providerId, mode, opts = {}) {
@@ -6141,7 +6157,44 @@
       });
     }
 
-    function showConfirm(p) { return new Promise(res => { const o = document.createElement("div"); o.className = "confirm-overlay"; const pn = formatAnalysisProvider(p); o.innerHTML = `<div class="confirm-dialog"><p>${t("confirmAnalyze", { provider: pn })}</p><div class="confirm-btns"><button class="btn-ok">${escapeHtml(t("analyze"))}</button><button class="btn-cancel">${escapeHtml(t("cancel"))}</button></div></div>`; document.body.appendChild(o); o.querySelector(".btn-ok").onclick = () => { o.remove(); res(true); }; o.querySelector(".btn-cancel").onclick = () => { o.remove(); res(false); }; }); }
+    // Consent dialog shown before the first analysis. When more than one
+    // analysis backend is configured it also renders a provider <select>
+    // (same options as the batch-analysis modal) so the backend can be
+    // switched right here. Resolves with the chosen provider id on OK and
+    // false on cancel.
+    function showConfirm(p) {
+      return new Promise(res => {
+        const o = document.createElement("div");
+        o.className = "confirm-overlay";
+        const currentId = (p && (p.id || p.provider)) || "";
+        let opts = analysisOptions && analysisOptions.length
+          ? analysisOptions.slice()
+          : (analysisProvider ? [analysisProvider] : []);
+        if (p && !opts.some(opt => (opt.id || opt.provider) === currentId)) opts = [p, ...opts];
+        const selectHtml = opts.length > 1
+          ? `<select id="confirmProviderSelect" title="${escapeHtml(t("switchAnalyzer"))}" aria-label="${escapeHtml(t("switchAnalyzer"))}" style="font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);width:100%;margin-bottom:14px">${opts.map(opt => {
+            const id = opt.id || opt.provider;
+            return `<option value="${escapeHtml(id)}"${id === currentId ? " selected" : ""}>${escapeHtml(formatAnalysisProvider(opt))}</option>`;
+          }).join("")}</select>`
+          : "";
+        o.innerHTML = `<div class="confirm-dialog"><p>${t("confirmAnalyze", { provider: escapeHtml(formatAnalysisProvider(p)) })}</p>${selectHtml}<div class="confirm-btns"><button class="btn-ok">${escapeHtml(t("analyze"))}</button><button class="btn-cancel">${escapeHtml(t("cancel"))}</button></div></div>`;
+        document.body.appendChild(o);
+        const sel = o.querySelector("#confirmProviderSelect");
+        if (sel) {
+          sel.onchange = () => {
+            const next = opts.find(opt => (opt.id || opt.provider) === sel.value);
+            const span = o.querySelector(".provider");
+            if (next && span) span.textContent = formatAnalysisProvider(next);
+          };
+        }
+        o.querySelector(".btn-ok").onclick = () => {
+          const chosen = (sel && sel.value) || currentId;
+          o.remove();
+          res(chosen || true);
+        };
+        o.querySelector(".btn-cancel").onclick = () => { o.remove(); res(false); };
+      });
+    }
 
     // Markdown-style copy text for a session analysis result.
     // Sections mirror what renderAnalysis() draws: summary + topics + outcomes
@@ -6348,10 +6401,13 @@
           if (!selectedSessionId) return;
           const agent = getSessionAgent(selectedSessionId);
           const scope = selectedAnalysisScope;
-          if (!(await ensureAnalysisConsent(targetProviderId))) return;
+          const consent = await ensureAnalysisConsent(targetProviderId);
+          if (!consent) return;
+          // The consent dialog may have switched the backend — honor its pick.
+          const providerForRun = typeof consent === "string" ? consent : targetProviderId;
           showAnalysisLoading();
           try {
-            const result = await requestSessionAnalysis(selectedSessionId, agent, targetProviderId, currentAnalysisMode, { scope });
+            const result = await requestSessionAnalysis(selectedSessionId, agent, providerForRun, currentAnalysisMode, { scope });
             if (selectedSessionId == null || !sameAnalysisScope(selectedAnalysisScope, scope)) return;
             showAnalysisContent();
             if (!result) {
@@ -6360,7 +6416,7 @@
             }
             renderAnalysis(result);
             if (currentData) renderEvents(currentData);
-            void prefetchAlternateAnalysisMode(selectedSessionId, agent, currentAnalysisMode, targetProviderId, scope);
+            void prefetchAlternateAnalysisMode(selectedSessionId, agent, currentAnalysisMode, providerForRun, scope);
           } catch (err) {
             showAnalysisContent();
             currentRenderedAnalysis = null;
