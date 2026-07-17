@@ -15,10 +15,12 @@ or prompt-submission path.
 - Claude Code and CodeBuddy normal permission requests.
 - Codex CLI official `PermissionRequest` hooks when Codex permission handling is
   in intercept mode.
+- AskUserQuestion elicitation prompts (beta) — rendered as an interactive card
+  with option buttons and a quote-safe Other reply.
 
 Telegram cards are not sent for DND/native-fallback cases, disabled agents,
-hidden permission bubbles, opencode, elicitation prompts, passive notifications,
-or headless sessions.
+hidden permission bubbles, opencode, passive notifications, or headless
+sessions.
 
 ## Setup
 
@@ -70,6 +72,21 @@ button stay disabled until token and recipient are in place.
   permission twice.
 - Sidecar logs and Clawd logs redact Telegram tokens, chat ids, and token-like
   values.
+
+## Native Transport (v0.9.0+)
+
+The native (in-process) Telegram transport has been the default since the
+v0.9.0 migration window closed; the Go sidecar remains in the tree as the
+legacy fallback runtime. The migration-era Settings card — test-and-switch,
+enable-legacy, rollback, and delete-legacy-token buttons — was retired with
+it: the Step-3 enable switch is now the only user entry point, routing
+turn-on through the native test flow (`USER_TEST_NATIVE`) and turn-off
+through `USER_DISABLE`. Native still reads the shared
+`telegram-approval.env` token file.
+
+The one-time dogfood checklist that validated the migration itself lived in
+this section until the card was retired; recover it from git history if a
+future transport migration needs a template.
 
 ## Release Notes
 

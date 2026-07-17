@@ -5,10 +5,24 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { resolveNodeBin, buildPermissionUrl, DEFAULT_SERVER_PORT, readRuntimePort } = require("./server-config");
-const { writeJsonAtomic, asarUnpackedPath, extractExistingNodeBin } = require("./json-utils");
+const {
+  resolveNodeBin,
+  buildPermissionUrl,
+  isManagedPermissionUrl,
+  DEFAULT_SERVER_PORT,
+  readRuntimePort,
+} = require("./server-config");
+const {
+  readJsonFile,
+  writeJsonAtomic,
+  writeJsonAtomicWithBackup,
+  asarUnpackedPath,
+  commandMatchesMarker,
+  extractExistingNodeBin,
+  removeMatchingCommandHooks,
+  removeMatchingHttpHooks,
+} = require("./json-utils");
 const MARKER = "codebuddy-hook.js";
-const HTTP_MARKER = "/permission";
 const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".codebuddy");
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "settings.json");
 
@@ -46,7 +60,7 @@ function registerCodeBuddyHooks(options = {}) {
 
   let settings = {};
   try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    settings = readJsonFile(settingsPath);
   } catch (err) {
     if (err.code !== "ENOENT") {
       throw new Error(`Failed to read settings.json: ${err.message}`);
@@ -138,13 +152,15 @@ function registerCodeBuddyHooks(options = {}) {
     if (Array.isArray(innerHooks)) {
       for (const h of innerHooks) {
         if (!h || h.type !== "http" || typeof h.url !== "string") continue;
-        if (!h.url.includes(HTTP_MARKER)) continue;
+        // Only URLs we wrote ourselves are eligible for the in-place port
+        // refresh; foreign endpoints are skipped and we append our own entry.
+        if (!isManagedPermissionUrl(h.url)) continue;
         permFound = true;
         if (h.url !== permissionUrl) { h.url = permissionUrl; updated++; changed = true; }
         break;
       }
     }
-    if (!permFound && entry.type === "http" && typeof entry.url === "string" && entry.url.includes(HTTP_MARKER)) {
+    if (!permFound && entry.type === "http" && typeof entry.url === "string" && isManagedPermissionUrl(entry.url)) {
       permFound = true;
       if (entry.url !== permissionUrl) { entry.url = permissionUrl; updated++; changed = true; }
     }
@@ -171,16 +187,67 @@ function registerCodeBuddyHooks(options = {}) {
   return { added, skipped, updated };
 }
 
+function unregisterCodeBuddyHooks(options = {}) {
+  const settingsPath = options.settingsPath || path.join(os.homedir(), ".codebuddy", "settings.json");
+
+  let settings = {};
+  try {
+    settings = readJsonFile(settingsPath);
+  } catch (err) {
+    if (err.code === "ENOENT") return { removed: 0, changed: false, settingsPath };
+    throw new Error(`Failed to read settings.json: ${err.message}`);
+  }
+
+  if (!settings.hooks || typeof settings.hooks !== "object") {
+    return { removed: 0, changed: false, settingsPath };
+  }
+
+  let removed = 0;
+  let changed = false;
+  for (const event of CODEBUDDY_HOOK_EVENTS) {
+    const entries = settings.hooks[event];
+    if (!Array.isArray(entries)) continue;
+    const result = removeMatchingCommandHooks(entries, (command) => commandMatchesMarker(command, MARKER));
+    if (!result.changed) continue;
+    removed += result.removed;
+    changed = true;
+    if (result.entries.length > 0) settings.hooks[event] = result.entries;
+    else delete settings.hooks[event];
+  }
+
+  if (Array.isArray(settings.hooks.PermissionRequest)) {
+    const result = removeMatchingHttpHooks(settings.hooks.PermissionRequest, (hook) =>
+      hook && hook.type === "http" && isManagedPermissionUrl(hook.url)
+    );
+    if (result.changed) {
+      removed += result.removed;
+      changed = true;
+      if (result.entries.length > 0) settings.hooks.PermissionRequest = result.entries;
+      else delete settings.hooks.PermissionRequest;
+    }
+  }
+
+  let backupPath = null;
+  if (changed) backupPath = writeJsonAtomicWithBackup(settingsPath, settings, options);
+  if (!options.silent) console.log(`Clawd CodeBuddy hooks removed: ${removed}`);
+  const result = { removed, changed, settingsPath };
+  if (options.backup === true) result.backupPath = backupPath;
+  return result;
+}
+
 module.exports = {
   DEFAULT_PARENT_DIR,
   DEFAULT_CONFIG_PATH,
   registerCodeBuddyHooks,
+  unregisterCodeBuddyHooks,
   CODEBUDDY_HOOK_EVENTS,
+  __test: { isManagedPermissionUrl },
 };
 
 if (require.main === module) {
   try {
-    registerCodeBuddyHooks({});
+    if (process.argv.includes("--uninstall")) unregisterCodeBuddyHooks({});
+    else registerCodeBuddyHooks({});
   } catch (err) {
     console.error(err.message);
     process.exit(1);

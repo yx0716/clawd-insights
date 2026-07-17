@@ -10,6 +10,8 @@ const {
   postPermissionToRunningServer,
   postStateToRunningServer,
   readHostPrefix,
+  readRuntimeIdentity,
+  applyWslSourceFields,
 } = require("./server-config");
 const { createPidResolver, readStdinJson, getPlatformConfig } = require("./shared-process");
 const {
@@ -17,7 +19,11 @@ const {
   classifyHookPayload,
   classifySessionMeta,
 } = require("./codex-subagent-fields");
+const {
+  extractLastAssistantTextFromTranscript,
+} = require("./codex-assistant-output");
 const { readCodexThreadName } = require("./codex-session-index");
+const { fitStateBodyToByteBudget } = require("./state-payload-size");
 
 const TOOL_MATCH_STRING_MAX = 240;
 const TOOL_MATCH_ARRAY_MAX = 16;
@@ -193,12 +199,14 @@ function shouldReportForegroundWtHwnd(event) {
 }
 
 function applyLocalProcessFields(body, resolve, options = {}) {
-  const { stablePid, agentPid, detectedEditor, pidChain, foregroundWtHwnd } = resolve();
+  const { stablePid, agentPid, detectedEditor, pidChain, foregroundWtHwnd, tmuxSocket, tmuxClient } = resolve();
   const sourcePid = options.preferAgentPid && agentPid ? agentPid : stablePid;
   body.source_pid = sourcePid;
   if (detectedEditor) body.editor = detectedEditor;
   if (agentPid) body.agent_pid = agentPid;
   if (pidChain.length) body.pid_chain = pidChain;
+  if (tmuxSocket) body.tmux_socket = tmuxSocket;
+  if (tmuxClient) body.tmux_client = tmuxClient;
   if (shouldReportForegroundWtHwnd(options.event, foregroundWtHwnd) && foregroundWtHwnd) {
     body.wt_hwnd = String(foregroundWtHwnd);
   }
@@ -289,6 +297,12 @@ function buildPermissionBody(payload, resolve) {
     body.transcript_path = payload.transcript_path;
   }
   if (typeof payload.model === "string" && payload.model) body.model = payload.model;
+  // Carry the session role so the /permission route's headless gate
+  // (isHeadlessPermissionRequest) can identify subagent requests even when
+  // no state event has populated the sessions map yet. Before PR #448
+  // subagent permissions deliberately bubbled, so the role was state-only.
+  const codexRole = resolveCodexSessionRole(payload, sessionMeta);
+  if (codexRole !== ROLE_UNKNOWN) body.codex_session_role = codexRole;
   applyCodexSessionMetaFields(body, payload, sessionMeta);
 
   const toolUseId = normalizeToolUseId(payload.tool_use_id ?? payload.toolUseId ?? payload.toolUseID);
@@ -298,7 +312,9 @@ function buildPermissionBody(payload, resolve) {
 
   if (process.env.CLAWD_REMOTE) {
     body.host = readHostPrefix();
+    applyWslSourceFields(body, { remote: true });
   } else {
+    applyWslSourceFields(body);
     applyLocalProcessFields(body, resolve, {
       preferAgentPid: isCodexDesktopSession(payload, sessionMeta),
       event,
@@ -338,6 +354,13 @@ function buildStateBody(payload, resolve) {
   if (payload.stop_hook_active === true || payload.stop_hook_active === false) {
     body.stop_hook_active = payload.stop_hook_active;
   }
+  if (event === "Stop") {
+    const assistantOutput = extractLastAssistantTextFromTranscript(payload.transcript_path);
+    if (assistantOutput && assistantOutput.text) {
+      body.assistant_last_output = assistantOutput.text;
+      if (assistantOutput.truncated) body.assistant_last_output_truncated = true;
+    }
+  }
 
   const sessionMeta = readFirstSessionMeta(payload.transcript_path);
   const threadName = readCodexThreadName(sessionId);
@@ -357,7 +380,9 @@ function buildStateBody(payload, resolve) {
 
   if (process.env.CLAWD_REMOTE) {
     body.host = readHostPrefix();
+    applyWslSourceFields(body, { remote: true });
   } else {
+    applyWslSourceFields(body);
     applyLocalProcessFields(body, resolve, {
       preferAgentPid: isCodexDesktopSession(payload, sessionMeta),
       event,
@@ -367,43 +392,81 @@ function buildStateBody(payload, resolve) {
   return body;
 }
 
-function requestCodexPermission(body, callback) {
-  postPermissionToRunningServer(
+function requestCodexPermission(body, callback, options = {}) {
+  const postPermission = options.postPermission || postPermissionToRunningServer;
+  const requestOptions = {
+    timeoutMs: getCodexPermissionTimeoutMs(),
+    probeTimeoutMs: 100,
+  };
+  if (options.preferredPort) {
+    requestOptions.preferredPort = options.preferredPort;
+    requestOptions.runtimePort = options.preferredPort;
+  }
+  postPermission(
     JSON.stringify(body),
-    {
-      timeoutMs: getCodexPermissionTimeoutMs(),
-      probeTimeoutMs: 100,
-    },
-    (ok, _port, responseBody) => {
-      callback(ok ? sanitizeCodexPermissionOutput(responseBody) : buildCodexNoDecisionOutput());
+    requestOptions,
+    (ok, port, responseBody) => {
+      callback(ok ? sanitizeCodexPermissionOutput(responseBody) : buildCodexNoDecisionOutput(), ok, port);
     }
   );
 }
 
-function main() {
+async function runCodexHook(payload, options = {}) {
   const config = getPlatformConfig();
-  const resolve = createPidResolver({
+  let preferredPort = options.preferredPort || null;
+  const readIdentity = options.readRuntimeIdentity || readRuntimeIdentity;
+  const resolverOptions = {
     agentNames: { win: new Set(["codex.exe"]), mac: new Set(["codex"]), linux: new Set(["codex"]) },
     platformConfig: config,
-  });
+    readRuntimeIdentity() {
+      const identity = readIdentity();
+      if (!preferredPort && identity && identity.port) preferredPort = identity.port;
+      return identity;
+    },
+  };
+  const resolve = options.resolvePid || (options.createPidResolver
+    ? options.createPidResolver(resolverOptions)
+    : createPidResolver(resolverOptions));
 
-  readStdinJson().then((payload) => {
-    const permissionBody = buildPermissionBody(payload || {}, resolve);
-    if (permissionBody) {
-      requestCodexPermission(permissionBody, (output) => {
-        process.stdout.write(`${output}\n`);
-        process.exit(0);
-      });
-      return;
-    }
+  const permissionBody = buildPermissionBody(payload || {}, resolve);
+  if (permissionBody) {
+    return new Promise((resolveRun) => {
+      requestCodexPermission(permissionBody, (stdout, posted, port) => {
+        resolveRun({ body: permissionBody, posted: !!posted, port: port || null, stdout });
+      }, { ...options, preferredPort });
+    });
+  }
 
-    const body = buildStateBody(payload || {}, resolve);
-    if (!body) process.exit(0);
-    postStateToRunningServer(JSON.stringify(body), { timeoutMs: 100 }, () => process.exit(0));
+  const body = buildStateBody(payload || {}, resolve);
+  if (!body) return { body: null, posted: false, stdout: "" };
+  // Byte-fit before POST so a long CJK assistant_last_output can't trip the
+  // server's headerless 413 (read back as posted=false). See
+  // hooks/state-payload-size.js.
+  const fitted = fitStateBodyToByteBudget(body);
+  const postState = options.postState || postStateToRunningServer;
+  const postOptions = { timeoutMs: 100 };
+  if (preferredPort) {
+    postOptions.preferredPort = preferredPort;
+    postOptions.runtimePort = preferredPort;
+  }
+  return new Promise((resolveRun) => {
+    postState(
+      JSON.stringify(fitted.body),
+      postOptions,
+      (posted, port) => resolveRun({ body: fitted.body, posted: !!posted, port: port || null, stdout: "" })
+    );
   });
 }
 
-if (require.main === module) main();
+async function main() {
+  const payload = await readStdinJson();
+  const result = await runCodexHook(payload || {});
+  if (result.stdout) process.stdout.write(`${result.stdout}\n`);
+}
+
+if (require.main === module) {
+  main().then(() => process.exit(0), () => process.exit(0));
+}
 
 module.exports = {
   EVENT_TO_STATE,
@@ -414,10 +477,12 @@ module.exports = {
   buildPermissionBody,
   buildStateBody,
   buildToolInputFingerprint,
+  extractLastAssistantTextFromTranscript,
   extractCodexSessionIdFromTranscriptPath,
   isCodexDesktopSession,
   normalizeCodexSessionId,
   readFirstSessionMeta,
+  runCodexHook,
   sanitizeCodexPermissionDecision,
   sanitizeCodexPermissionOutput,
 };

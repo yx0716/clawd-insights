@@ -7,8 +7,18 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const childProcess = require("child_process");
-const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, resolveNodeBin, resolveNodeBinAsync, SERVER_PORTS } = require("./server-config");
-const { writeJsonAtomic, writeJsonAtomicAsync, asarUnpackedPath, extractExistingNodeBin } = require("./json-utils");
+const { buildPermissionUrl, DEFAULT_SERVER_PORT, PERMISSION_PATH, readRuntimePort, REMOTE_HOOK_HTTP_TIMEOUT_MS, resolveNodeBin, resolveNodeBinAsync, SERVER_PORTS } = require("./server-config");
+const {
+  readJsonFile,
+  readJsonFileAsync,
+  writeJsonAtomic,
+  writeJsonAtomicAsync,
+  writeJsonAtomicWithBackup,
+  writeJsonAtomicWithBackupAsync,
+  asarUnpackedPath,
+  buildPortableStatuslineCommand,
+  extractExistingNodeBin,
+} = require("./json-utils");
 
 const DEFAULT_PARENT_DIR = path.join(os.homedir(), ".claude");
 const DEFAULT_CONFIG_PATH = path.join(DEFAULT_PARENT_DIR, "settings.json");
@@ -95,8 +105,16 @@ function getWindowsClaudePathSuffixes(pathExtEnv) {
   return suffixes;
 }
 
+// Path semantics must follow the requested platform, not the host: tests inject
+// win32/posix scenarios cross-platform. In production platform === process.platform,
+// so this resolves to the host path module.
+function pathForPlatform(platform) {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 function getClaudePathCandidates(options = {}) {
   const platform = options.platform || process.platform;
+  const platformPath = pathForPlatform(platform);
   const pathEnv = options.pathEnv !== undefined ? options.pathEnv : process.env.PATH;
   const existsSync = options.existsSync || fs.existsSync;
 
@@ -115,7 +133,7 @@ function getClaudePathCandidates(options = {}) {
     if (!dir) continue;
 
     for (const suffix of suffixes) {
-      const candidate = path.join(dir, `claude${suffix}`);
+      const candidate = platformPath.join(dir, `claude${suffix}`);
       const key = platform === "win32" ? candidate.toLowerCase() : candidate;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -131,6 +149,7 @@ function getClaudePathCandidates(options = {}) {
 
 async function getClaudePathCandidatesAsync(options = {}) {
   const platform = options.platform || process.platform;
+  const platformPath = pathForPlatform(platform);
   const pathEnv = options.pathEnv !== undefined ? options.pathEnv : process.env.PATH;
   const access = options.access || fs.promises.access.bind(fs.promises);
 
@@ -149,7 +168,7 @@ async function getClaudePathCandidatesAsync(options = {}) {
     if (!dir) continue;
 
     for (const suffix of suffixes) {
-      const candidate = path.join(dir, `claude${suffix}`);
+      const candidate = platformPath.join(dir, `claude${suffix}`);
       const key = platform === "win32" ? candidate.toLowerCase() : candidate;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -166,12 +185,13 @@ async function getClaudePathCandidatesAsync(options = {}) {
 
 function getClaudePackageJsonCandidates(candidatePath, options = {}) {
   const platform = options.platform || process.platform;
+  const platformPath = pathForPlatform(platform);
   const existsSync = options.existsSync || fs.existsSync;
   const readFileSync = options.readFileSync || fs.readFileSync;
   const realpathSync = options.realpathSync || fs.realpathSync;
   const statSync = options.statSync || fs.statSync;
 
-  if (!path.isAbsolute(candidatePath)) return [];
+  if (!platformPath.isAbsolute(candidatePath)) return [];
 
   const candidates = [];
   const seen = new Set();
@@ -186,12 +206,12 @@ function getClaudePackageJsonCandidates(candidatePath, options = {}) {
     } catch {}
   };
 
-  const candidateDir = path.dirname(candidatePath);
-  addCandidate(path.join(candidateDir, ...CLAUDE_PACKAGE_JSON_SEGMENTS));
+  const candidateDir = platformPath.dirname(candidatePath);
+  addCandidate(platformPath.join(candidateDir, ...CLAUDE_PACKAGE_JSON_SEGMENTS));
 
   try {
     const resolvedPath = realpathSync(candidatePath);
-    addCandidate(path.join(path.dirname(resolvedPath), "package.json"));
+    addCandidate(platformPath.join(platformPath.dirname(resolvedPath), "package.json"));
   } catch {}
 
   try {
@@ -202,8 +222,8 @@ function getClaudePackageJsonCandidates(candidatePath, options = {}) {
       const shimSource = readFileSync(candidatePath, "utf8");
       const shimMatch = shimSource.match(CLAUDE_SHIM_CLI_PATTERN);
       if (shimMatch) {
-        const cliPath = path.resolve(candidateDir, shimMatch[0].replace(/[\\/]/g, path.sep));
-        addCandidate(path.join(path.dirname(cliPath), "package.json"));
+        const cliPath = platformPath.resolve(candidateDir, shimMatch[0].replace(/[\\/]/g, platformPath.sep));
+        addCandidate(platformPath.join(platformPath.dirname(cliPath), "package.json"));
       }
     }
   } catch {}
@@ -213,12 +233,13 @@ function getClaudePackageJsonCandidates(candidatePath, options = {}) {
 
 async function getClaudePackageJsonCandidatesAsync(candidatePath, options = {}) {
   const platform = options.platform || process.platform;
+  const platformPath = pathForPlatform(platform);
   const access = options.access || fs.promises.access.bind(fs.promises);
   const readFile = options.readFile || fs.promises.readFile.bind(fs.promises);
   const realpath = options.realpath || fs.promises.realpath.bind(fs.promises);
   const stat = options.stat || fs.promises.stat.bind(fs.promises);
 
-  if (!path.isAbsolute(candidatePath)) return [];
+  if (!platformPath.isAbsolute(candidatePath)) return [];
 
   const candidates = [];
   const seen = new Set();
@@ -234,12 +255,12 @@ async function getClaudePackageJsonCandidatesAsync(candidatePath, options = {}) 
     } catch {}
   };
 
-  const candidateDir = path.dirname(candidatePath);
-  await addCandidate(path.join(candidateDir, ...CLAUDE_PACKAGE_JSON_SEGMENTS));
+  const candidateDir = platformPath.dirname(candidatePath);
+  await addCandidate(platformPath.join(candidateDir, ...CLAUDE_PACKAGE_JSON_SEGMENTS));
 
   try {
     const resolvedPath = await realpath(candidatePath);
-    await addCandidate(path.join(path.dirname(resolvedPath), "package.json"));
+    await addCandidate(platformPath.join(platformPath.dirname(resolvedPath), "package.json"));
   } catch {}
 
   try {
@@ -249,8 +270,8 @@ async function getClaudePackageJsonCandidatesAsync(candidatePath, options = {}) 
       const shimSource = await readFile(candidatePath, "utf8");
       const shimMatch = String(shimSource).match(CLAUDE_SHIM_CLI_PATTERN);
       if (shimMatch) {
-        const cliPath = path.resolve(candidateDir, shimMatch[0].replace(/[\\/]/g, path.sep));
-        await addCandidate(path.join(path.dirname(cliPath), "package.json"));
+        const cliPath = platformPath.resolve(candidateDir, shimMatch[0].replace(/[\\/]/g, platformPath.sep));
+        await addCandidate(platformPath.join(platformPath.dirname(cliPath), "package.json"));
       }
     }
   } catch {}
@@ -315,14 +336,15 @@ async function readClaudeVersionFallbackAsync(candidatePath, options = {}) {
  */
 function getClaudeVersion(options = {}) {
   const platform = options.platform || process.platform;
+  const platformPath = pathForPlatform(platform);
   const homeDir = options.homeDir || os.homedir();
   const execFileSync = options.execFileSync || require("child_process").execFileSync;
   const candidates = [];
 
   if (platform === "darwin") {
     candidates.push(
-      path.join(homeDir, ".local", "bin", "claude"),
-      path.join(homeDir, ".claude", "local", "claude"),
+      platformPath.join(homeDir, ".local", "bin", "claude"),
+      platformPath.join(homeDir, ".claude", "local", "claude"),
       "/opt/homebrew/bin/claude",
       "/usr/local/bin/claude"
     );
@@ -369,6 +391,7 @@ async function getClaudeVersionAsync(options = {}) {
 
   const compute = async () => {
     const platform = options.platform || process.platform;
+    const platformPath = pathForPlatform(platform);
     const homeDir = options.homeDir || os.homedir();
     const execFile = options.execFile || ((command, args, execOptions) => new Promise((resolve, reject) => {
       childProcess.execFile(command, args, execOptions, (err, stdout, stderr) => {
@@ -383,8 +406,8 @@ async function getClaudeVersionAsync(options = {}) {
     if (!candidates.length) {
       if (platform === "darwin") {
         candidates.push(
-          path.join(homeDir, ".local", "bin", "claude"),
-          path.join(homeDir, ".claude", "local", "claude"),
+          platformPath.join(homeDir, ".local", "bin", "claude"),
+          platformPath.join(homeDir, ".claude", "local", "claude"),
           "/opt/homebrew/bin/claude",
           "/usr/local/bin/claude"
         );
@@ -434,34 +457,83 @@ const MARKER = "clawd-hook.js";
 const AUTO_START_MARKER = "auto-start.js";
 const LEGACY_AUTO_START_MARKER = "auto-start.sh";
 const HTTP_MARKER = PERMISSION_PATH;
+const STATE_HOOK_TIMEOUT_SECONDS = 5;
+const REMOTE_STATE_HOOK_TIMEOUT_SECONDS = Math.ceil(REMOTE_HOOK_HTTP_TIMEOUT_MS / 1000) + 5;
+const AUTO_START_HOOK_TIMEOUT_SECONDS = 15;
+
+// Authoritative script paths — the single source of truth for both what
+// registerHooks()/registerHooksAsync() write and what runtime health checks
+// (src/claude-hook-health.js) compare against. Computing this in two places
+// would let the installer and the health inspector silently drift apart.
+function getClaudeHookScriptPath() {
+  return asarUnpackedPath(path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/"));
+}
+
+function getClaudeAutoStartScriptPath() {
+  return asarUnpackedPath(path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/"));
+}
 
 function buildCommandHookSpec(nodeBin, scriptPath, args = "", options = {}) {
   const platform = options.platform || process.platform;
   const argSuffix = args ? ` ${args}` : "";
-  const quotedCommand = `"${nodeBin}" "${scriptPath}"${argSuffix}`;
+  // Shell-quoted form: used for PowerShell (& operator), remote POSIX (env-prefix
+  // syntax is shell syntax), and native macOS/Linux (paths may contain spaces in
+  // packaged apps). Quotes are part of the shell grammar.
+  const shellQuotedCommand = `"${nodeBin}" "${scriptPath}"${argSuffix}`;
+  // Plain (unquoted) form for WSL — Claude Code on WSL either defaults to
+  // sh -c or splits on spaces; both work without quotes. Quoting WITHOUT
+  // a shell field causes the hook runner to treat the quotes as part of the
+  // executable name, breaking WSL hook execution. WSL paths never contain
+  // spaces (/usr/bin/node, /home/…/.claude/hooks/…).
+  const plainCommand = `${nodeBin} ${scriptPath}${argSuffix}`;
+  const isWsl = !!options.wslDistro;
+
+  const withHookOptions = (hook) => {
+    if (Object.prototype.hasOwnProperty.call(options, "async")) {
+      hook.async = options.async === true;
+    }
+    if (Number.isFinite(options.timeout)) {
+      hook.timeout = options.timeout;
+    }
+    return hook;
+  };
 
   // Remote hook deployment targets POSIX shells over SSH and relies on bash-style
   // env-prefix syntax (`CLAWD_REMOTE=1 cmd`). Keep that legacy form even if tests
   // force win32 here; Windows + remote is not a supported deployment target.
   if (options.remote) {
-    return {
+    return withHookOptions({
       type: "command",
-      command: `CLAWD_REMOTE=1 ${quotedCommand}`,
-    };
+      command: `CLAWD_REMOTE=1 ${shellQuotedCommand}`,
+    });
   }
 
   if (platform === "win32") {
-    return {
+    return withHookOptions({
       type: "command",
       shell: "powershell",
-      command: `& ${quotedCommand}`,
-    };
+      command: `& ${shellQuotedCommand}`,
+    });
   }
 
-  return {
+  // WSL: plain (unquoted) POSIX format — no shell field. Claude Code on
+  // WSL/Linux splits on spaces or uses sh -c; both work without quotes.
+  // Quoting without a shell field was the root cause of silent WSL hook
+  // failures (quotes treated as part of executable name).
+  if (isWsl) {
+    return withHookOptions({
+      type: "command",
+      command: plainCommand,
+    });
+  }
+
+  // Native macOS/Linux: keep shell-quoted form. Paths in packaged apps
+  // may contain spaces, and the hook runner on these platforms handles
+  // quoted commands via the default sh -c.
+  return withHookOptions({
     type: "command",
-    command: quotedCommand,
-  };
+    command: shellQuotedCommand,
+  });
 }
 
 function forEachCommandHook(entries, visitor) {
@@ -483,21 +555,31 @@ function forEachCommandHook(entries, visitor) {
 function syncCommandHook(entries, marker, expectedHook) {
   let found = false;
   let changed = false;
-  const expectedShell = typeof expectedHook.shell === "string" ? expectedHook.shell : undefined;
+  const syncField = (hook, field) => {
+    const hasExpected = Object.prototype.hasOwnProperty.call(expectedHook, field);
+    const hasCurrent = Object.prototype.hasOwnProperty.call(hook, field);
+    if (!hasExpected) {
+      if (!hasCurrent) return;
+      delete hook[field];
+      changed = true;
+      return;
+    }
+    if (hook[field] === expectedHook[field]) return;
+    hook[field] = expectedHook[field];
+    changed = true;
+  };
 
   forEachCommandHook(entries, (hook) => {
     if (!hook.command.includes(marker)) return;
     found = true;
+    syncField(hook, "type");
     if (hook.command !== expectedHook.command) {
       hook.command = expectedHook.command;
       changed = true;
     }
-
-    const currentShell = typeof hook.shell === "string" ? hook.shell : undefined;
-    if (currentShell === expectedShell) return;
-    if (expectedShell === undefined) delete hook.shell;
-    else hook.shell = expectedShell;
-    changed = true;
+    syncField(hook, "shell");
+    syncField(hook, "async");
+    syncField(hook, "timeout");
   });
   return { found, changed };
 }
@@ -729,16 +811,45 @@ function reconcileVersionedHooks(settings, supportedEvents, versionInfo) {
  * @param {{ version: string|null, source: string|null, status: "known"|"unknown" }} [options.claudeVersionInfo]
  * @returns {{ added: number, skipped: number, updated: number, removed: number, version: string|null, versionStatus: "known"|"unknown", versionSource: string|null }}
  */
+// WSL detection for the hook command format. CLAWD_WSL_DISTRO is injected
+// by the Windows-side one-click deploy; WSL_DISTRO_NAME is set by WSL init
+// itself, so a manual `node install.js` inside WSL also gets the plain
+// command format (the quoted form silently fails there — see
+// buildCommandHookSpec). Gated on linux so a stale variable in some other
+// environment cannot flip the format.
+function resolveInstallWslDistro(options = {}) {
+  if (options.wslDistro) return options.wslDistro;
+  if (process.env.CLAWD_WSL_DISTRO) return process.env.CLAWD_WSL_DISTRO;
+  if (process.platform === "linux" && process.env.WSL_DISTRO_NAME) {
+    return process.env.WSL_DISTRO_NAME;
+  }
+  return null;
+}
+
+function resolveWritePath(settingsPath) {
+  try { return fs.realpathSync(settingsPath); } catch (err) {
+    // ENOENT: new file, no symlink yet — use the unresolved path.
+    // Other errors (ELOOP, EACCES, EIO) — surface them rather than silently
+    // replacing a symlink with a regular file.
+    if (err && err.code === "ENOENT") return settingsPath;
+    throw err;
+  }
+}
+
 function registerHooks(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
   const hookPort = getHookServerPort(options.port);
-  const hookScript = asarUnpackedPath(path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/"));
+  const hookScript = getClaudeHookScriptPath();
   const platform = options.platform || process.platform;
+  const wslDistro = resolveInstallWslDistro(options);
 
   // Read existing settings
   let settings = {};
+  let preExisting = false;
   try {
     settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    preExisting = true;
   } catch (err) {
     if (err.code !== "ENOENT") {
       throw new Error(`Failed to read settings.json: ${err.message}`);
@@ -809,6 +920,9 @@ function registerHooks(options = {}) {
     const desiredHook = buildCommandHookSpec(nodeBin, hookScript, event, {
       platform,
       remote: options.remote,
+      wslDistro,
+      async: true,
+      timeout: options.remote ? REMOTE_STATE_HOOK_TIMEOUT_SECONDS : STATE_HOOK_TIMEOUT_SECONDS,
     });
     const commandSync = syncCommandHook(settings.hooks[event], MARKER, desiredHook);
     if (commandSync.found) {
@@ -831,17 +945,23 @@ function registerHooks(options = {}) {
 
   // Register auto-start hook for SessionStart (launches app if not running)
   if (options.autoStart) {
-    const autoStartScript = asarUnpackedPath(path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/"));
+    const autoStartScript = getClaudeAutoStartScriptPath();
 
     if (!Array.isArray(settings.hooks.SessionStart)) {
       settings.hooks.SessionStart = [];
       changed = true;
     }
 
-    const autoStartHook = buildCommandHookSpec(nodeBin, autoStartScript, "", { platform });
+    const autoStartHook = buildCommandHookSpec(nodeBin, autoStartScript, "", {
+      platform,
+      wslDistro,
+      async: true,
+      timeout: AUTO_START_HOOK_TIMEOUT_SECONDS,
+    });
     const autoStartSync = syncCommandHook(settings.hooks.SessionStart, AUTO_START_MARKER, autoStartHook);
     if (!autoStartSync.found) {
-      // Insert at index 0 — must run BEFORE clawd-hook.js so the app is starting
+      // Keep auto-start visible before the state hook in settings. Claude Code
+      // runs matching hooks in parallel, so correctness must not depend on order.
       settings.hooks.SessionStart.unshift({
         matcher: "",
         hooks: [autoStartHook],
@@ -910,14 +1030,30 @@ function registerHooks(options = {}) {
   }
 
   // Only write if something changed (avoid unnecessary disk I/O)
+  let backupPath = null;
   if (added > 0 || changed) {
-    writeJsonAtomic(settingsPath, settings);
+    // Snapshot the user's prior settings before mutating so the install is
+    // recoverable. Atomic write prevents a half-written file, not an undo —
+    // and we inject hooks into a shared global config the user did not author.
+    // Only back up a file that already existed; opt out with `backup: false`.
+    if (preExisting && options.backup !== false) {
+      backupPath = writeJsonAtomicWithBackup(writePath, settings, {
+        backup: true,
+        backupPath: options.backupPath,
+        backupKeep: options.backupKeep,
+      });
+      if (backupPath && !options.silent) {
+        console.log(`  Backup: saved previous settings to ${backupPath}`);
+      }
+    } else {
+      writeJsonAtomic(writePath, settings);
+    }
   }
 
   if (!options.silent) {
     const versionLabel = versionInfo.status === "known" ? versionInfo.version : "unknown";
     const versionSource = versionInfo.source || "unavailable";
-    console.log(`Clawd hooks installed to ${settingsPath}`);
+    console.log(`Clawd hooks installed to ${writePath}`);
     console.log(`  Claude Code version: ${versionLabel}`);
     console.log(`  Detection source: ${versionSource}`);
     if (versionInfo.status === "unknown") {
@@ -947,18 +1083,55 @@ function registerHooks(options = {}) {
     version: versionInfo.version,
     versionStatus: versionInfo.status,
     versionSource: versionInfo.source,
+    backupPath,
   };
+}
+
+// #317: an explicit options.nodeBin is the caller's authoritative choice
+// (Remote/WSL/test injection) and must never be re-validated against this
+// machine's filesystem. A Node path already extracted from the user's existing
+// config only needs one lightweight existence check — not a full resolver
+// probe — to avoid reintroducing the shell/version spawn #317 removed.
+// Resolution only escalates to the async resolver (which may spawn a shell)
+// when there is no existing path, or the existing path fails that check.
+async function resolveConfiguredNodeBinAsync(options, settings) {
+  if (options.nodeBin !== undefined) return options.nodeBin;
+
+  const existing = extractExistingNodeBin(settings, MARKER, { nested: true });
+  if (existing) {
+    const access = options.access || fs.promises.access.bind(fs.promises);
+    // Match the doctor validator and resolver: POSIX requires the execute
+    // bit (X_OK) — a Node path that merely exists but lost its executable
+    // permission would otherwise be preserved here, then judged broken by
+    // the health inspector on the very next check, forcing pointless repair
+    // cycles. Windows has no equivalent executable-bit semantics, so F_OK
+    // (existence) matches resolveWindowsNodeBinSync/Async's own checks.
+    const platform = options.platform || process.platform;
+    const mode = platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK;
+    try {
+      await access(existing, mode);
+      return existing;
+    } catch {
+      // existing path is gone/inaccessible — fall through to the resolver
+    }
+  }
+
+  return (await resolveNodeBinAsync(options)) || "node";
 }
 
 async function registerHooksAsync(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
   const hookPort = getHookServerPort(options.port);
-  const hookScript = asarUnpackedPath(path.resolve(__dirname, "clawd-hook.js").replace(/\\/g, "/"));
+  const hookScript = getClaudeHookScriptPath();
   const platform = options.platform || process.platform;
+  const wslDistro = resolveInstallWslDistro(options);
 
   let settings = {};
+  let preExisting = false;
   try {
     settings = JSON.parse(await fs.promises.readFile(settingsPath, "utf-8"));
+    preExisting = true;
   } catch (err) {
     if (err.code !== "ENOENT") {
       throw new Error(`Failed to read settings.json: ${err.message}`);
@@ -967,12 +1140,7 @@ async function registerHooksAsync(options = {}) {
 
   if (!settings.hooks) settings.hooks = {};
 
-  const configuredNodeBin = options.nodeBin !== undefined
-    ? options.nodeBin
-    : extractExistingNodeBin(settings, MARKER, { nested: true });
-  const nodeBin = configuredNodeBin
-    || await resolveNodeBinAsync(options)
-    || "node";
+  const nodeBin = await resolveConfiguredNodeBinAsync(options, settings);
 
   let added = 0;
   let skipped = 0;
@@ -1019,6 +1187,9 @@ async function registerHooksAsync(options = {}) {
     const desiredHook = buildCommandHookSpec(nodeBin, hookScript, event, {
       platform,
       remote: options.remote,
+      wslDistro,
+      async: true,
+      timeout: options.remote ? REMOTE_STATE_HOOK_TIMEOUT_SECONDS : STATE_HOOK_TIMEOUT_SECONDS,
     });
     const commandSync = syncCommandHook(settings.hooks[event], MARKER, desiredHook);
     if (commandSync.found) {
@@ -1039,14 +1210,19 @@ async function registerHooksAsync(options = {}) {
   }
 
   if (options.autoStart) {
-    const autoStartScript = asarUnpackedPath(path.resolve(__dirname, "auto-start.js").replace(/\\/g, "/"));
+    const autoStartScript = getClaudeAutoStartScriptPath();
 
     if (!Array.isArray(settings.hooks.SessionStart)) {
       settings.hooks.SessionStart = [];
       changed = true;
     }
 
-    const autoStartHook = buildCommandHookSpec(nodeBin, autoStartScript, "", { platform });
+    const autoStartHook = buildCommandHookSpec(nodeBin, autoStartScript, "", {
+      platform,
+      wslDistro,
+      async: true,
+      timeout: AUTO_START_HOOK_TIMEOUT_SECONDS,
+    });
     const autoStartSync = syncCommandHook(settings.hooks.SessionStart, AUTO_START_MARKER, autoStartHook);
     if (!autoStartSync.found) {
       settings.hooks.SessionStart.unshift({
@@ -1111,14 +1287,28 @@ async function registerHooksAsync(options = {}) {
     added++;
   }
 
+  let backupPath = null;
   if (added > 0 || changed) {
-    await writeJsonAtomicAsync(settingsPath, settings);
+    // See registerHooks(): back up the prior config before injecting hooks so
+    // the change is recoverable. Only back up a pre-existing file; `backup: false` opts out.
+    if (preExisting && options.backup !== false) {
+      backupPath = await writeJsonAtomicWithBackupAsync(writePath, settings, {
+        backup: true,
+        backupPath: options.backupPath,
+        backupKeep: options.backupKeep,
+      });
+      if (backupPath && !options.silent) {
+        console.log(`  Backup: saved previous settings to ${backupPath}`);
+      }
+    } else {
+      await writeJsonAtomicAsync(writePath, settings);
+    }
   }
 
   if (!options.silent) {
     const versionLabel = versionInfo.status === "known" ? versionInfo.version : "unknown";
     const versionSource = versionInfo.source || "unavailable";
-    console.log(`Clawd hooks installed to ${settingsPath}`);
+    console.log(`Clawd hooks installed to ${writePath}`);
     console.log(`  Claude Code version: ${versionLabel}`);
     console.log(`  Detection source: ${versionSource}`);
     if (versionInfo.status === "unknown") {
@@ -1148,14 +1338,16 @@ async function registerHooksAsync(options = {}) {
     version: versionInfo.version,
     versionStatus: versionInfo.status,
     versionSource: versionInfo.source,
+    backupPath,
   };
 }
 
 function unregisterHooks(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
   let settings = {};
   try {
-    settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+    settings = readJsonFile(settingsPath);
   } catch (err) {
     if (err.code === "ENOENT") return { removed: 0, changed: false };
     throw new Error(`Failed to read settings.json: ${err.message}`);
@@ -1189,18 +1381,22 @@ function unregisterHooks(options = {}) {
     else delete settings.hooks[event];
   }
 
+  let backupPath = null;
   if (changed) {
-    writeJsonAtomic(settingsPath, settings);
+    backupPath = writeJsonAtomicWithBackup(writePath, settings, options);
   }
 
-  return { removed, changed };
+  const result = { removed, changed };
+  if (options.backup === true) result.backupPath = backupPath;
+  return result;
 }
 
 async function unregisterHooksAsync(options = {}) {
   const settingsPath = options.settingsPath || path.join(os.homedir(), ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
   let settings = {};
   try {
-    settings = JSON.parse(await fs.promises.readFile(settingsPath, "utf-8"));
+    settings = await readJsonFileAsync(settingsPath);
   } catch (err) {
     if (err.code === "ENOENT") return { removed: 0, changed: false };
     throw new Error(`Failed to read settings.json: ${err.message}`);
@@ -1234,11 +1430,14 @@ async function unregisterHooksAsync(options = {}) {
     else delete settings.hooks[event];
   }
 
+  let backupPath = null;
   if (changed) {
-    await writeJsonAtomicAsync(settingsPath, settings);
+    backupPath = await writeJsonAtomicWithBackupAsync(writePath, settings, options);
   }
 
-  return { removed, changed };
+  const result = { removed, changed };
+  if (options.backup === true) result.backupPath = backupPath;
+  return result;
 }
 
 /**
@@ -1248,6 +1447,7 @@ async function unregisterHooksAsync(options = {}) {
  */
 function unregisterAutoStart() {
   const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
   let settings;
   try {
     settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
@@ -1275,7 +1475,7 @@ function unregisterAutoStart() {
   });
 
   if (settings.hooks.SessionStart.length < before) {
-    writeJsonAtomic(settingsPath, settings);
+    writeJsonAtomic(writePath, settings);
     return true;
   }
   return false;
@@ -1304,16 +1504,110 @@ function isAutoStartRegistered() {
   }
 }
 
+const STATUSLINE_MARKER = "claude-statusline.js";
+
+function hasClaudeSettingsDir(homeDir) {
+  return fs.existsSync(path.join(homeDir, ".claude"));
+}
+
+// Claude Code's statusLine setting is a single slot, not an event-keyed map
+// like hooks - only one script can render the visible status line at a
+// time. We only ever take that slot when it is empty or already ours, and
+// unregister only clears it when the command still carries our marker. A
+// user's own (or a third-party) statusline script is never touched. Mirrors
+// hooks/antigravity-install.js registerAntigravityStatusline.
+function registerClaudeStatusline(options = {}) {
+  const homeDir = options.homeDir || os.homedir();
+  const settingsPath = options.settingsPath || path.join(homeDir, ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
+
+  if (!options.settingsPath && !hasClaudeSettingsDir(homeDir)) {
+    if (!options.silent) console.log("Clawd: Claude Code settings not found - skipping statusline registration");
+    return { installed: false, changed: false, skippedExisting: false, settingsPath };
+  }
+
+  let settings = {};
+  try {
+    settings = readJsonFile(settingsPath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw new Error(`Failed to read settings.json: ${err.message}`);
+  }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) settings = {};
+
+  const existing = settings.statusLine && typeof settings.statusLine === "object" ? settings.statusLine : null;
+  const existingIsOurs = !!(existing && typeof existing.command === "string" && existing.command.includes(STATUSLINE_MARKER));
+
+  if (existing && !existingIsOurs) {
+    if (!options.silent) console.log(`Clawd: existing Claude Code statusline detected at ${settingsPath} - leaving it in place`);
+    return { installed: true, changed: false, skippedExisting: true, settingsPath };
+  }
+
+  const scriptPath = asarUnpackedPath(path.resolve(__dirname, "claude-statusline.js").replace(/\\/g, "/"));
+  const nodeBin = (options.nodeBin !== undefined ? options.nodeBin : resolveNodeBin()) || "node";
+  const platform = options.platform || process.platform;
+  // No `& "..."` here: statusLine has no shell field, and on Windows Claude
+  // Code runs this through Git Bash when Git is installed - the PowerShell
+  // call-operator form is a bash syntax error and the statusline dies
+  // silently. See buildPortableStatuslineCommand.
+  const command = buildPortableStatuslineCommand(nodeBin, scriptPath, { platform });
+  const desired = { type: "command", command, padding: 0 };
+
+  const changed = !existing || JSON.stringify(existing) !== JSON.stringify(desired);
+  if (changed) {
+    settings.statusLine = desired;
+    writeJsonAtomic(writePath, settings);
+  }
+
+  if (!options.silent) {
+    console.log(`Clawd Claude Code statusline -> ${settingsPath}${changed ? " (updated)" : " (already up to date)"}`);
+  }
+
+  return { installed: true, changed, skippedExisting: false, settingsPath };
+}
+
+function unregisterClaudeStatusline(options = {}) {
+  const homeDir = options.homeDir || os.homedir();
+  const settingsPath = options.settingsPath || path.join(homeDir, ".claude", "settings.json");
+  const writePath = resolveWritePath(settingsPath);
+  let settings = {};
+  try {
+    settings = readJsonFile(settingsPath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw new Error(`Failed to read settings.json: ${err.message}`);
+  }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) settings = {};
+
+  const existing = settings.statusLine && typeof settings.statusLine === "object" ? settings.statusLine : null;
+  const existingIsOurs = !!(existing && typeof existing.command === "string" && existing.command.includes(STATUSLINE_MARKER));
+
+  if (!existingIsOurs) {
+    return { installed: !!existing, removed: 0, changed: false, settingsPath };
+  }
+
+  delete settings.statusLine;
+  const backupPath = writeJsonAtomicWithBackup(writePath, settings, options);
+  if (!options.silent) console.log(`Clawd Claude Code statusline removed -> ${settingsPath}`);
+  const result = { installed: true, removed: 1, changed: true, settingsPath };
+  if (options.backup === true) result.backupPath = backupPath;
+  return result;
+}
+
 // Export for use by main.js
 module.exports = {
   DEFAULT_PARENT_DIR,
   DEFAULT_CONFIG_PATH,
+  STATUSLINE_MARKER,
+  CLAUDE_CORE_HOOK_EVENTS: Object.freeze([...CORE_HOOKS]),
+  getClaudeHookScriptPath,
+  getClaudeAutoStartScriptPath,
   registerHooks,
   registerHooksAsync,
   unregisterHooks,
   unregisterHooksAsync,
   unregisterAutoStart,
   isAutoStartRegistered,
+  registerClaudeStatusline,
+  unregisterClaudeStatusline,
   __test: {
     parseClaudeVersion,
     getWindowsClaudePathSuffixes,
@@ -1343,6 +1637,11 @@ if (require.main === module) {
   try {
     const remote = process.argv.includes("--remote");
     registerHooks({ remote });
+    // Keep the CLI symmetric with hooks/uninstall.js, which unregisters the
+    // statusline: without this, a manual uninstall + reinstall cycle loses
+    // the statusline until the next app startup sync. Remote installs skip
+    // it - remote/SSH statusline support is an intentional non-goal.
+    if (!remote) registerClaudeStatusline();
   } catch (err) {
     console.error(err.message);
     process.exit(1);

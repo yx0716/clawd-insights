@@ -5,10 +5,49 @@ const assert = require("node:assert");
 
 const {
   deriveSessionBadge,
+  deriveSourceInfo,
+  isSessionInProgress,
   buildSessionSnapshot,
   getActiveSessionAliasKeys,
   sessionSnapshotSignature,
+  sessionDisplayTitle,
 } = require("../src/state-session-snapshot");
+
+describe("deriveSourceInfo", () => {
+  it("derives WSL source from the wsl: host prefix", () => {
+    assert.deepStrictEqual(deriveSourceInfo("wsl:Ubuntu"), {
+      sourceType: "wsl",
+      sourceLabel: "Ubuntu",
+      displayLabel: "WSL: Ubuntu",
+    });
+  });
+
+  it("falls back to a stable label for a bare wsl: prefix", () => {
+    assert.deepStrictEqual(deriveSourceInfo("wsl:"), {
+      sourceType: "wsl",
+      sourceLabel: "unknown",
+      displayLabel: "WSL: unknown",
+    });
+  });
+
+  it("treats any other non-local host as ssh", () => {
+    assert.deepStrictEqual(deriveSourceInfo("devbox"), {
+      sourceType: "ssh",
+      sourceLabel: "devbox",
+      displayLabel: "devbox",
+    });
+  });
+
+  it("treats empty, null, and 'local' hosts as local", () => {
+    for (const host of ["", null, undefined, "local"]) {
+      assert.deepStrictEqual(deriveSourceInfo(host), {
+        sourceType: "local",
+        sourceLabel: "",
+        displayLabel: "",
+      });
+    }
+  });
+});
 
 const STATE_PRIORITY = {
   error: 8,
@@ -34,6 +73,53 @@ function session(state, overrides = {}) {
   };
 }
 
+describe("isSessionInProgress state mapping", () => {
+  it("treats persisted running states as in-progress and idle/sleeping/headless as not", () => {
+    assert.strictEqual(isSessionInProgress(session("working")), true);
+    assert.strictEqual(isSessionInProgress(session("thinking")), true);
+    assert.strictEqual(isSessionInProgress(session("juggling")), true);
+    assert.strictEqual(isSessionInProgress(session("idle")), false);
+    assert.strictEqual(isSessionInProgress(session("sleeping")), false);
+  });
+
+  it("never counts headless sessions, even when active", () => {
+    assert.strictEqual(isSessionInProgress(session("working", { headless: true })), false);
+    assert.strictEqual(isSessionInProgress(session("thinking", { headless: true })), false);
+  });
+
+  it("returns false for nullish sessions", () => {
+    assert.strictEqual(isSessionInProgress(null), false);
+    assert.strictEqual(isSessionInProgress(undefined), false);
+  });
+});
+
+describe("sessionDisplayTitle cwd fallback", () => {
+  it("falls back to path.basename(cwd) for normal project paths", () => {
+    assert.strictEqual(
+      sessionDisplayTitle("qoderwork:abc123", session("working", { cwd: "/home/me/projects/myapp" })),
+      "myapp"
+    );
+  });
+
+  it("skips QoderWork internal workspace cwds so the HUD never shows a raw workspace id", () => {
+    assert.strictEqual(
+      sessionDisplayTitle("qoderwork:abc123", session("working", { agentId: "qoderwork", cwd: "/Users/me/.qoderwork/workspace/mqgw60jiigjsjcid" })),
+      "qoderw.."
+    );
+    assert.strictEqual(
+      sessionDisplayTitle("qoderwork:abc123", session("working", { agentId: "qoderwork", cwd: "C:\\Users\\me\\.qoderwork\\workspace\\abc123" })),
+      "qoderw.."
+    );
+  });
+
+  it("keeps the cwd basename for non-QoderWork agents even inside a QoderWork workspace dir", () => {
+    assert.strictEqual(
+      sessionDisplayTitle("claude:xyz789", session("working", { agentId: "claude-code", cwd: "/Users/me/.qoderwork/workspace/mqgw60jiigjsjcid" })),
+      "mqgw60jiigjsjcid"
+    );
+  });
+});
+
 describe("state-session-snapshot badges", () => {
   it("derives running, done, interrupted, and idle badges", () => {
     assert.strictEqual(deriveSessionBadge(session("working")), "running");
@@ -51,6 +137,12 @@ describe("state-session-snapshot badges", () => {
     assert.strictEqual(deriveSessionBadge(session("idle", {
       recentEvents: [{ event: "PostToolUseFailure", state: "idle", at: 1 }],
     })), "interrupted");
+    assert.strictEqual(deriveSessionBadge(session("idle", {
+      recentEvents: [{ event: "StopFailure", state: "idle", at: 1 }],
+    })), "interrupted");
+    assert.strictEqual(deriveSessionBadge(session("idle", {
+      recentEvents: [{ event: "ApiError", state: "idle", at: 1 }],
+    })), "interrupted");
     assert.strictEqual(deriveSessionBadge(null), "idle");
   });
 });
@@ -62,6 +154,7 @@ describe("state-session-snapshot builder", () => {
         updatedAt: 1000,
         cwd: "/tmp/old-project",
         sessionTitle: "Fix login",
+        editor: "code",
         platform: "webui",
         model: "gpt-5.4",
         provider: "openai",
@@ -90,8 +183,8 @@ describe("state-session-snapshot builder", () => {
     assert.deepStrictEqual(snapshot.orderedIds, ["latest-remote", "error-local", "old-working"]);
     assert.deepStrictEqual(snapshot.menuOrderedIds, ["error-local", "old-working", "latest-remote"]);
     assert.deepStrictEqual(snapshot.groups, [
-      { host: "", ids: ["error-local", "old-working"] },
-      { host: "remote-box", ids: ["latest-remote"] },
+      { host: "", ids: ["error-local", "old-working"], displayHost: "" },
+      { host: "remote-box", ids: ["latest-remote"], displayHost: "remote-box" },
     ]);
     assert.strictEqual(snapshot.hudTotalNonIdle, 2);
     assert.strictEqual(snapshot.hudLastSessionId, "error-local");
@@ -105,6 +198,7 @@ describe("state-session-snapshot builder", () => {
     assert.strictEqual(oldWorking.platform, "webui");
     assert.strictEqual(oldWorking.model, "gpt-5.4");
     assert.strictEqual(oldWorking.provider, "openai");
+    assert.strictEqual(oldWorking.editor, "code");
     assert.strictEqual(oldWorking.sessionTitle, "Fix login");
     assert.strictEqual(oldWorking.displayTitle, "Fix login");
     assert.deepStrictEqual(oldWorking.lastEvent, {
@@ -186,6 +280,53 @@ describe("state-session-snapshot builder", () => {
     assert.strictEqual(byId.get("codex:019e115a-4df2-7ed0-b90e-8e6345aca777").codexSource, "vscode");
   });
 
+  it("downgrades Codex Desktop focus targets on Windows snapshots", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["codex:019e115a-4df2-7ed0-b90e-8e6345aca777", session("working", {
+        agentId: "codex",
+        codexOriginator: "Codex Desktop",
+        sourcePid: 123,
+      })],
+      ["codex:019e115b-4df2-7ed0-b90e-8e6345aca777", session("working", {
+        agentId: "codex",
+        codexOriginator: "Codex Desktop",
+      })],
+    ]), { focusHostPlatform: "win32" });
+
+    const byId = new Map(snapshot.sessions.map((entry) => [entry.id, entry]));
+    assert.strictEqual(byId.get("codex:019e115a-4df2-7ed0-b90e-8e6345aca777").canFocus, true);
+    assert.deepStrictEqual(byId.get("codex:019e115a-4df2-7ed0-b90e-8e6345aca777").focusTarget, {
+      type: "terminal",
+      url: null,
+    });
+    assert.strictEqual(byId.get("codex:019e115b-4df2-7ed0-b90e-8e6345aca777").canFocus, false);
+    assert.strictEqual(byId.get("codex:019e115b-4df2-7ed0-b90e-8e6345aca777").focusTarget, null);
+
+    const nonWindowsSnapshot = buildSessionSnapshot(new Map([
+      ["codex:019e115b-4df2-7ed0-b90e-8e6345aca777", session("working", {
+        agentId: "codex",
+        codexOriginator: "Codex Desktop",
+      })],
+    ]), { focusHostPlatform: "darwin" });
+    assert.deepStrictEqual(nonWindowsSnapshot.sessions[0].focusTarget, {
+      type: "codex-thread",
+      url: "codex://threads/019e115b-4df2-7ed0-b90e-8e6345aca777",
+    });
+  });
+
+  it("exposes assistant last output for completion companion consumers", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["done", session("idle", {
+        assistantLastOutput: "Final assistant text",
+        assistantLastOutputTruncated: true,
+        recentEvents: [{ event: "Stop", state: "attention", at: 1 }],
+      })],
+    ]));
+    const entry = snapshot.sessions.find((s) => s.id === "done");
+    assert.strictEqual(entry.assistantLastOutput, "Final assistant text");
+    assert.strictEqual(entry.assistantLastOutputTruncated, true);
+  });
+
   it("does not expose focus targets for sessions hidden from the focusable UI surface", () => {
     const hiddenEndedSession = session("idle", {
       sourcePid: 123,
@@ -262,6 +403,84 @@ describe("state-session-snapshot builder", () => {
     );
   });
 
+  it("includes contextUsage in snapshot entries", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["s1", session("working", {
+        contextUsage: {
+          used: 1000,
+          limit: 200000,
+          percent: 1,
+          source: "claude",
+        },
+      })],
+    ]), { statePriority: STATE_PRIORITY });
+
+    assert.deepStrictEqual(snapshot.sessions[0].contextUsage, {
+      used: 1000,
+      limit: 200000,
+      percent: 1,
+      source: "claude",
+    });
+  });
+
+  it("includes antigravityQuota in snapshot entries", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["antigravity:s1", session("idle", {
+        agentId: "antigravity-cli",
+        antigravityQuota: {
+          geminiFiveHour: { usedPercent: 100 },
+          geminiWeekly: { usedPercent: 98, resetAt: 1738831180000 },
+        },
+      })],
+    ]), { statePriority: STATE_PRIORITY });
+
+    assert.deepStrictEqual(snapshot.sessions[0].antigravityQuota, {
+      geminiFiveHour: { usedPercent: 100 },
+      geminiWeekly: { usedPercent: 98, resetAt: 1738831180000 },
+    });
+  });
+
+  it("snapshot signature changes when antigravityQuota changes", () => {
+    const withoutQuota = buildSessionSnapshot(new Map([
+      ["antigravity:s1", session("idle", { agentId: "antigravity-cli" })],
+    ]), { statePriority: STATE_PRIORITY, getAgentIconUrl: () => null });
+    const withQuota = buildSessionSnapshot(new Map([
+      ["antigravity:s1", session("idle", {
+        agentId: "antigravity-cli",
+        antigravityQuota: { geminiWeekly: { usedPercent: 98 } },
+      })],
+    ]), { statePriority: STATE_PRIORITY, getAgentIconUrl: () => null });
+
+    assert.notStrictEqual(sessionSnapshotSignature(withoutQuota), sessionSnapshotSignature(withQuota));
+  });
+
+  it("includes claudeQuota in snapshot entries", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["s1", session("idle", {
+        claudeQuota: {
+          claudeFiveHour: { usedPercent: 24, resetAt: 1738425600000 },
+          claudeWeekly: { usedPercent: 41 },
+        },
+      })],
+    ]), { statePriority: STATE_PRIORITY });
+
+    assert.deepStrictEqual(snapshot.sessions[0].claudeQuota, {
+      claudeFiveHour: { usedPercent: 24, resetAt: 1738425600000 },
+      claudeWeekly: { usedPercent: 41 },
+    });
+  });
+
+  it("snapshot signature changes when claudeQuota changes", () => {
+    const withoutQuota = buildSessionSnapshot(new Map([
+      ["s1", session("idle")],
+    ]), { statePriority: STATE_PRIORITY, getAgentIconUrl: () => null });
+    const withQuota = buildSessionSnapshot(new Map([
+      ["s1", session("idle", { claudeQuota: { claudeWeekly: { usedPercent: 41 } } })],
+    ]), { statePriority: STATE_PRIORITY, getAgentIconUrl: () => null });
+
+    assert.notStrictEqual(sessionSnapshotSignature(withoutQuota), sessionSnapshotSignature(withQuota));
+  });
+
   it("marks detached ended idle sessions hidden from HUD only when cleanup is enabled and pid is dead", () => {
     const sessions = new Map([
       ["done-local", session("idle", {
@@ -288,6 +507,34 @@ describe("state-session-snapshot builder", () => {
     assert.strictEqual(snapshot.sessions.find((entry) => entry.id === "idle-local").hiddenFromHud, false);
     assert.strictEqual(snapshot.hudTotalNonIdle, 1);
     assert.strictEqual(snapshot.hudLastSessionId, "idle-local");
+  });
+
+  it("hides older local Codex sessions that share one agent process from HUD", () => {
+    const snapshot = buildSessionSnapshot(new Map([
+      ["codex:old", session("working", {
+        agentId: "codex",
+        agentPid: 4242,
+        updatedAt: 1000,
+        cwd: "/repo/old",
+      })],
+      ["codex:new", session("idle", {
+        agentId: "codex",
+        agentPid: 4242,
+        updatedAt: 2000,
+        cwd: "/repo/new",
+        recentEvents: [{ event: "Stop", state: "attention", at: 1900 }],
+      })],
+    ]), {
+      statePriority: STATE_PRIORITY,
+      getAgentIconUrl: () => null,
+    });
+
+    assert.strictEqual(snapshot.sessions.find((entry) => entry.id === "codex:old").hiddenFromHud, true);
+    assert.strictEqual(snapshot.sessions.find((entry) => entry.id === "codex:new").hiddenFromHud, false);
+    assert.strictEqual(snapshot.hudTotalNonIdle, 1);
+    assert.strictEqual(snapshot.hudLastSessionId, "codex:new");
+    assert.deepStrictEqual(snapshot.orderedIds, ["codex:new", "codex:old"]);
+    assert.deepStrictEqual(snapshot.groups, [{ host: "", ids: ["codex:new", "codex:old"], displayHost: "" }]);
   });
 
   it("snapshot signatures include visible fields but ignore icon URL churn", () => {
@@ -324,6 +571,30 @@ describe("state-session-snapshot builder", () => {
 
     assert.strictEqual(sessionSnapshotSignature(base), sessionSnapshotSignature(sameExceptIcon));
     assert.notStrictEqual(sessionSnapshotSignature(base), sessionSnapshotSignature(differentTitle));
+  });
+
+  // #590 B2 — metadataUpdatedAt is a display-arbitration freshness stamp: it
+  // must reach renderers via the snapshot but stay out of the signature (like
+  // updatedAt), so stamping it can never re-trigger a broadcast by itself.
+  it("entry carries metadataUpdatedAt but the signature ignores it", () => {
+    const opts = { statePriority: STATE_PRIORITY, getAgentIconUrl: () => "icon:a" };
+    const stamped = buildSessionSnapshot(new Map([
+      ["s1", session("working", {
+        updatedAt: 1000,
+        metadataUpdatedAt: 5000,
+        recentEvents: [{ event: "PreToolUse", state: "working", at: 900 }],
+      })],
+    ]), opts);
+    const restamped = buildSessionSnapshot(new Map([
+      ["s1", session("working", {
+        updatedAt: 1000,
+        metadataUpdatedAt: 9000,
+        recentEvents: [{ event: "PreToolUse", state: "working", at: 900 }],
+      })],
+    ]), opts);
+
+    assert.strictEqual(stamped.sessions[0].metadataUpdatedAt, 5000);
+    assert.strictEqual(sessionSnapshotSignature(stamped), sessionSnapshotSignature(restamped));
   });
 
   // ── PR2: requiresCompletionAck exposure ──

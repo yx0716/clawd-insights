@@ -4,7 +4,7 @@ This file is the entry point for coding agents working in this repository. Keep 
 
 ## Project Overview
 
-Clawd 是一个 Electron 桌宠：通过 hook、日志轮询、plugin 和 extension 感知 AI coding agent 的工作状态，并播放像素风动画。当前支持 Claude Code、Codex CLI、Copilot CLI、Gemini CLI、Antigravity CLI (agy)、Cursor Agent、CodeBuddy、Kiro CLI、Kimi Code CLI (Kimi-CLI)、opencode、Pi、OpenClaw；内置 Clawd / Calico / Cloudling 三套主题，支持用户主题；平台覆盖 Windows、macOS、Linux，UI 支持 en / zh / ko / ja。
+Clawd 是一个 Electron 桌宠：通过 hook、日志轮询、plugin 和 extension 感知 AI coding agent 的工作状态，并播放像素风动画。当前支持 Claude Code、Codex CLI、Copilot CLI、Gemini CLI、Antigravity CLI (agy)、Cursor Agent、CodeBuddy、Kiro CLI、Kimi Code CLI (Kimi-CLI)、Qwen Code、CodeWhale、opencode、Pi、OpenClaw、Hermes Agent、Qoder、QoderWork、Reasonix；内置 Clawd / Calico / Cloudling 三套主题，支持用户主题；平台覆盖 Windows、macOS、Linux，UI 支持 en / zh / ko / ja。
 
 ### Analytics Dashboard（clawd-insights fork 专属）
 
@@ -39,10 +39,21 @@ npm run install:gemini-hooks
 npm run install:antigravity-hooks
 npm run install:kiro-hooks
 npm run install:kimi-hooks
+npm run install:qwen-hooks
+npm run install:codewhale-hooks
+npm run uninstall:codewhale-hooks
 npm run install:pi-extension
 npm run uninstall:pi-extension
 npm run install:openclaw-plugin
 npm run uninstall:openclaw-plugin
+npm run install:hermes-plugin
+npm run uninstall:hermes-plugin
+npm run install:qoder-hooks
+npm run uninstall:qoder-hooks
+npm run install:qoderwork-hooks
+npm run uninstall:qoderwork-hooks
+npm run install:reasonix-hooks
+npm run uninstall:reasonix-hooks
 npm run install:codex-hooks
 npm run uninstall:codex-hooks
 npm run install:codex-debug-hooks
@@ -57,8 +68,8 @@ bash test-macos.sh
 bash test-oneshot-gate.sh [state] [seconds]
 ```
 
-正常启动时，Clawd 只会为已启用的 agent 自动同步 Claude / Codex / Gemini / Antigravity / Cursor / CodeBuddy / Kiro / Kimi hooks、opencode / OpenClaw plugins 和 Pi extension。禁用 agent 会跳过启动同步并屏蔽事件/权限入口，但不会卸载用户已有 hooks / plugins / extensions；从 Settings 重新启用时会对该 agent 做一次 integration sync。手动安装命令主要用于调试、重装或远程部署。
-Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 agent；本地需手动配置 `~/.copilot/hooks/hooks.json`，远程 SSH 部署 (`scripts/remote-deploy.sh`) 会自动写入。详见 `docs/guides/copilot-setup.md`。
+新安装默认只把 Claude Code 和 Codex 标记为已安装并启用；其他 agent 默认未安装、未启用。正常启动时，Clawd 只会为 `integrationInstalled=true` 且 `enabled=true` 的 agent 自动同步 Claude / Codex / Copilot / Gemini / Antigravity / Cursor / CodeBuddy / Kiro / Kimi / Qwen / CodeWhale / Qoder / QoderWork / Reasonix hooks、opencode / OpenClaw / Hermes plugins 和 Pi extension。Settings Agent 页的 Install 会安装并启用该集成；Uninstall 会卸载 Clawd 管理的 hook/plugin/extension，并同时把该 agent 设为未安装、未启用。单独关闭 enabled 只会跳过启动同步并屏蔽事件/权限入口，不卸载用户已有 hooks / plugins / extensions；重新启用未安装 agent 只打开事件入口，不会写本机集成文件。手动安装命令主要用于调试、重装或远程部署。
+Copilot CLI 同步走 `<COPILOT_HOME 或 ~/.copilot>/hooks/hooks.json`，marker-based 增量合并只接管含 `copilot-hook.js` 标记的条目，用户其他 entry / 其他 `hooks/*.json` 文件原样保留；hooks.json 或 `settings.json` 顶层 `disableAllHooks: true` 时 doctor 报 warning（不挂 Fix 按钮）。详见 `docs/guides/copilot-setup.md`。
 
 ## Read These Docs
 
@@ -67,7 +78,7 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 - `docs/project/project-architecture.md`：更完整的模块边界和启动/运行时分层
 - `docs/project/theme-state-ui.md`：状态机、主题系统、settings、mini mode、素材规则、平台限制、待落地 UI 决策
 - `docs/project/release-process.md`：发版 checklist、release note 核对、tag 触发 GitHub 打包和资产确认
-- `docs/guides/copilot-setup.md`：Copilot CLI 手动 hook 配置
+- `docs/guides/copilot-setup.md`：Copilot CLI 自动同步说明、`COPILOT_HOME` 兼容性、手动配置备选模板
 - `docs/guides/state-mapping.md`：状态 → 动画权威表
 - `docs/guides/guide-theme-creation.md`：主题作者指南
 - `docs/guides/setup-guide.md`：安装、远程 SSH、各 agent 接入
@@ -79,9 +90,9 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 - 事件主路径：hook / log monitor → `src/server.js` → `src/state.js` → IPC → `src/renderer.js`
 - 桌宠采用双窗口模型：渲染窗口只负责显示；输入窗口负责 pointer 事件和拖拽
 - 多会话 UI 主路径：`src/state.js` 生成 session snapshot → Dashboard / Session HUD；HUD 贴近桌宠显示当前 live session，Dashboard 负责详情、别名和跳转终端
-- `src/server.js` 启动后会为已启用 agent 异步同步缺失 hooks / plugins；Codex official hooks 为 primary，JSONL 轮询保留为 fallback
-- `src/server.js` 只在 Claude Code 已启用且 `manageClaudeHooksAutomatically` 打开时 watch `~/.claude/settings.json`，并在 hook 被抹掉时自动重装
-- `src/agent-gate.js` 控制各 agent 的启用状态、权限气泡开关和 wait-for-input notification 子开关
+- `src/server.js` 启动后会为已安装且已启用的 agent 异步同步缺失 hooks / plugins；Codex official hooks 为 primary，JSONL 轮询保留为 fallback
+- `src/server.js` 只在 Claude Code 已安装、已启用且 `manageClaudeHooksAutomatically` 打开时 watch `~/.claude/settings.json`（盯目录非文件），并在 hook 被抹掉时自动重装；`src/claude-settings-watcher.js` 同时跑一个低频（默认 5 分钟）只读健康巡检，不依赖任何 settings.json fs 事件——脚本在其他目录被删除也能发现。巡检用 `src/claude-hook-health.js` 判定，可自动修复的问题经统一的 `src/claude-hook-operations.js` 队列串行 repair 并重新读盘验证；同一问题连续 3 次修复失败后进入 `manual-fix-required`，转为只读复查，交给 Doctor 提示手动处理。当前安装包的 hook 源脚本本身缺失时不会尝试改写配置，Doctor 会提示重装/重新解压
+- `src/agent-gate.js` 控制各 agent 的安装意图、启用状态、权限气泡开关和 wait-for-input notification 子开关
 - 设置系统主链路是 `src/prefs.js` → `src/settings-controller.js` → `src/settings-store.js`，写入 side effects 收敛在 `src/settings-actions.js`
 - 启动时还会尝试自动安装 VS Code / Cursor terminal-focus extension，并初始化 updater
 - 远程场景依赖 Settings Remote SSH runtime / deploy 路径、`scripts/remote-deploy.sh` CLI 备选和 SSH 反向端口转发
@@ -93,7 +104,7 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 | File | Responsibility |
 |------|------|
 | `src/main.js` | Electron 主进程胶水，窗口、IPC、生命周期、上下文组装 |
-| `src/server.js` | `/state`、`/permission`、端口发现、按 agent gate 的 hook/plugin 自动同步 |
+| `src/server.js` | `/state`、`/permission`、端口发现、按 agent gate 的 hook/plugin 按需自动同步 |
 | `src/state.js` | 状态机、多会话合并、优先级、自动回退、睡眠/DND |
 | `src/renderer.js` | 动画切换、SVG 预加载、眼球追踪渲染 |
 | `src/permission.js` | 权限气泡创建、堆叠、决策回包 |
@@ -128,7 +139,8 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 | `hooks/install.js` | Claude hook 注册 / 卸载 |
 | `hooks/auto-start.js` | Claude `SessionStart` 自动拉起 Clawd 的 hook |
 | `hooks/codex-hook.js` / `hooks/codex-install.js` | Codex official hooks 状态与权限审批、安装 / 卸载 |
-| `hooks/cursor-install.js` / `gemini-install.js` / `antigravity-install.js` / `kiro-install.js` / `kimi-install.js` / `codebuddy-install.js` / `opencode-install.js` / `pi-install.js` / `openclaw-install.js` | 各 agent 集成安装逻辑 |
+| `hooks/cursor-install.js` / `gemini-install.js` / `antigravity-install.js` / `kiro-install.js` / `kimi-install.js` / `qwen-code-install.js` / `codewhale-install.js` / `codebuddy-install.js` / `opencode-install.js` / `pi-install.js` / `openclaw-install.js` / `hermes-install.js` / `qoder-install.js` / `qoderwork-install.js` / `reasonix-install.js` | 各 agent 集成安装逻辑 |
+| `hooks/qoder-hook.js` | Qoder state-only 状态上报脚本（Phase 1，stdout 恒为 `{}`） |
 | `hooks/codex-remote-monitor.js` | 远程 Codex JSONL 轮询并通过 SSH 隧道回传 |
 | `extensions/vscode/extension.js` | VS Code / Cursor 终端 tab 聚焦辅助扩展 |
 
@@ -136,17 +148,19 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 
 - Claude Code / CodeBuddy 的阻塞式权限审批走 `POST /permission` HTTP hook；普通状态事件走 command hook
 - Codex 的阻塞式权限审批走 official `PermissionRequest` command hook：hook 脚本长连接 `POST /permission`，只允许 stdout 返回 sanitized `behavior/message`，`updatedInput` / `updatedPermissions` / `interrupt` 必须 omit
-- hook 脚本只允许依赖 Node 内置模块，以及同目录的 `server-config.js`、`shared-process.js`、`json-utils.js`、`codex-subagent-fields.js`
+- hook 脚本只允许依赖 Node 内置模块，以及同目录 `hooks/` 下、且登记在两套部署清单（`scripts/remote-deploy.sh` 的 `FILES` 与 `src/remote-ssh-deploy.js` 的 `HOOK_FILES`）的纯 Node helper（如 `server-config.js` / `shared-process.js` / `json-utils.js` / `codex-subagent-fields.js` / `context-usage.js` / `state-payload-size.js`）；两套清单由 manifest-consistency 测试强制同步，新增 helper 必须同时登记
 - hook 脚本需要稳定终端 PID 时，必须走 `getStablePid()` 进程树解析；不要用 `process.ppid` 做简化替代
 - opencode 权限不走 `permission.ask` hook，而是 event hook + reverse bridge
 - Pi 通过 `~/.pi/agent/extensions/clawd-on-desk` 的 global extension 推送状态；Clawd 对 Pi 是 **state-only**，不接管权限、不弹权限气泡，也不把 Pi 的默认 YOLO 流程改成手动确认
 - OpenClaw 通过 `~/.openclaw/openclaw.json` plugin 路径做 state-only 集成；Phase 1 不做 permission bubble / terminal focus，主要支持本地 `openclaw tui --local`
 - Antigravity CLI (agy) 通过 `~/.gemini/config/hooks.json` 做 **state-only** hook 集成（PreInvocation / PostToolUse / PostInvocation / Stop），**不注册 PreToolUse**。agy LLM 会主动调内置 `ask_permission` 工具，触发 agy 自己的 5 选项 native menu（含 "Persist to settings.json" 持久白名单），Clawd 不插手权限决策也不双层确认。`agents/antigravity-cli.js` `capabilities.permissionApproval` / `interactiveBubble` 均为 false。
+- Qwen Code 通过 `~/.qwen/settings.json` 做 hook-only 集成（SessionStart / SessionEnd / UserPromptSubmit / PreToolUse / PostToolUse / Stop / Notification / PermissionRequest），支持状态与阻塞式 `PermissionRequest` 权限气泡；`disableAllHooks: true` 时注册条目不会触发。
+- Qoder 通过 `~/.qoder/settings.json` 做 **state-only** hook 集成（Phase 1：SessionStart / UserPromptSubmit / PreToolUse / PostToolUse / PostToolUseFailure / Stop / Notification / PermissionRequest / PermissionDenied / SessionEnd）。Clawd 只把 `PermissionRequest` / `PermissionDenied` 当 notification 观察，**不替 Qoder 做权限决策**，hook stdout 恒为 `{}`，由 Qoder 原生权限流程接管；`agents/qoder.js` 的 `capabilities.permissionApproval` / `interactiveBubble` 均为 false。Windows 命令走 bash/cmd 通用的 portable 形态（`windowsWrapper:"portable"`，不带引号的正斜杠 node token + 双引号参数）：Qoder CLI 在 Windows 通过 Git Bash 执行 command hook，旧 PowerShell `-EncodedCommand` 形态会被 bash 吃掉反斜杠、exit 127 全灭（#597）；旧 encoded 条目在重装/升级时原地迁移。session id 命名空间是 `qoder:<raw>`；启动恢复只认 CLI 进程 `qodercli` / `qoder-cli`，不认 IDE 进程 `qoder.exe`。真实 Qoder CLI smoke 已完成（1.0.38，#597 遥测 127→0）；IDE（QoderWork）smoke 尚未完成。
 - HTTP 服务端口范围固定为 `127.0.0.1:23333-23337`；运行时端口写入 `~/.clawd/runtime.json`
 - Remote SSH 的远端 Node 探测要求 Node >= 14；`scripts/remote-deploy.sh` 与 `src/remote-ssh-node.js` 的 probe 顺序、候选路径、版本判断和输出字段必须保持行为对齐
 - 注册 Claude Code hook 时只能追加，不能覆盖用户已有 hook 数组
-- Copilot CLI 是唯一在本地启动时不自动同步的 agent；本地需手动配置 `~/.copilot/hooks/hooks.json`，远程 SSH 部署 (`scripts/remote-deploy.sh` 调用 `hooks/copilot-install.js --remote`) 自动写入
-- 禁用 agent 不应卸载 hooks / plugins / extensions：只停止对应 monitor、清理 session / bubble、让 HTTP hook 入口快速 fallback；重新启用才触发一次 integration sync
+- Copilot CLI hooks 走按需自动同步：`hooks/copilot-install.js` 在本地启动仅当 Copilot CLI 已安装且已启用时调用；`scripts/remote-deploy.sh --remote` 仍会在远端部署路径里调用。路径解析尊重 `COPILOT_HOME` env（trimmed 非空才生效，否则 fallback 到 `~/.copilot`）；`hooks/copilot-hook.js` 的 session-state resolver 同样走 env
+- 禁用 agent 不应卸载 hooks / plugins / extensions：只停止对应 monitor、清理 session / bubble、让 HTTP hook 入口快速 fallback；重新启用未安装 agent 不触发本机 integration sync。卸载集成必须走 Settings Agent 页的 Uninstall / 对应 uninstall 命令，并同时清掉 `integrationInstalled`
 - Kiro 的 `sessionId="default"` 会复用；session alias key 必须按 cwd scope 区分，同时保留旧 `local|kiro-cli|default` 只读 fallback
 - Windows NSIS release 必须产出明确架构的 x64 / ARM64 安装包：`win.artifactName` 保留 `${arch}`，`nsis.buildUniversalInstaller` 保持 `false`
 - 资源路径统一用 `path.join(__dirname, ...)`
@@ -168,13 +182,16 @@ Copilot CLI 是唯一在本地启动时不会自动同步 hooks 的受支持 age
 - `hitWin.focusable = true` 是修复 Windows 拖拽 bug 的关键，不要轻易改回去
 - `miniTransitioning` 期间，所有窗口定位路径都必须先检查保护标志，否则 `setPosition()` 可能并发崩
 - DND 会屏蔽 hook 事件并压住 bubble，但**不应替用户做权限决定**：opencode 走 silent drop 回到 TUI 提示，Claude Code / CodeBuddy 走断连回到内置聊天/终端确认，Codex official hook 走 no-decision `{}` 回到原生审批提示；Pi 是 state-only，不进入权限审批链路
+- 隐藏桌宠（petHidden）≠ 免打扰：隐藏只收起宠物/HUD/update bubble/当时 pending 的权限气泡，**隐藏期间新到的权限请求仍照常弹气泡，这是有意设计、不要当 bug 修**；要静默权限气泡走 DND（见上条）。详见 `docs/project/theme-state-ui.md` State Machine 节
 - Session HUD 显示所有非 headless、非 sleeping 的 live session，包括 badge=Done 的 idle session；不要再按 `state !== "idle"` 过滤，否则完成后的 Claude Code 会话会从 HUD 消失
 - update bubble 跟随桌宠时要同时避让 Session HUD 和 permission stack；permission bubble 增删、测高、deny-and-focus 后都要触发 update bubble 重排
 - `mini-working` 是可选主题能力，缺失时必须优雅降级
 - `contextMenuOwner` 必须保留 `parent: win`；配合 `closable:false` 才不会把退出流程卡死
 - Windows 前台窗口锁依赖 ALT trick + `koffi` FFI；相关回归通常不是单点逻辑 bug
 - `~/.claude/settings.json` 的 hook 恢复 watcher 必须盯目录而不是文件；原子替换会让文件级 watch 在 Windows 上静默失效
-- Claude watcher 必须同时受 `manageClaudeHooksAutomatically` 和 `claude-code.enabled` 保护；不要让禁用 Claude Code 后的 watcher 重新写回 hooks
+- Claude watcher 必须同时受 `manageClaudeHooksAutomatically`、`claude-code.integrationInstalled` 和 `claude-code.enabled` 保护；不要让未安装或禁用 Claude Code 后的 watcher 重新写回 hooks
+- 所有进程内对 `~/.claude/settings.json` 的 mutation（启动 reconcile、watcher 自动恢复、周期健康自愈、Settings Install/Enable、Doctor Fix、auto-start 开关、卸载、About 清理）必须经过 `src/claude-hook-operations.js` 的 server-owned 队列；不要绕开队列直接 `require("../hooks/install.js")` 写文件，否则会与其他来源的写入竞态
+- 周期健康巡检（`src/claude-settings-watcher.js`）只读判断用 `src/claude-hook-health.js`；同一 repair signature 连续 3 次修复+复验失败后必须停在 `manual-fix-required`，不再自动 mutation，只保留 5 分钟只读复查；suspicious-shrink 通知同一持续问题只弹一次，不要每轮重复
 - opencode 的 `permission.ask` hook 目前不可用，权限只能走 event hook + bridge
 - Codex CLI official hooks 已接入；JSONL 轮询仍是 fallback，用于 hook 不可用、hook 未覆盖事件（如 WebSearch / compaction / abort）和历史兼容。Windows command 必须用 PowerShell `& "node" ...` 格式，裸 `"node" "hook.js"` 会 exit 1
 - Kiro 没有 global hooks，只能注入到 `~/.kiro/agents/*.json`

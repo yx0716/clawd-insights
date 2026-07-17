@@ -10,15 +10,36 @@
     return helpers.t(key);
   }
 
+  function formatVersionForMessage(version) {
+    return String(version || "").replace(/^v/i, "");
+  }
+
+  // #329: getAboutInfo() now returns dynamic fields (pendingUpdateVersion,
+  // autoUpdateCheck) alongside the static identity fields. The static
+  // parts (heroSvgContent, license, copyright, etc.) are still safe to
+  // cache; the dynamic ones must be re-fetched on every render so the
+  // pending hint and the auto-update toggle reflect current state after
+  // the user flips the toggle or the scheduler discovers a new version.
+  const STATIC_ABOUT_KEYS = ["repoUrl", "license", "copyright", "authorName", "authorUrl", "heroSvgContent"];
   function fetchAboutInfo() {
-    if (runtime.about.infoCache) return Promise.resolve(runtime.about.infoCache);
     if (!window.settingsAPI || typeof window.settingsAPI.getAboutInfo !== "function") {
-      return Promise.resolve(null);
+      return Promise.resolve(runtime.about.infoCache || null);
     }
     return window.settingsAPI.getAboutInfo().then((info) => {
-      runtime.about.infoCache = info;
-      return info;
-    }).catch(() => null);
+      if (!info) return runtime.about.infoCache || null;
+      // Preserve any previously cached static field if a future getAboutInfo
+      // call ever omits one (defensive). Dynamic fields always come from
+      // the fresh response — they are not merged from the old cache.
+      const merged = { ...(runtime.about.infoCache || {}) };
+      for (const key of STATIC_ABOUT_KEYS) {
+        if (info[key] != null) merged[key] = info[key];
+      }
+      merged.version = info.version;
+      merged.pendingUpdateVersion = info.pendingUpdateVersion || "";
+      merged.autoUpdateCheck = info.autoUpdateCheck !== false;
+      runtime.about.infoCache = merged;
+      return merged;
+    }).catch(() => runtime.about.infoCache || null);
   }
 
   function handleAboutCrabClick(crabWrap) {
@@ -59,6 +80,70 @@
     row.appendChild(l);
     row.appendChild(v);
     return row;
+  }
+
+  function formatCleanupSummary(result) {
+    const summary = result && result.cleanup && result.cleanup.summary;
+    if (!summary) return t("aboutCleanupSuccess");
+    const failed = Number(summary.failed || 0);
+    let text = t("aboutCleanupSuccess")
+      .replace("{removed}", String(Number(summary.entriesRemoved || 0)))
+      .replace("{affected}", String(Number(summary.agentsAffected || 0)))
+      .replace("{failed}", String(failed));
+    const hasKiroNote = Array.isArray(result.cleanup.agents)
+      && result.cleanup.agents.some((agent) =>
+        agent
+        && agent.agentId === "kiro-cli"
+        && Array.isArray(agent.notes)
+        && agent.notes.length > 0
+      );
+    if (hasKiroNote) text += " " + t("aboutCleanupKiroNote");
+    return text;
+  }
+
+  function createCleanupFooterAction() {
+    const wrap = document.createElement("div");
+    wrap.className = "about-footer-action-wrap";
+    const button = document.createElement("button");
+    button.className = "about-footer-action-button about-cleanup-button";
+    button.type = "button";
+    button.textContent = t("aboutCleanupButton");
+    const status = document.createElement("div");
+    status.className = "about-cleanup-status";
+
+    button.addEventListener("click", () => {
+      if (!window.settingsAPI || typeof window.settingsAPI.command !== "function") return;
+      if (typeof window.confirm !== "function") {
+        status.textContent = t("aboutCleanupFailed");
+        return;
+      }
+      if (!window.confirm(t("aboutCleanupConfirm"))) return;
+      button.disabled = true;
+      button.textContent = t("aboutCleanupRunning");
+      status.textContent = "";
+      window.settingsAPI.command("cleanupIntegrations")
+        .then((result) => {
+          if (!result || result.status !== "ok") {
+            throw new Error((result && result.message) || t("aboutCleanupFailed"));
+          }
+          const message = formatCleanupSummary(result);
+          status.textContent = message;
+          ops.showToast(message, { ttl: 7000 });
+        })
+        .catch((err) => {
+          const message = t("aboutCleanupFailed") + (err && err.message ? ": " + err.message : "");
+          status.textContent = message;
+          ops.showToast(message, { ttl: 7000 });
+        })
+        .finally(() => {
+          button.disabled = false;
+          button.textContent = t("aboutCleanupButton");
+        });
+    });
+
+    wrap.appendChild(button);
+    wrap.appendChild(status);
+    return wrap;
   }
 
   function render(parent) {
@@ -116,14 +201,10 @@
     const contribLabel = document.createElement("div");
     contribLabel.className = "about-info-label";
     contribLabel.textContent = t("aboutContributorsLabel") + " (" + i18n.CONTRIBUTORS.length + ")";
-    const toggleBtn = document.createElement("button");
-    toggleBtn.className = "about-contributors-toggle";
-    toggleBtn.textContent = runtime.about.contributorsExpanded ? t("aboutContributorsHide") : t("aboutContributorsShowAll");
     contribRow.appendChild(contribLabel);
-    contribRow.appendChild(toggleBtn);
 
     const contribList = document.createElement("div");
-    contribList.className = "about-contributors-list" + (runtime.about.contributorsExpanded ? "" : " collapsed");
+    contribList.className = "about-contributors-list";
     for (const name of i18n.CONTRIBUTORS) {
       const link = document.createElement("a");
       link.className = "about-contributor-link";
@@ -136,18 +217,11 @@
       contribList.appendChild(link);
     }
 
-    toggleBtn.addEventListener("click", () => {
-      runtime.about.contributorsExpanded = !runtime.about.contributorsExpanded;
-      contribList.classList.toggle("collapsed", !runtime.about.contributorsExpanded);
-      toggleBtn.textContent = runtime.about.contributorsExpanded
-        ? t("aboutContributorsHide")
-        : t("aboutContributorsShowAll");
-    });
-
     const footer = document.createElement("div");
     footer.className = "about-footer";
     footer.textContent = t("aboutFooter");
     parent.appendChild(footer);
+    parent.appendChild(createCleanupFooterAction());
 
     fetchAboutInfo().then((info) => {
       const safe = info || {};
@@ -171,6 +245,21 @@
       const vv = document.createElement("span");
       vv.className = "about-info-value";
       vv.textContent = "v" + (safe.version || "?");
+      vvWrap.appendChild(vv);
+      if (safe.pendingUpdateVersion) {
+        const hint = document.createElement("span");
+        hint.className = "about-update-hint";
+        hint.textContent = "· " + t("aboutUpdateAvailableHint").replace(
+          "{version}",
+          formatVersionForMessage(safe.pendingUpdateVersion)
+        );
+        hint.style.cursor = "pointer";
+        hint.addEventListener("click", () => {
+          if (!window.settingsAPI || typeof window.settingsAPI.checkForUpdates !== "function") return;
+          window.settingsAPI.checkForUpdates().catch(() => {});
+        });
+        vvWrap.appendChild(hint);
+      }
       const updateBtn = document.createElement("button");
       updateBtn.className = "about-check-update-btn";
       updateBtn.textContent = t("aboutCheckForUpdates");
@@ -181,11 +270,37 @@
           .catch(() => {})
           .finally(() => { updateBtn.disabled = false; });
       });
-      vvWrap.appendChild(vv);
       vvWrap.appendChild(updateBtn);
       versionRow.appendChild(vl);
       versionRow.appendChild(vvWrap);
       infoSection.appendChild(versionRow);
+
+      const autoUpdateRow = document.createElement("div");
+      autoUpdateRow.className = "about-info-row";
+      const autoUpdateLabelWrap = document.createElement("div");
+      autoUpdateLabelWrap.className = "about-info-label";
+      const autoUpdateLabel = document.createElement("div");
+      autoUpdateLabel.textContent = t("autoUpdateCheck");
+      const autoUpdateDesc = document.createElement("div");
+      autoUpdateDesc.className = "about-info-description";
+      autoUpdateDesc.textContent = t("autoUpdateCheckDescription");
+      autoUpdateDesc.style.opacity = "0.7";
+      autoUpdateDesc.style.fontSize = "12px";
+      autoUpdateLabelWrap.appendChild(autoUpdateLabel);
+      autoUpdateLabelWrap.appendChild(autoUpdateDesc);
+      const autoUpdateValue = document.createElement("div");
+      autoUpdateValue.className = "about-info-value";
+      const autoUpdateBox = document.createElement("input");
+      autoUpdateBox.type = "checkbox";
+      autoUpdateBox.checked = safe.autoUpdateCheck !== false;
+      autoUpdateBox.addEventListener("change", () => {
+        if (!window.settingsAPI || typeof window.settingsAPI.update !== "function") return;
+        window.settingsAPI.update("autoUpdateCheck", autoUpdateBox.checked).catch(() => {});
+      });
+      autoUpdateValue.appendChild(autoUpdateBox);
+      autoUpdateRow.appendChild(autoUpdateLabelWrap);
+      autoUpdateRow.appendChild(autoUpdateValue);
+      infoSection.appendChild(autoUpdateRow);
 
       if (safe.repoUrl) {
         infoSection.appendChild(buildAboutLinkRow(

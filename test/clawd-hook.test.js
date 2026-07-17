@@ -13,7 +13,12 @@ const path = require("path");
 
 const {
   buildStateBody,
+  isClaudeHeadlessCommandLine,
+  attachStdinDiag,
+  STDIN_READ_TIMEOUT_MS: CLAWD_HOOK_STDIN_TIMEOUT_MS,
   extractSessionTitleFromTranscript,
+  extractApiErrorFromEntries,
+  extractLastAssistantTextFromEntries,
 } = require("../hooks/clawd-hook.js");
 const { buildToolInputFingerprint } = require("../src/server").__test;
 
@@ -97,6 +102,60 @@ describe("buildStateBody", () => {
     assert.strictEqual(body.state, "attention");
   });
 
+  it("maps PostCompact (auto / unspecified) to thinking, not attention (#406)", () => {
+    assert.strictEqual(
+      buildStateBody("PostCompact", { session_id: "s" }, mockResolve).state,
+      "thinking"
+    );
+    assert.strictEqual(
+      buildStateBody("PostCompact", { session_id: "s", trigger: "auto" }, mockResolve).state,
+      "thinking"
+    );
+  });
+
+  it("maps PostCompact (manual /compact) to idle (#406)", () => {
+    const body = buildStateBody(
+      "PostCompact",
+      { session_id: "s", trigger: "manual" },
+      mockResolve
+    );
+    assert.strictEqual(body.state, "idle");
+  });
+
+  it("forwards background_tasks / session_crons counts on Stop (#406)", () => {
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "s", background_tasks: [{}, {}], session_crons: [{}] },
+      mockResolve
+    );
+    assert.strictEqual(body.background_tasks_count, 2);
+    assert.strictEqual(body.session_crons_count, 1);
+  });
+
+  it("forwards only counts — never background task command/description text (#406)", () => {
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "s", background_tasks: [{ command: "npm run secret-dev", description: "do not leak" }] },
+      mockResolve
+    );
+    assert.strictEqual(body.background_tasks_count, 1);
+    const serialized = JSON.stringify(body);
+    assert.ok(!serialized.includes("npm run secret-dev"), "task command must not leak");
+    assert.ok(!serialized.includes("do not leak"), "task description must not leak");
+  });
+
+  it("forwards stop_hook_active on Stop (#406)", () => {
+    const body = buildStateBody("Stop", { session_id: "s", stop_hook_active: true }, mockResolve);
+    assert.strictEqual(body.stop_hook_active, true);
+  });
+
+  it("omits completion-gate fields on a plain Stop with no background work (#406)", () => {
+    const body = buildStateBody("Stop", { session_id: "s" }, mockResolve);
+    assert.ok(!("background_tasks_count" in body));
+    assert.ok(!("session_crons_count" in body));
+    assert.ok(!("stop_hook_active" in body));
+  });
+
   it("maps SubagentStart to juggling state", () => {
     const body = buildStateBody("SubagentStart", { session_id: "s" }, mockResolve);
     assert.strictEqual(body.state, "juggling");
@@ -178,27 +237,60 @@ describe("buildStateBody", () => {
     assert.ok(!("pid_chain" in body));
   });
 
-  it("includes foreground WT HWND only on foreground-safe events", () => {
-    const resolveWithWtHwnd = () => ({
+  it("applies the foreground WT HWND only on foreground-safe events, and only when the resolver surfaces one", () => {
+    // #634: buildStateBody is now the Claude adapter — the shared resolver
+    // decides whether a foreground WT handle exists (only a fresh SessionStart
+    // snapshot carries one; a prompt is cache-only and never does, the server
+    // samples it), and buildStateBody applies it only on a foreground-safe
+    // event. The fake models the resolver contract: null foregroundWtHwnd for
+    // the prompt lifecycle. This is now platform-independent — the resolver
+    // owns the Windows/non-Windows behavior; deterministic both-platform
+    // coverage lives in test/clawd-hook-pid-cache.test.js (forced reloads).
+    const resolveByLifecycle = (ctx) => ({
       stablePid: 1,
       agentPid: null,
       detectedEditor: null,
       pidChain: [],
-      foregroundWtHwnd: "123456",
+      foregroundWtHwnd: ctx && ctx.lifecycle === "prompt" ? null : "123456",
     });
 
-    const startBody = buildStateBody("SessionStart", { session_id: "s" }, resolveWithWtHwnd);
-    const promptBody = buildStateBody("UserPromptSubmit", { session_id: "s" }, resolveWithWtHwnd);
-    const stopBody = buildStateBody("Stop", { session_id: "s" }, resolveWithWtHwnd);
+    const startBody = buildStateBody("SessionStart", { session_id: "s" }, resolveByLifecycle);
+    const promptBody = buildStateBody("UserPromptSubmit", { session_id: "s" }, resolveByLifecycle);
+    const stopBody = buildStateBody("Stop", { session_id: "s" }, resolveByLifecycle);
 
-    assert.strictEqual(startBody.wt_hwnd, "123456");
-    assert.strictEqual(promptBody.wt_hwnd, "123456");
-    assert.ok(!("wt_hwnd" in stopBody));
+    assert.strictEqual(startBody.wt_hwnd, "123456", "SessionStart (start) surfaces the fresh handle");
+    assert.ok(!("wt_hwnd" in promptBody), "prompt is cache-only; the hook never reports wt_hwnd (server samples it)");
+    assert.ok(!("wt_hwnd" in stopBody), "Stop is not a foreground-safe event even when a handle is present");
   });
 
-  describe("agentPid and headless detection", () => {
-    const makeResolve = (agentPid, agentCommandLine = "") =>
-      () => ({ stablePid: 1, agentPid, agentCommandLine, detectedEditor: null, pidChain: [] });
+  // #681 split this in two. The -p/--print predicate moved out of the adapter
+  // and into the resolver (createPidResolver's headlessCheck), because the pid
+  // cache must store the derived boolean rather than the raw command line it was
+  // derived from. So the regex is now tested directly, and the adapter is tested
+  // for wiring — that it applies the resolver's boolean and does not re-derive.
+  describe("isClaudeHeadlessCommandLine — the -p/--print predicate", () => {
+    const cases = [
+      ["node claude-code -p", true, "-p at end of line"],
+      ["node claude-code -p some-prompt", true, "-p followed by a space"],
+      ["node claude-code --print", true, "--print"],
+      ["node claude-code --print > out.txt", true, "--print mid-line"],
+      ["node claude-code --port 3000", false, "-p must not match a longer option's prefix"],
+      ["node claude-code --printer", false, "--print must not match a longer option's prefix"],
+      ["node claude-code", false, "plain interactive"],
+      ["", false, "empty"],
+      [null, false, "null"],
+      [undefined, false, "undefined"],
+    ];
+    for (const [cmdline, expected, label] of cases) {
+      it(`${label} ⇒ ${expected}`, () => {
+        assert.strictEqual(isClaudeHeadlessCommandLine(cmdline), expected);
+      });
+    }
+  });
+
+  describe("agentPid and headless wiring", () => {
+    const makeResolve = (agentPid, extra = {}) =>
+      () => ({ stablePid: 1, agentPid, agentCommandLine: "", detectedEditor: null, pidChain: [], ...extra });
 
     it("sets agent_pid and claude_pid when agentPid is present", () => {
       const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(42));
@@ -212,37 +304,34 @@ describe("buildStateBody", () => {
       assert.ok(!("claude_pid" in body));
     });
 
-    it("sets headless when agentCommandLine ends with -p", () => {
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, "node claude-code -p"));
+    it("sets headless from the resolver's derived boolean", () => {
+      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, { headless: true }));
       assert.strictEqual(body.headless, true);
     });
 
-    it("sets headless when agentCommandLine has -p followed by a space", () => {
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, "node claude-code -p some-prompt"));
-      assert.strictEqual(body.headless, true);
-    });
-
-    it("sets headless when agentCommandLine contains --print", () => {
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, "node claude-code --print"));
-      assert.strictEqual(body.headless, true);
-    });
-
-    it("does not set headless when -p is a prefix of a longer option", () => {
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, "node claude-code --port 3000"));
+    it("omits headless when the resolver says false", () => {
+      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, { headless: false }));
       assert.ok(!("headless" in body));
     });
 
-    it("does not set headless when agentCommandLine is empty", () => {
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(99, ""));
-      assert.ok(!("headless" in body));
-    });
-
-    it("does not set headless when agentCommandLine is missing from resolve()", () => {
-      // Backward compat: a resolver that never populates agentCommandLine must
-      // not crash and must not set headless.
-      const resolve = () => ({ stablePid: 1, agentPid: 77, detectedEditor: null, pidChain: [] });
-      const body = buildStateBody("PreToolUse", { session_id: "s" }, resolve);
+    it("omits headless when the resolver omits it entirely (no-arg / legacy shape)", () => {
+      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(77));
       assert.strictEqual(body.agent_pid, 77);
+      assert.ok(!("headless" in body), "must not crash, must not guess");
+    });
+
+    it("never re-derives from agentCommandLine — the boolean is authoritative", () => {
+      // A cache hit always carries agentCommandLine:"" (#681). If the adapter
+      // still parsed the line, headless would be lost on every cached event; if
+      // it parsed a line that IS present on a fresh result, the two paths could
+      // disagree. Only the resolver decides.
+      const body = buildStateBody("PreToolUse", { session_id: "s" },
+        () => ({ stablePid: 1, agentPid: 99, agentCommandLine: "node claude-code --print", headless: false, detectedEditor: null, pidChain: [] }));
+      assert.ok(!("headless" in body));
+    });
+
+    it("headless needs an agentPid — no agent, no claim about how it runs", () => {
+      const body = buildStateBody("PreToolUse", { session_id: "s" }, makeResolve(null, { headless: true }));
       assert.ok(!("headless" in body));
     });
   });
@@ -253,11 +342,94 @@ describe("buildStateBody", () => {
       tool_name: "Read",
       tool_use_id: "toolu_123",
       tool_input: { file_path: "src/server.js" },
+      transcript_path: "/tmp/claude-transcript.jsonl",
     };
     const body = buildStateBody("PostToolUse", payload, mockResolve);
     assert.strictEqual(body.tool_name, "Read");
     assert.strictEqual(body.tool_use_id, "toolu_123");
     assert.strictEqual(body.tool_input_fingerprint, buildToolInputFingerprint(payload.tool_input));
+    assert.strictEqual(body.transcript_path, "/tmp/claude-transcript.jsonl");
+  });
+
+  it("does not forward transcript_path on Stop after extracting completion data", () => {
+    const file = writeTmpJsonl([
+      { type: "assistant", sessionId: "sid-1", message: { content: "Done." } },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.assistant_last_output, "Done.");
+    assert.ok(!("transcript_path" in body));
+  });
+
+  it("adds context_usage from transcript usage", () => {
+    const transcript = writeTmpJsonl([
+      {
+        type: "assistant",
+        message: {
+          model: "claude-sonnet-4-5",
+          usage: {
+            input_tokens: 1000,
+            output_tokens: 200,
+            cache_read_input_tokens: 3000,
+            cache_creation_input_tokens: 400,
+          },
+        },
+      },
+    ]);
+
+    const body = buildStateBody("PostToolUse", {
+      session_id: "s",
+      transcript_path: transcript,
+    }, mockResolve);
+
+    assert.deepStrictEqual(body.context_usage, {
+      used: 4400,
+      limit: 200000,
+      percent: 2,
+      source: "claude",
+    });
+  });
+
+  it("omits context_usage when transcript has no usage", () => {
+    const transcript = writeTmpJsonl([{ type: "user", message: { content: "hi" } }]);
+
+    const body = buildStateBody("PostToolUse", {
+      session_id: "s",
+      transcript_path: transcript,
+    }, mockResolve);
+
+    assert.ok(!("context_usage" in body));
+  });
+
+  it("scopes context_usage to the main session, ignoring trailing sidechain usage", () => {
+    const transcript = writeTmpJsonl([
+      {
+        type: "assistant",
+        sessionId: "s",
+        message: { model: "claude-sonnet-4-5", usage: { input_tokens: 150000 } },
+      },
+      {
+        type: "assistant",
+        sessionId: "s",
+        isSidechain: true,
+        message: { model: "claude-sonnet-4-5", usage: { input_tokens: 12000 } },
+      },
+    ]);
+
+    const body = buildStateBody("PostToolUse", {
+      session_id: "s",
+      transcript_path: transcript,
+    }, mockResolve);
+
+    assert.deepStrictEqual(body.context_usage, {
+      used: 150000,
+      limit: 200000,
+      percent: 75,
+      source: "claude",
+    });
   });
 
   it("accepts camelCase tool_use_id aliases", () => {
@@ -512,5 +684,450 @@ describe("extractSessionTitleFromTranscript", () => {
     parts.push(JSON.stringify({ type: "custom-title", customTitle: "End Title" }));
     fs.writeFileSync(file, parts.join("\n") + "\n");
     assert.strictEqual(extractSessionTitleFromTranscript(file), "End Title");
+  });
+});
+
+describe("extractLastAssistantTextFromEntries", () => {
+  it("extracts only text blocks from the latest assistant entry", () => {
+    const result = extractLastAssistantTextFromEntries([
+      { type: "assistant", sessionId: "sid-1", message: { content: "older" } },
+      {
+        type: "assistant",
+        sessionId: "sid-1",
+        message: {
+          content: [
+            { type: "tool_use", name: "Read", input: { file_path: "secret.txt" } },
+            { type: "text", text: "Done with the fix." },
+            { type: "server_tool_use", name: "WebSearch" },
+            { type: "text", text: "Tests pass." },
+          ],
+        },
+      },
+    ], "sid-1");
+
+    assert.deepStrictEqual(result, {
+      text: "Done with the fix.\n\nTests pass.",
+      truncated: false,
+    });
+  });
+
+  it("skips API error, subagent, and other-session assistant entries", () => {
+    const result = extractLastAssistantTextFromEntries([
+      { type: "assistant", sessionId: "sid-1", message: { content: "root output" } },
+      { type: "assistant", sessionId: "sid-2", message: { content: "wrong session" } },
+      { type: "assistant", sessionId: "sid-1", isSidechain: true, message: { content: "subagent" } },
+      { type: "assistant", sessionId: "sid-1", isApiErrorMessage: true, message: { content: "API Error" } },
+    ], "sid-1");
+
+    assert.deepStrictEqual(result, { text: "root output", truncated: false });
+  });
+
+  it("returns null when the latest assistant messages only contain tool calls", () => {
+    const result = extractLastAssistantTextFromEntries([
+      {
+        type: "assistant",
+        sessionId: "sid-1",
+        message: { content: [{ type: "tool_use", name: "Bash", input: { command: "npm test" } }] },
+      },
+    ], "sid-1");
+
+    assert.strictEqual(result, null);
+  });
+
+  it("does not cross a user boundary to reuse an older assistant answer", () => {
+    const result = extractLastAssistantTextFromEntries([
+      { type: "assistant", sessionId: "sid-1", message: { content: "older answer" } },
+      { type: "user", sessionId: "sid-1", message: { content: "new prompt" } },
+      {
+        type: "assistant",
+        sessionId: "sid-1",
+        message: { content: [{ type: "tool_use", name: "Bash", input: { command: "npm test" } }] },
+      },
+    ], "sid-1");
+
+    assert.strictEqual(result, null);
+  });
+
+  it("clamps long assistant text with a truncation marker", () => {
+    const result = extractLastAssistantTextFromEntries([
+      { type: "assistant", sessionId: "sid-1", message: { content: "a".repeat(100) + "TAIL" } },
+    ], "sid-1", { maxLen: 40 });
+
+    assert.strictEqual(result.truncated, true);
+    assert.ok(result.text.includes("...[truncated]..."));
+    assert.ok(result.text.endsWith("TAIL"));
+    assert.ok(result.text.length <= 40);
+  });
+});
+
+// Helper: build an isApiErrorMessage transcript entry. Mirrors the real
+// schema observed in ~/.claude/projects/**/*.jsonl during Phase 0 investigation.
+function makeApiErrorEntry({ sessionId = "sid-1", error = "unknown", uuid = "err-uuid" }) {
+  return {
+    type: "assistant",
+    uuid,
+    parentUuid: "parent",
+    timestamp: "2026-05-26T00:00:00.000Z",
+    sessionId,
+    isApiErrorMessage: true,
+    error,
+    message: {
+      model: "<synthetic>",
+      role: "assistant",
+      content: [{ type: "text", text: `API Error: ${error}` }],
+    },
+  };
+}
+
+describe("extractApiErrorFromEntries", () => {
+  it("returns null for empty / missing entries", () => {
+    assert.strictEqual(extractApiErrorFromEntries(null, "sid-1"), null);
+    assert.strictEqual(extractApiErrorFromEntries([], "sid-1"), null);
+  });
+
+  it("returns null when sessionId is missing", () => {
+    const entries = [makeApiErrorEntry({ sessionId: "sid-1", error: "unknown" })];
+    assert.strictEqual(extractApiErrorFromEntries(entries, ""), null);
+  });
+
+  it("hits a current-turn error followed only by system marker", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "rate_limit", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+    ];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "rate_limit" }
+    );
+  });
+
+  it("hits when error is the only entry (no metadata yet)", () => {
+    const entries = [makeApiErrorEntry({ sessionId: "sid-1", error: "server_error" })];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "server_error" }
+    );
+  });
+
+  it("ignores error from a different sessionId (cross-session contamination guard)", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "other-session", error: "unknown" }),
+    ];
+    assert.strictEqual(extractApiErrorFromEntries(entries, "sid-1"), null);
+  });
+
+  it("suppresses stale error when a user message follows (turn moved on)", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "unknown", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+      { type: "user", sessionId: "sid-1", message: { content: "next prompt" } },
+    ];
+    assert.strictEqual(extractApiErrorFromEntries(entries, "sid-1"), null);
+  });
+
+  it("suppresses when a non-error assistant message follows (auto-retry succeeded)", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "unknown", uuid: "e1" }),
+      { type: "assistant", sessionId: "sid-1", message: { content: "ok" } },
+    ];
+    assert.strictEqual(extractApiErrorFromEntries(entries, "sid-1"), null);
+  });
+
+  it("allows benign metadata types after the error", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "invalid_request", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+      { type: "last-prompt", sessionId: "sid-1" },
+      { type: "file-history-snapshot", sessionId: "sid-1" },
+    ];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "invalid_request" }
+    );
+  });
+
+  it("returns the latest current-turn error when multiple errors are stacked (same turn)", () => {
+    // Multiple isApiErrorMessage entries with no user/assistant break between
+    // them — auto-retry that kept failing. Expect the LAST one to win.
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "rate_limit", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+      makeApiErrorEntry({ sessionId: "sid-1", error: "server_error", uuid: "e2" }),
+      { type: "system", parentUuid: "e2", sessionId: "sid-1" },
+    ];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "server_error" }
+    );
+  });
+
+  it("falls back to 'unknown' for error types outside the known enum", () => {
+    const entries = [
+      makeApiErrorEntry({ sessionId: "sid-1", error: "some_future_value" }),
+    ];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "unknown" }
+    );
+  });
+
+  it("falls back to 'unknown' when error field is missing entirely", () => {
+    const entries = [
+      {
+        type: "assistant",
+        sessionId: "sid-1",
+        isApiErrorMessage: true,
+        message: { content: [{ type: "text", text: "No response requested." }] },
+      },
+    ];
+    assert.deepStrictEqual(
+      extractApiErrorFromEntries(entries, "sid-1"),
+      { api_error_type: "unknown" }
+    );
+  });
+
+  it("supports all 9 enum values observed in claude.exe 2.1.150", () => {
+    const enumValues = [
+      "authentication_failed", "oauth_org_not_allowed", "billing_error",
+      "rate_limit", "invalid_request", "model_not_found", "server_error",
+      "unknown", "max_output_tokens",
+    ];
+    for (const t of enumValues) {
+      const entries = [makeApiErrorEntry({ sessionId: "sid-1", error: t })];
+      assert.deepStrictEqual(
+        extractApiErrorFromEntries(entries, "sid-1"),
+        { api_error_type: t },
+        `enum ${t} should pass through`
+      );
+    }
+  });
+});
+
+describe("buildStateBody — Stop → ApiError upgrade", () => {
+  it("adds assistant_last_output on normal Stop when transcript has final assistant text", () => {
+    const file = writeTmpJsonl([
+      { type: "assistant", sessionId: "sid-1", message: { content: "Implemented the fix.\nTests pass." } },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "Stop");
+    assert.strictEqual(body.assistant_last_output, "Implemented the fix.\nTests pass.");
+    assert.ok(!("assistant_last_output_truncated" in body));
+  });
+
+  it("does not add stale assistant output when Stop upgrades to ApiError", () => {
+    const file = writeTmpJsonl([
+      { type: "assistant", sessionId: "sid-1", message: { content: "previous output" } },
+      makeApiErrorEntry({ sessionId: "sid-1", error: "rate_limit", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "ApiError");
+    assert.ok(!("assistant_last_output" in body));
+  });
+
+  it("upgrades Stop to ApiError when transcript shows a current-turn error", () => {
+    const file = writeTmpJsonl([
+      makeApiErrorEntry({ sessionId: "sid-1", error: "rate_limit", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "ApiError");
+    assert.strictEqual(body.state, "error");
+    assert.strictEqual(body.failure_kind, "api_error");
+    assert.strictEqual(body.api_error_type, "rate_limit");
+    assert.strictEqual(body.error_present, true);
+  });
+
+  it("does NOT upgrade Stop when the error is stale (user-followed)", () => {
+    const file = writeTmpJsonl([
+      makeApiErrorEntry({ sessionId: "sid-1", error: "unknown", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+      { type: "user", sessionId: "sid-1", message: { content: "next prompt" } },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "Stop");
+    assert.strictEqual(body.state, "attention");
+    assert.ok(!("failure_kind" in body));
+    assert.ok(!("api_error_type" in body));
+    assert.ok(!("error_present" in body));
+  });
+
+  it("does NOT upgrade events other than Stop even if transcript shows an error", () => {
+    const file = writeTmpJsonl([
+      makeApiErrorEntry({ sessionId: "sid-1", error: "unknown", uuid: "e1" }),
+      { type: "system", parentUuid: "e1", sessionId: "sid-1" },
+    ]);
+    const body = buildStateBody(
+      "UserPromptSubmit",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "UserPromptSubmit");
+    assert.ok(!("api_error_type" in body));
+  });
+
+  it("does NOT upgrade synthetic SubagentStart (PreToolUse Task)", () => {
+    // PreToolUse Task is remapped to SubagentStart; even if a transcript error
+    // exists, ApiError detection should not run for non-Stop branches.
+    const file = writeTmpJsonl([
+      makeApiErrorEntry({ sessionId: "sid-1", error: "unknown" }),
+    ]);
+    const body = buildStateBody(
+      "PreToolUse",
+      { session_id: "sid-1", tool_name: "Task", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "SubagentStart");
+    assert.ok(!("api_error_type" in body));
+  });
+
+  it("does NOT transmit raw error text or errorDetails (privacy)", () => {
+    const file = writeTmpJsonl([
+      {
+        ...makeApiErrorEntry({ sessionId: "sid-1", error: "invalid_request" }),
+        requestId: "req_secret_001",
+        errorDetails: '400 {"message":"prompt fragment leak","request_id":"req_xxx"}',
+      },
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "ApiError");
+    // PR1 must NOT include any of these fields
+    const serialized = JSON.stringify(body);
+    assert.ok(!serialized.includes("prompt fragment leak"), "text leaked");
+    assert.ok(!serialized.includes("req_secret_001"), "requestId leaked");
+    assert.ok(!serialized.includes("req_xxx"), "errorDetails leaked");
+    assert.ok(!("text" in body), "body.text must be absent");
+    assert.ok(!("errorDetails" in body), "body.errorDetails must be absent");
+    assert.ok(!("requestId" in body), "body.requestId must be absent");
+  });
+
+  it("ignores error from a different session (no upgrade)", () => {
+    const file = writeTmpJsonl([
+      makeApiErrorEntry({ sessionId: "other-sid", error: "unknown" }),
+    ]);
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "Stop");
+    assert.ok(!("api_error_type" in body));
+  });
+
+  it("survives a transcript with corrupted JSON lines", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clawd-hook-test-"));
+    const file = path.join(dir, "corrupt.jsonl");
+    const errEntry = makeApiErrorEntry({ sessionId: "sid-1", error: "server_error", uuid: "e1" });
+    const body =
+      JSON.stringify(errEntry) + "\n" +
+      "{not-valid-json}\n" +
+      JSON.stringify({ type: "system", parentUuid: "e1", sessionId: "sid-1" }) + "\n";
+    fs.writeFileSync(file, body);
+    const result = buildStateBody(
+      "Stop",
+      { session_id: "sid-1", transcript_path: file },
+      mockResolve
+    );
+    assert.strictEqual(result.event, "ApiError");
+    assert.strictEqual(result.api_error_type, "server_error");
+  });
+
+  it("falls back to Stop when transcript path is missing", () => {
+    const body = buildStateBody(
+      "Stop",
+      { session_id: "sid-1" },
+      mockResolve
+    );
+    assert.strictEqual(body.event, "Stop");
+    assert.strictEqual(body.state, "attention");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// attachStdinDiag (#583)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("attachStdinDiag", () => {
+  const makeBody = () => ({ state: "idle", session_id: "default", event: "SessionStart" });
+
+  it("attaches diagnostics when the stdin payload had no session_id", () => {
+    const body = makeBody();
+    attachStdinDiag(body, {
+      payload: {},
+      bytes: 0,
+      timedOut: true,
+      parseError: null,
+      durationMs: 2001,
+    });
+    assert.deepStrictEqual(body.stdin_diag, { bytes: 0, timed_out: true, duration_ms: 2001 });
+  });
+
+  it("includes parse_error only when present", () => {
+    const body = makeBody();
+    attachStdinDiag(body, {
+      payload: {},
+      bytes: 17,
+      timedOut: false,
+      parseError: "Unexpected token",
+      durationMs: 3,
+    });
+    assert.deepStrictEqual(body.stdin_diag, {
+      bytes: 17,
+      timed_out: false,
+      duration_ms: 3,
+      parse_error: "Unexpected token",
+    });
+  });
+
+  it("does not attach anything when session_id arrived", () => {
+    const body = makeBody();
+    attachStdinDiag(body, {
+      payload: { session_id: "real-sid" },
+      bytes: 500,
+      timedOut: false,
+      parseError: null,
+      durationMs: 4,
+    });
+    assert.strictEqual(body.stdin_diag, undefined);
+  });
+});
+
+describe("clawd-hook stdin timeout budget (#583)", () => {
+  it("uses a 2s stdin window — safe only because install.js registers async:true + timeout:5", () => {
+    assert.strictEqual(CLAWD_HOOK_STDIN_TIMEOUT_MS, 2000);
+  });
+});
+
+describe("attachStdinDiag edge cases", () => {
+  it("treats an empty-string session_id as missing and attaches diagnostics", () => {
+    const body = { state: "idle", session_id: "default", event: "SessionStart" };
+    attachStdinDiag(body, {
+      payload: { session_id: "" },
+      bytes: 30,
+      timedOut: false,
+      parseError: null,
+      durationMs: 2,
+    });
+    assert.deepStrictEqual(body.stdin_diag, { bytes: 30, timed_out: false, duration_ms: 2 });
   });
 });

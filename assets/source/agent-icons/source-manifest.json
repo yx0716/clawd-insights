@@ -3,6 +3,9 @@
     "kiro-cli": {
       "sha256": "dbc80a624ee4904e0fadca3c5e6c0fa78bfa9019d09ed1acec9f3e4fffa7b059"
     },
+    "qwen-code": {
+      "sha256": "59f5a92726beaaaac32a8224926fae063a7931edf8caecf7f50d6cfc96a7acae"
+    },
     "pi": {
       "sha256": "a5624bc3b8cac94de75f6f13701eca2ad3ef67bbeba286c4af3f398806f0858a"
     },

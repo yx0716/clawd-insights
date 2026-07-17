@@ -5,7 +5,7 @@ const HUD_MAX_EXPANDED_ROWS_LABELS = 5;
 const HUD_TITLE_MAX_UNITS = 15;
 const RECENT_DONE_UNREAD_MS = 60 * 1000;
 
-let snapshot = { sessions: [], orderedIds: [], hudTotalNonIdle: 0, hudLastTitle: null, hudShowStateLabels: true, hudShowElapsed: true, hudAutoHide: false, hudPinned: false };
+let snapshot = { sessions: [], orderedIds: [], hudTotalNonIdle: 0, hudLastTitle: null, hudShowStateLabels: true, hudShowElapsed: true, hudShowContextUsage: true, hudPinned: false };
 let i18nPayload = { lang: "en", translations: {} };
 
 const unreadSessions = new Set();
@@ -36,6 +36,20 @@ function formatElapsed(ms) {
   if (min < 60) return t("sessionMinAgo").replace("{n}", min);
   const hr = Math.floor(min / 60);
   return t("sessionHrAgo").replace("{n}", hr);
+}
+
+function formatTokenCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n >= 1000000) {
+    const formatted = (n / 1000000).toFixed(n >= 10000000 ? 0 : 1);
+    return `${formatted.replace(/\.0$/, "")}m`;
+  }
+  if (n >= 1000) {
+    const formatted = (n / 1000).toFixed(n >= 10000 ? 0 : 1);
+    return `${formatted.replace(/\.0$/, "")}k`;
+  }
+  return String(Math.round(n));
 }
 
 function titleFor(session) {
@@ -123,6 +137,33 @@ function stateChipInfo(session) {
   return null;
 }
 
+function usageChipInfo(session) {
+  if (snapshot.hudShowContextUsage === false) return null;
+  const usage = session && session.contextUsage;
+  if (!usage || !Number.isFinite(Number(usage.used))) return null;
+  const usedLabel = formatTokenCount(usage.used);
+  const percentKnown = Number.isFinite(Number(usage.percent));
+  if (percentKnown) {
+    const percent = Math.max(0, Math.min(100, Math.round(Number(usage.percent))));
+    const hasLimit = Number.isFinite(Number(usage.limit));
+    return {
+      label: `${percent}%`,
+      cls: percent >= 90 ? "usage-hot" : (percent >= 75 ? "usage-warm" : "usage-neutral"),
+      title: hasLimit
+        ? t("sessionHudContextUsageTooltip")
+          .replace("{used}", usedLabel)
+          .replace("{limit}", formatTokenCount(usage.limit))
+          .replace("{percent}", percent)
+        : t("sessionHudContextUsageTooltipUnknownLimit").replace("{used}", usedLabel),
+    };
+  }
+  return {
+    label: usedLabel,
+    cls: "usage-neutral",
+    title: t("sessionHudContextUsageTooltipUnknownLimit").replace("{used}", usedLabel),
+  };
+}
+
 const BELL_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>`;
 const FOCUS_UNAVAILABLE_SVG = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4l16 16"/><path d="M9.5 5h5"/><path d="M7 9h10"/><path d="M5 14h9"/><path d="M12 19h5"/></svg>`;
 const PIN_SVG_FILLED = `<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M14 4l6 6-4 1-3 3 1 5-2 1-4-4-5 5-1-1 5-5-4-4 1-2 5 1 3-3 1-4z"/></svg>`;
@@ -193,6 +234,15 @@ function createRowForSession(session, now) {
     left.appendChild(img);
   }
 
+  // Source marker for non-local sessions (compact emoji indicator)
+  if (session.sourceType && session.sourceType !== "local") {
+    const sourceMarker = document.createElement("span");
+    sourceMarker.className = `hud-source hud-source-${session.sourceType}`;
+    sourceMarker.title = session.sourceDisplayLabel || session.sourceLabel || "";
+    sourceMarker.textContent = session.sourceType === "wsl" ? "🐧" : "🔗";
+    left.appendChild(sourceMarker);
+  }
+
   const title = document.createElement("span");
   const fullTitle = titleFor(session);
   const shortTitle = shortenHudTitle(fullTitle);
@@ -229,6 +279,16 @@ function createRowForSession(session, now) {
     const chip = document.createElement("span");
     chip.className = `state-chip ${chipInfo.cls}`;
     chip.textContent = chipInfo.label;
+    right.appendChild(chip);
+    hasRightContent = true;
+  }
+
+  const usageInfo = usageChipInfo(session);
+  if (usageInfo && usageInfo.label) {
+    const chip = document.createElement("span");
+    chip.className = `usage-chip ${usageInfo.cls}`;
+    chip.textContent = usageInfo.label;
+    chip.title = usageInfo.title;
     right.appendChild(chip);
     hasRightContent = true;
   }
@@ -307,7 +367,7 @@ function render() {
   const sessions = orderedHudSessions(snapshot);
   updateUnread(sessions);
   hudEl.replaceChildren();
-  hudEl.classList.toggle("has-pin", snapshot.hudAutoHide === true);
+  hudEl.classList.add("has-pin");
   if (!sessions.length) return;
 
   const now = Date.now();
@@ -320,9 +380,7 @@ function render() {
     hudEl.appendChild(createFoldedRow(folded.length));
   }
 
-  if (snapshot.hudAutoHide === true) {
-    hudEl.appendChild(createPinButton(snapshot.hudPinned === true));
-  }
+  hudEl.appendChild(createPinButton(snapshot.hudPinned === true));
 }
 
 function updateElapsedLabels() {

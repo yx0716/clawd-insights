@@ -3,7 +3,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
-const { formatDetail, formatAntigravityDetail, truncate, firstStringValue } = require("../src/bubble-format");
+const { formatDetail, formatAntigravityDetail, truncate, firstStringValue, parseMcpToolName } = require("../src/bubble-format");
 
 describe("bubble-format truncate", () => {
   it("returns input unchanged when within max", () => {
@@ -51,6 +51,22 @@ describe("bubble-format formatDetail builtin tools", () => {
   it("returns empty string for invalid input", () => {
     assert.strictEqual(formatDetail("Bash", null), "");
     assert.strictEqual(formatDetail("Bash", undefined), "");
+  });
+
+  it("coerces non-string tool-input fields instead of crashing (M9)", () => {
+    // Truthy non-string command/file_path/pattern used to reach String.slice
+    // and throw, taking down the whole bubble render (and the irreversible
+    // badge with it). They must now fall through safely.
+    assert.doesNotThrow(() => formatDetail("Bash", { command: 12345 }));
+    assert.doesNotThrow(() => formatDetail("Edit", { file_path: { nested: true } }));
+    assert.doesNotThrow(() => formatDetail("Write", { file_path: true }));
+    assert.doesNotThrow(() => formatDetail("Glob", { pattern: 999 }));
+    assert.doesNotThrow(() => formatDetail("Grep", { pattern: ["a", "b"] }));
+    // A non-string primary field falls through to the generic string search.
+    assert.strictEqual(formatDetail("Bash", { command: 5, note: "hi there" }), "hi there");
+    // truncate itself coerces, so no caller can crash it.
+    assert.strictEqual(truncate(12345, 120), "12345");
+    assert.strictEqual(truncate(null, 120), "");
   });
 });
 
@@ -123,5 +139,63 @@ describe("bubble-format formatAntigravityDetail tool coverage", () => {
   it("returns empty string for empty / unknown tool name", () => {
     assert.strictEqual(formatAntigravityDetail("", {}), "");
     assert.strictEqual(formatAntigravityDetail("unknown_tool_x", {}), "");
+  });
+});
+
+describe("bubble-format parseMcpToolName (issue #445)", () => {
+  it("parses the reported Codex Vercel MCP names to server · tool", () => {
+    assert.deepStrictEqual(
+      parseMcpToolName("MCP__CODEX_APPS__VERCEL__LIST_PROJECTS"),
+      { server: "vercel", tool: "list_projects", display: "vercel · list_projects" }
+    );
+    assert.strictEqual(
+      parseMcpToolName("MCP__CODEX_APPS__VERCEL__LIST_TOOLBAR_THREADS").display,
+      "vercel · list_toolbar_threads"
+    );
+  });
+
+  it("handles Claude Code lower-case 3-segment names too", () => {
+    assert.strictEqual(parseMcpToolName("mcp__github__list_issues").display, "github · list_issues");
+    assert.strictEqual(parseMcpToolName("mcp__server__tool").display, "server · tool");
+  });
+
+  it("uses the last two segments regardless of namespace depth", () => {
+    // server is always second-to-last, tool is last — robust to extra prefixes.
+    assert.deepStrictEqual(
+      parseMcpToolName("MCP__NS__SUB__SERVER__DO_THING"),
+      { server: "server", tool: "do_thing", display: "server · do_thing" }
+    );
+  });
+
+  it("returns tool-only display when there is no server segment", () => {
+    assert.deepStrictEqual(
+      parseMcpToolName("mcp__solo"),
+      { server: null, tool: "solo", display: "solo" }
+    );
+  });
+
+  it("returns null for non-MCP tool names (raw fallback path)", () => {
+    for (const name of ["Bash", "Edit", "CodexExec", "KimiPermission", "ExitPlanMode", "AskUserQuestion"]) {
+      assert.strictEqual(parseMcpToolName(name), null, `${name} must not be treated as MCP`);
+    }
+  });
+
+  it("never throws and falls back to null for malformed / empty input", () => {
+    for (const bad of ["", "MCP__", "mcp__", "MCP", "mcp", "__", "MCP____", null, undefined, 42, {}]) {
+      assert.strictEqual(parseMcpToolName(bad), null, `${JSON.stringify(bad)} must return null`);
+    }
+  });
+
+  it("returns null for trailing / middle empty segments (raw fallback, not partial label)", () => {
+    // Regression for the lenient-parse concern: a stray "__" must not drop the
+    // real tool segment and show a misleading "server · server" style label.
+    for (const bad of [
+      "MCP__CODEX_APPS__VERCEL__", // trailing "__" — would have shown "codex_apps · vercel"
+      "mcp__github__",            // trailing "__" — would have shown "github"
+      "MCP__CODEX_APPS____VERCEL", // empty middle segment
+      "mcp____tool",              // empty middle segment
+    ]) {
+      assert.strictEqual(parseMcpToolName(bad), null, `${JSON.stringify(bad)} must be raw fallback (null)`);
+    }
   });
 });

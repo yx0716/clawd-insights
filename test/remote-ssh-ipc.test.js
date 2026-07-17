@@ -230,6 +230,56 @@ test("remoteSsh:connect 404 when profile not in snapshot", async () => {
   ipc.dispose();
 });
 
+// ── connect-on-launch sweep ──
+
+test("connectOnLaunchProfiles connects only flagged profiles", () => {
+  const ipcMain = mockIpcMain();
+  const { BrowserWindow } = mockBrowserWindow();
+  const rt = mockRuntime();
+  const connected = [];
+  rt.connect = (p) => { connected.push(p.id); };
+  const ipc = registerRemoteSshIpc({
+    ipcMain,
+    settingsController: mockSettingsController([
+      { ...baseProfile, id: "p1", connectOnLaunch: true },
+      { ...baseProfile, id: "p2", connectOnLaunch: false },
+      { ...baseProfile, id: "p3", connectOnLaunch: true },
+    ]),
+    remoteSshRuntime: rt,
+    BrowserWindow,
+    spawn: makeSucceedingSpawn().spawn,
+  });
+  const started = ipc.connectOnLaunchProfiles();
+  assert.deepEqual(started, ["p1", "p3"]);
+  assert.deepEqual(connected, ["p1", "p3"]);
+  ipc.dispose();
+});
+
+test("connectOnLaunchProfiles keeps going when one connect throws", () => {
+  const ipcMain = mockIpcMain();
+  const { BrowserWindow } = mockBrowserWindow();
+  const rt = mockRuntime();
+  const connected = [];
+  rt.connect = (p) => {
+    if (p.id === "p1") throw new Error("boom");
+    connected.push(p.id);
+  };
+  const ipc = registerRemoteSshIpc({
+    ipcMain,
+    settingsController: mockSettingsController([
+      { ...baseProfile, id: "p1", connectOnLaunch: true },
+      { ...baseProfile, id: "p2", connectOnLaunch: true },
+    ]),
+    remoteSshRuntime: rt,
+    BrowserWindow,
+    spawn: makeSucceedingSpawn().spawn,
+  });
+  const started = ipc.connectOnLaunchProfiles();
+  assert.deepEqual(started, ["p2"]);
+  assert.deepEqual(connected, ["p2"]);
+  ipc.dispose();
+});
+
 test("remoteSsh:disconnect requires profileId", async () => {
   const ipcMain = mockIpcMain();
   const { BrowserWindow } = mockBrowserWindow();
@@ -468,7 +518,7 @@ test("remoteSsh:deploy on unknown profile id → error, no stamp", async () => {
 
 // ── Authenticate / Open Terminal ──
 
-test("remoteSsh:authenticate spawns interactive ssh args (no -T, BatchMode=no override)", async () => {
+test("remoteSsh:authenticate spawns interactive ssh args (no -T, only BatchMode=no, no ConnectTimeout)", async () => {
   const ipcMain = mockIpcMain();
   const { BrowserWindow } = mockBrowserWindow();
   const calls = [];
@@ -493,11 +543,53 @@ test("remoteSsh:authenticate spawns interactive ssh args (no -T, BatchMode=no ov
   assert.equal(calls[0].args[1], "ssh");
   // Interactive ssh args MUST NOT include -T (would break remote pty).
   assert.equal(calls[0].args.includes("-T"), false, "Authenticate must drop -T");
-  // BatchMode=no must override BatchMode=yes (extraOpts after defaults).
-  const bmIndices = [];
-  calls[0].args.forEach((v, i) => { if (v && v.startsWith && v.startsWith("BatchMode=")) bmIndices.push(i); });
-  assert.equal(bmIndices.length, 2);
-  assert.equal(calls[0].args[bmIndices[bmIndices.length - 1]], "BatchMode=no");
+  // ssh -o is first-wins (see remote-ssh-runtime.js for the long comment).
+  // Interactive base is empty, so BatchMode=no from extraOpts is the ONLY
+  // BatchMode token AND the first one ssh sees → effective config allows
+  // password / passphrase / host-key prompts. This is the #348 fix.
+  const bmTokens = calls[0].args.filter((v) => typeof v === "string" && v.startsWith("BatchMode="));
+  assert.equal(bmTokens.length, 1, "interactive must carry only the explicit BatchMode=no");
+  assert.equal(bmTokens[0], "BatchMode=no");
+  // ConnectTimeout must NOT be in the interactive base — user controls the
+  // pace, and we don't want a 15s ssh-level timeout fighting their typing.
+  assert.equal(
+    calls[0].args.some((v) => typeof v === "string" && v.startsWith("ConnectTimeout=")),
+    false,
+    "interactive must not carry ConnectTimeout"
+  );
+  ipc.dispose();
+});
+
+test("remoteSsh:open-terminal uses the same interactive ssh args contract as Authenticate", async () => {
+  // open-terminal and authenticate share spawnSystemTerminalWithSsh, but pin
+  // the contract on the open-terminal IPC entry so a future split can't
+  // silently regress one without the other.
+  const ipcMain = mockIpcMain();
+  const { BrowserWindow } = mockBrowserWindow();
+  const calls = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    return makeFakeSpawnChild();
+  };
+  const ipc = registerRemoteSshIpc({
+    ipcMain,
+    settingsController: mockSettingsController([baseProfile]),
+    remoteSshRuntime: mockRuntime(),
+    BrowserWindow,
+    platform: "win32",
+    spawn,
+  });
+  const r = await ipcMain.invoke("remoteSsh:open-terminal", "p1");
+  assert.equal(r.status, "ok");
+  assert.equal(calls[0].cmd, "wt.exe");
+  assert.equal(calls[0].args.includes("-T"), false);
+  const bmTokens = calls[0].args.filter((v) => typeof v === "string" && v.startsWith("BatchMode="));
+  assert.equal(bmTokens.length, 1);
+  assert.equal(bmTokens[0], "BatchMode=no");
+  assert.equal(
+    calls[0].args.some((v) => typeof v === "string" && v.startsWith("ConnectTimeout=")),
+    false
+  );
   ipc.dispose();
 });
 

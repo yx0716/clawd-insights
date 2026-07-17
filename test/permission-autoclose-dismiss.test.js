@@ -123,10 +123,52 @@ describe("permission autoclose: no-decision dismiss semantics", () => {
     assert.equal(pendingPermissions.indexOf(permEntry), -1, "pending entry should be spliced");
   });
 
+  it("Hermes allow/deny resolutions return the documented JSON response shape", () => {
+    for (const behavior of ["allow", "deny"]) {
+      const ctx = makeCtx();
+      const { resolvePermissionEntry, pendingPermissions } = initPermission(ctx);
+      const permEntry = makePermEntry({ isHermes: true, agentId: "hermes" });
+      pendingPermissions.push(permEntry);
+
+      resolvePermissionEntry(permEntry, behavior);
+
+      assert.equal(permEntry.res.captured.statusCode, 200);
+      assert.equal(permEntry.res.captured.headers["Content-Type"], "application/json");
+      assert.deepEqual(JSON.parse(permEntry.res.captured.body), { decision: behavior });
+      assert.equal(permEntry.res.captured.destroyCalls, 0);
+      assert.equal(pendingPermissions.indexOf(permEntry), -1);
+    }
+  });
+
+  it("Hermes elicitation allow returns answers in the documented JSON response shape", () => {
+    const ctx = makeCtx();
+    const { resolvePermissionEntry, pendingPermissions } = initPermission(ctx);
+    const permEntry = makePermEntry({
+      isHermes: true,
+      isElicitation: true,
+      agentId: "hermes",
+      resolvedUpdatedInput: { answers: { "Which approach?": "A" } },
+    });
+    pendingPermissions.push(permEntry);
+
+    resolvePermissionEntry(permEntry, "allow");
+
+    assert.equal(permEntry.res.captured.statusCode, 200);
+    assert.equal(permEntry.res.captured.headers["Content-Type"], "application/json");
+    assert.deepEqual(JSON.parse(permEntry.res.captured.body), {
+      decision: "allow",
+      answers: { "Which approach?": "A" },
+    });
+    assert.equal(permEntry.res.captured.destroyCalls, 0);
+    assert.equal(pendingPermissions.indexOf(permEntry), -1);
+  });
+
   it("notifies when a resolved permission leaves the pending list", () => {
     const changes = [];
+    const resolved = [];
     const ctx = makeCtx({
       onPermissionsChanged: (reason) => changes.push(reason),
+      onPermissionResolved: (entry, meta) => resolved.push({ entry, meta }),
     });
     const { resolvePermissionEntry, pendingPermissions } = initPermission(ctx);
     const permEntry = makePermEntry();
@@ -135,7 +177,30 @@ describe("permission autoclose: no-decision dismiss semantics", () => {
     resolvePermissionEntry(permEntry, "allow");
 
     assert.deepEqual(changes, ["resolved"]);
+    assert.deepEqual(resolved, [{
+      entry: permEntry,
+      meta: { reason: "resolved", hasPendingForSession: false },
+    }]);
     assert.equal(pendingPermissions.indexOf(permEntry), -1);
+  });
+
+  it("reports when another permission for the same session is still pending", () => {
+    const resolved = [];
+    const ctx = makeCtx({
+      onPermissionResolved: (entry, meta) => resolved.push({ entry, meta }),
+    });
+    const { resolvePermissionEntry, pendingPermissions } = initPermission(ctx);
+    const first = makePermEntry({ sessionId: "same-session" });
+    const second = makePermEntry({ sessionId: "same-session" });
+    pendingPermissions.push(first, second);
+
+    resolvePermissionEntry(first, "allow");
+
+    assert.deepEqual(resolved, [{
+      entry: first,
+      meta: { reason: "resolved", hasPendingForSession: true },
+    }]);
+    assert.deepEqual(pendingPermissions, [second]);
   });
 
   it("notifies when a permission enters the pending list through the runtime helper", () => {

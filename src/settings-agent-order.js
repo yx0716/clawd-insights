@@ -6,8 +6,12 @@ function buildSettingsAgentOrderExports() {
     "codex",
     "gemini-cli",
     "kimi-cli",
+    "qwen-code",
+    "codewhale",
     "opencode",
     "codebuddy",
+    "qoder",
+    "qoderwork",
   ];
 
   const NON_COLLAPSIBLE_AGENT_PRIORITY = [
@@ -18,6 +22,7 @@ function buildSettingsAgentOrderExports() {
     "pi",
     "openclaw",
     "hermes",
+    "reasonix",
   ];
 
   const COLLAPSIBLE_AGENT_PRIORITY_MAP = new Map(

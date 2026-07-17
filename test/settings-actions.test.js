@@ -6,6 +6,7 @@ const assert = require("node:assert");
 const {
   updateRegistry,
   commandRegistry,
+  MANAGED_CLEANUP_AGENT_IDS,
   requireBoolean,
   requireFiniteNumber,
   requireEnum,
@@ -77,16 +78,24 @@ describe("updateRegistry pure-data validators", () => {
   it("function-form boolean fields reject non-booleans", () => {
     const deps = { snapshot: baseSnapshot };
     for (const key of [
-      "sessionHudEnabled", "sessionHudShowElapsed", "sessionHudCleanupDetached",
-      "sessionHudShowStateLabels", "sessionHudAutoHide", "sessionHudPinned",
+      "sessionHudEnabled", "sessionHudShowElapsed", "sessionHudShowContextUsage", "sessionHudCleanupDetached",
+      "sessionHudShowStateLabels", "sessionHudPinned",
       "miniMode", "openAtLoginHydrated", "soundMuted", "bubbleFollowPet",
       "hideBubbles", "permissionBubblesEnabled", "lowPowerIdleMode",
-      "allowEdgePinning", "keepSizeAcrossDisplays",
+      "allowEdgePinning", "disableMiniMode", "keepSizeAcrossDisplays", "codexHookHealthNotifyEnabled",
     ]) {
       assert.strictEqual(updateRegistry[key](true, deps).status, "ok", `${key}(true)`);
       assert.strictEqual(updateRegistry[key](false, deps).status, "ok", `${key}(false)`);
       assert.strictEqual(updateRegistry[key]("yes", deps).status, "error", `${key}("yes")`);
     }
+  });
+
+  it("codexHookHealthLastNotified accepts strings and empty reset", () => {
+    const deps = { snapshot: baseSnapshot };
+    assert.strictEqual(updateRegistry.codexHookHealthLastNotified("", deps).status, "ok");
+    assert.strictEqual(updateRegistry.codexHookHealthLastNotified("needs-review", deps).status, "ok");
+    assert.strictEqual(updateRegistry.codexHookHealthLastNotified(null, deps).status, "error");
+    assert.strictEqual(updateRegistry.codexHookHealthLastNotified(42, deps).status, "error");
   });
 
   it("bubble auto-close seconds require integers in range", () => {
@@ -197,6 +206,10 @@ describe("updateRegistry pure-data validators", () => {
     const deps = { snapshot: baseSnapshot };
     assert.strictEqual(updateRegistry.agents({}, deps).status, "ok");
     assert.strictEqual(updateRegistry.agents([], deps).status, "error");
+    assert.strictEqual(updateRegistry.dismissedAgentInstallHints({ "qwen-code": true }, deps).status, "ok");
+    assert.strictEqual(updateRegistry.dismissedAgentInstallHints({ "qwen-code": false }, deps).status, "error");
+    assert.strictEqual(updateRegistry.dismissedAgentCleanupHints({ "qwen-code": true }, deps).status, "ok");
+    assert.strictEqual(updateRegistry.dismissedAgentCleanupHints({ "qwen-code": false }, deps).status, "error");
     assert.strictEqual(updateRegistry.themeOverrides({}, deps).status, "ok");
     assert.strictEqual(updateRegistry.themeOverrides("nope", deps).status, "error");
   });
@@ -223,27 +236,49 @@ describe("updateRegistry pure-data validators", () => {
       allowedTgUserId: "123456789",
       targetSessionKey: "telegram:0",
     }, deps).status, "error");
+    assert.strictEqual(updateRegistry.tgApproval({
+      enabled: true,
+      allowedTgUserId: "123456789",
+      targetSessionKey: "telegram:987654321",
+      completionOutputMode: "full",
+      r3DirectSendEnabled: true,
+    }, deps).status, "ok");
+    assert.strictEqual(updateRegistry.tgApproval({
+      enabled: true,
+      allowedTgUserId: "123456789",
+      targetSessionKey: "telegram:987654321",
+      completionOutputMode: "summary",
+    }, deps).status, "error");
   });
 
-  it("hardwareBuddy accepts only the normalized product settings shape", () => {
-    assert.strictEqual(updateRegistry.hardwareBuddy({
+  it("feishuApproval validates the settings object while allowing incomplete saved config", () => {
+    const deps = { snapshot: baseSnapshot };
+    assert.strictEqual(updateRegistry.feishuApproval({
+      enabled: false,
+      idType: "open_id",
+      approverId: "",
+      connectionTimeoutSeconds: 15,
+    }, deps).status, "ok");
+    assert.strictEqual(updateRegistry.feishuApproval({
       enabled: true,
-      backend: "bleak",
-      address: "00:4B:12:A1:9E:A6",
-      namePrefix: "Claude",
-      permissionsEnabled: false,
-      quickCommandsEnabled: true,
-    }).status, "ok");
-    assert.strictEqual(updateRegistry.hardwareBuddy({ enabled: true }).status, "error");
-    assert.strictEqual(updateRegistry.hardwareBuddy({
+      idType: "open_id",
+      approverId: "ou_abc",
+      connectionTimeoutSeconds: 15,
+    }, deps).status, "ok");
+    assert.strictEqual(updateRegistry.feishuApproval({
       enabled: true,
-      backend: "serial",
-      address: "",
-      namePrefix: "Claude",
-      permissionsEnabled: false,
-      quickCommandsEnabled: false,
-    }).status, "error");
+      idType: "bad",
+      approverId: "ou_abc",
+    }, deps).status, "error");
+    assert.strictEqual(updateRegistry.feishuApproval({
+      enabled: false,
+      idType: "open_id",
+      approverId: "",
+      connectionTimeoutSeconds: 999,
+      appSecret: "should-not-live-in-prefs",
+    }, deps).status, "error");
   });
+
 
   it("sessionAliases requires a plain object of valid alias entries", () => {
     const deps = { snapshot: baseSnapshot };
@@ -273,27 +308,29 @@ describe("updateRegistry pure-data validators", () => {
 });
 
 describe("object-form effects (autoStartWithClaude / manageClaudeHooksAutomatically / openAtLogin)", () => {
-  it("autoStartWithClaude effect calls installAutoStart on true", () => {
+  it("autoStartWithClaude effect calls installAutoStart on true", async () => {
+    // installAutoStart/uninstallAutoStart go through the server-owned Claude
+    // hook operation queue (#657) and now return a Promise.
     let installCalls = 0;
     let uninstallCalls = 0;
     const deps = {
       installAutoStart: () => installCalls++,
       uninstallAutoStart: () => uninstallCalls++,
     };
-    const r = updateRegistry.autoStartWithClaude.effect(true, deps);
+    const r = await updateRegistry.autoStartWithClaude.effect(true, deps);
     assert.strictEqual(r.status, "ok");
     assert.strictEqual(installCalls, 1);
     assert.strictEqual(uninstallCalls, 0);
   });
 
-  it("autoStartWithClaude effect calls uninstallAutoStart on false", () => {
+  it("autoStartWithClaude effect calls uninstallAutoStart on false", async () => {
     let installCalls = 0;
     let uninstallCalls = 0;
     const deps = {
       installAutoStart: () => installCalls++,
       uninstallAutoStart: () => uninstallCalls++,
     };
-    const r = updateRegistry.autoStartWithClaude.effect(false, deps);
+    const r = await updateRegistry.autoStartWithClaude.effect(false, deps);
     assert.strictEqual(r.status, "ok");
     assert.strictEqual(installCalls, 0);
     assert.strictEqual(uninstallCalls, 1);
@@ -488,6 +525,86 @@ describe("telegram approval commands", () => {
     const missing = await commandRegistry["telegramApproval.tokenInfo"](null, {});
     assert.equal(missing.status, "error");
   });
+
+  it("telegramMigration.dispatch only accepts renderer-callable user events", async () => {
+    const calls = [];
+    const deps = {
+      telegramMigration: {
+        getSnapshot: () => ({ state: "TESTING_NATIVE" }),
+        dispatch: async (event) => {
+          calls.push(event);
+          return { ok: true, state: "TESTING_NATIVE" };
+        },
+      },
+    };
+
+    const allowed = await commandRegistry["telegramMigration.dispatch"](
+      { type: "USER_TEST_NATIVE" },
+      deps,
+    );
+    assert.strictEqual(allowed.status, "ok");
+    assert.deepStrictEqual(calls, [{ type: "USER_TEST_NATIVE" }]);
+
+    const blocked = await commandRegistry["telegramMigration.dispatch"](
+      { type: "TEST_SUCCESS", at: 123 },
+      deps,
+    );
+    assert.strictEqual(blocked.status, "error");
+    assert.strictEqual(blocked.errorCode, "EVENT_NOT_ALLOWED");
+    assert.deepStrictEqual(calls, [{ type: "USER_TEST_NATIVE" }]);
+  });
+});
+
+describe("feishu approval commands", () => {
+  it("feishuApproval.setSecrets delegates storage without writing secrets to prefs", async () => {
+    const calls = [];
+    const secrets = {
+      appId: "cli_123",
+      appSecret: "secret",
+      verificationToken: "verify",
+      encryptKey: "encrypt",
+    };
+    const result = await commandRegistry["feishuApproval.setSecrets"](secrets, {
+      writeFeishuApprovalSecrets: (value) => {
+        calls.push(value);
+        return { status: "ok", secretsStored: true };
+      },
+    });
+    assert.deepStrictEqual(calls, [secrets]);
+    assert.deepStrictEqual(result, { status: "ok", secretsStored: true });
+
+    const missing = await commandRegistry["feishuApproval.setSecrets"](secrets, {});
+    assert.equal(missing.status, "error");
+  });
+
+  it("feishuApproval.status, secretInfo, and test proxy injected runtime helpers", async () => {
+    const status = await commandRegistry["feishuApproval.status"](null, {
+      getFeishuApprovalStatus: () => ({ status: "running", configured: true, secretsStored: true }),
+    });
+    assert.deepStrictEqual(status, {
+      status: "ok",
+      state: { status: "running", configured: true, secretsStored: true },
+    });
+
+    const info = await commandRegistry["feishuApproval.secretInfo"](null, {
+      getFeishuApprovalSecretInfo: () => ({
+        configured: true,
+        appId: "cli_......1234",
+        appSecret: "secr......alue",
+      }),
+    });
+    assert.deepStrictEqual(info, {
+      status: "ok",
+      configured: true,
+      appId: "cli_......1234",
+      appSecret: "secr......alue",
+    });
+
+    const testResult = await commandRegistry["feishuApproval.test"](null, {
+      sendFeishuApprovalTest: async () => ({ status: "ok", decision: "deny" }),
+    });
+    assert.deepStrictEqual(testResult, { status: "ok", decision: "deny" });
+  });
 });
 
 describe("bubble policy commands", () => {
@@ -561,6 +678,38 @@ describe("bubble policy commands", () => {
       notificationBubbleAutoCloseSeconds: 6,
       updateBubbleAutoCloseSeconds: 9,
     });
+  });
+});
+
+describe("setAutoApproveAll danger gate", () => {
+  it("refuses to enable without confirmed:true (dialog is a real boundary)", async () => {
+    const r = await commandRegistry.setAutoApproveAll({ enabled: true }, {});
+    assert.strictEqual(r.status, "error");
+    assert.match(r.message, /confirmed:true/);
+  });
+
+  it("refuses to enable when confirmed is falsy", async () => {
+    for (const bad of [false, "true", 1, null, undefined]) {
+      const r = await commandRegistry.setAutoApproveAll({ enabled: true, confirmed: bad }, {});
+      assert.strictEqual(r.status, "error", `confirmed=${JSON.stringify(bad)} must be rejected`);
+    }
+  });
+
+  it("enables only with explicit confirmed:true", async () => {
+    const r = await commandRegistry.setAutoApproveAll({ enabled: true, confirmed: true }, {});
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(r.commit, { autoApproveAllPermissions: true });
+  });
+
+  it("disables immediately with no confirmation required", async () => {
+    const r = await commandRegistry.setAutoApproveAll({ enabled: false }, {});
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(r.commit, { autoApproveAllPermissions: false });
+  });
+
+  it("rejects a non-boolean enabled", async () => {
+    const r = await commandRegistry.setAutoApproveAll({ enabled: "yes", confirmed: true }, {});
+    assert.strictEqual(r.status, "error");
   });
 });
 
@@ -775,6 +924,47 @@ describe("hook commands", () => {
     assert.match(r.message, /disk locked/);
     assert.deepStrictEqual(calls, ["stop", "uninstall", "start"]);
   });
+
+  it("cleanupIntegrations disables all managed agents before running cleanup", async () => {
+    const calls = [];
+    const snapshot = prefs.getDefaults();
+    snapshot.dismissedAgentInstallHints = { hermes: true };
+    snapshot.dismissedAgentCleanupHints = { "qwen-code": true, hermes: true };
+    assert.ok(
+      MANAGED_CLEANUP_AGENT_IDS.includes("reasonix"),
+      "bulk cleanup should include Reasonix hooks"
+    );
+    const result = await commandRegistry.cleanupIntegrations(null, {
+      snapshot,
+      stopIntegrationForAgent: (agentId) => calls.push(["stopIntegration", agentId]),
+      stopMonitorForAgent: (agentId) => calls.push(["stopMonitor", agentId]),
+      clearSessionsByAgent: (agentId) => calls.push(["clearSessions", agentId]),
+      dismissPermissionsByAgent: (agentId) => calls.push(["dismissPermissions", agentId]),
+      cleanupIntegrations: (options) => {
+        calls.push(["cleanup", options.source]);
+        return {
+          mode: "apply",
+          summary: { agentsChecked: 15, agentsAffected: 2, entriesRemoved: 3, skipped: 13, failed: 0 },
+        };
+      },
+    });
+
+    assert.strictEqual(result.status, "ok");
+    assert.strictEqual(commandRegistry.cleanupIntegrations.lockKey, "agentIntegration");
+    assert.strictEqual(result.cleanup.summary.entriesRemoved, 3);
+    for (const agentId of MANAGED_CLEANUP_AGENT_IDS) {
+      assert.strictEqual(result.commit.agents[agentId].enabled, false, `${agentId} should be disabled`);
+      assert.strictEqual(result.commit.agents[agentId].integrationInstalled, false, `${agentId} should be uninstalled`);
+      assert.strictEqual(
+        result.commit.dismissedAgentInstallHints[agentId],
+        true,
+        `${agentId} install hint should be dismissed after bulk cleanup`
+      );
+    }
+    assert.deepStrictEqual(result.commit.dismissedAgentCleanupHints, {});
+    assert.deepStrictEqual(calls.at(-1), ["cleanup", "about"]);
+    assert.deepStrictEqual(calls[0], ["stopIntegration", "claude-code"]);
+  });
 });
 
 describe("doctor repair commands", () => {
@@ -808,16 +998,21 @@ describe("doctor repair commands", () => {
     assert.deepStrictEqual(calls, [{ agentId: "codex", options: { forceCodexHooksFeature: true } }]);
   });
 
-  it("rejects Copilot CLI because it is manual-only", async () => {
+  it("accepts Copilot CLI through the standard auto-repair path", async () => {
     const calls = [];
+    const snapshot = prefs.getDefaults();
+    snapshot.agents["copilot-cli"].integrationInstalled = true;
+    snapshot.agents["copilot-cli"].enabled = true;
     const r = await commandRegistry.repairAgentIntegration({ agentId: "copilot-cli" }, {
-      snapshot: prefs.getDefaults(),
-      repairIntegrationForAgent: (agentId) => calls.push(agentId),
+      snapshot,
+      repairIntegrationForAgent: (agentId) => {
+        calls.push(agentId);
+        return { status: "ok", added: 10, updated: 0 };
+      },
     });
 
-    assert.strictEqual(r.status, "error");
-    assert.match(r.message, /manual/i);
-    assert.deepStrictEqual(calls, []);
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(calls, ["copilot-cli"]);
   });
 
   it("does not repair disabled agents", async () => {
@@ -2047,6 +2242,68 @@ describe("importAnimationOverrides command", () => {
     const r = commandRegistry.importAnimationOverrides(validPayload, { snapshot });
     assert.strictEqual(r.status, "ok");
     assert.ok(r.commit.themeOverrides.clawd);
+  });
+});
+
+describe("textScaleByDisplay validator", () => {
+  it("has a registry entry so command commits pass controller validation", () => {
+    // Regression: the controller rejects command commits whose keys lack a
+    // registry validator ("unknown settings key textScaleByDisplay").
+    assert.strictEqual(typeof updateRegistry.textScaleByDisplay, "function");
+  });
+
+  it("accepts a valid display map and rejects junk entries", () => {
+    assert.strictEqual(updateRegistry.textScaleByDisplay({ "1": 1.35, "2": 0.8 }).status, "ok");
+    assert.strictEqual(updateRegistry.textScaleByDisplay({}).status, "ok");
+    assert.strictEqual(updateRegistry.textScaleByDisplay(null).status, "error");
+    assert.strictEqual(updateRegistry.textScaleByDisplay([1.2]).status, "error");
+    assert.strictEqual(updateRegistry.textScaleByDisplay({ "1": 99 }).status, "error");
+    assert.strictEqual(updateRegistry.textScaleByDisplay({ "1": "1.2" }).status, "error");
+    assert.strictEqual(updateRegistry.textScaleByDisplay({ " ": 1.2 }).status, "error");
+  });
+});
+
+describe("setTextScaleForDisplay command", () => {
+  it("writes the entry for the resolved display and keeps other displays", () => {
+    const r = commandRegistry.setTextScaleForDisplay({ value: 1.35 }, {
+      snapshot: { textScaleByDisplay: { "2": 1.2 } },
+      resolveTextScaleDisplayKey: () => "1",
+    });
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(r.commit, { textScaleByDisplay: { "1": 1.35, "2": 1.2 } });
+  });
+
+  it("overwrites an existing entry for the same display", () => {
+    const r = commandRegistry.setTextScaleForDisplay({ value: 1 }, {
+      snapshot: { textScaleByDisplay: { "1": 1.35 } },
+      resolveTextScaleDisplayKey: () => "1",
+    });
+    assert.deepStrictEqual(r.commit, { textScaleByDisplay: { "1": 1 } });
+  });
+
+  it("falls back to the legacy global without display context", () => {
+    const r = commandRegistry.setTextScaleForDisplay({ value: 1.25 }, { snapshot: {} });
+    assert.strictEqual(r.status, "ok");
+    assert.deepStrictEqual(r.commit, { textScale: 1.25 });
+  });
+
+  it("never evicts the entry being written when the map is at capacity", () => {
+    const full = {};
+    for (let i = 0; i < 16; i++) full[`d${i}`] = 1.2;
+    const r = commandRegistry.setTextScaleForDisplay({ value: 1.4 }, {
+      snapshot: { textScaleByDisplay: full },
+      resolveTextScaleDisplayKey: () => "fresh",
+    });
+    assert.strictEqual(r.commit.textScaleByDisplay.fresh, 1.4);
+    assert.strictEqual(Object.keys(r.commit.textScaleByDisplay).length, 16);
+  });
+
+  it("rejects out-of-range and non-numeric values", () => {
+    const deps = { snapshot: {}, resolveTextScaleDisplayKey: () => "1" };
+    assert.strictEqual(commandRegistry.setTextScaleForDisplay({ value: 0.5 }, deps).status, "error");
+    assert.strictEqual(commandRegistry.setTextScaleForDisplay({ value: 2 }, deps).status, "error");
+    assert.strictEqual(commandRegistry.setTextScaleForDisplay({ value: "abc" }, deps).status, "error");
+    assert.strictEqual(commandRegistry.setTextScaleForDisplay(null, deps).status, "error");
   });
 });
 

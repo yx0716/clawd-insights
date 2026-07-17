@@ -112,18 +112,24 @@ function registerRemoteSshIpc(options = {}) {
 
   // ── Connect / Disconnect ──
 
+  // Shared connect path: start the tunnel and, if opted in, the codex monitor.
+  // Used by both the manual `remoteSsh:connect` IPC handler and the
+  // connect-on-launch sweep so they behave identically. Throws if
+  // runtime.connect throws; the codex monitor is best-effort and never blocks.
+  function connectProfile(profile) {
+    remoteSshRuntime.connect(profile);
+    if (profile.autoStartCodexMonitor === true) {
+      startCodexMonitorFn({ profile, runtime: remoteSshRuntime, deps: { spawn } })
+        .catch((err) => log("codex monitor start failed:", err && err.message));
+    }
+  }
+
   handle("remoteSsh:connect", async (_event, payload) => {
     const id = typeof payload === "string" ? payload : (payload && payload.profileId);
     const profile = id ? findProfile(settingsController, id) : null;
     if (!profile) return { status: "error", message: "profile not found" };
     try {
-      remoteSshRuntime.connect(profile);
-      // Auto-start codex monitor if profile opted in.
-      if (profile.autoStartCodexMonitor === true) {
-        // best-effort; do not block on this
-        startCodexMonitorFn({ profile, runtime: remoteSshRuntime, deps: { spawn } })
-          .catch((err) => log("codex monitor start failed:", err && err.message));
-      }
+      connectProfile(profile);
       return { status: "ok", state: remoteSshRuntime.getProfileStatus(id) };
     } catch (err) {
       return { status: "error", message: (err && err.message) || "connect threw" };
@@ -232,9 +238,12 @@ function registerRemoteSshIpc(options = {}) {
   // Open Terminal is the same command path with a "general use" framing.
 
   function buildInteractiveSshArgs(profile) {
-    // interactive: true drops -T so the remote shell gets a proper pty.
-    // BatchMode=no overrides the BatchMode=yes from base opts via ssh's
-    // last-wins semantics, allowing host key prompts / passphrase entry.
+    // interactive: true uses SSH_INTERACTIVE_BASE_OPTS (empty) so there's no
+    // BatchMode=yes / ConnectTimeout / -T in the base. The explicit
+    // `-o BatchMode=no` here is the FIRST BatchMode token ssh sees and wins
+    // (ssh -o is first-wins; see buildSshArgs comment). That also beats a
+    // `BatchMode yes` in the user's ~/.ssh/config, since command-line -o
+    // precedes config file entries in the resolution order.
     return buildSshArgs(profile, {
       extraOpts: ["-o", "BatchMode=no"],
       interactive: true,
@@ -368,6 +377,26 @@ function registerRemoteSshIpc(options = {}) {
     return r.ok ? { status: "ok", terminal: r.terminal } : { status: "error", message: r.message };
   });
 
+  // Connect every profile flagged `connectOnLaunch`. Called once from main.js
+  // after the hook server is up. Best-effort and silent: a failed connect is
+  // logged but never blocks startup, and the runtime's own retry/backoff takes
+  // over from there. Returns the ids it kicked off (for tests / diagnostics).
+  function connectOnLaunchProfiles() {
+    const snap = settingsController.getSnapshot();
+    const list = (snap.remoteSsh && Array.isArray(snap.remoteSsh.profiles)) ? snap.remoteSsh.profiles : [];
+    const started = [];
+    for (const profile of list) {
+      if (!profile || profile.connectOnLaunch !== true) continue;
+      try {
+        connectProfile(profile);
+        started.push(profile.id);
+      } catch (err) {
+        log("connect-on-launch failed for", profile.id, err && err.message);
+      }
+    }
+    return started;
+  }
+
   function dispose() {
     while (disposers.length) {
       const d = disposers.pop();
@@ -377,6 +406,7 @@ function registerRemoteSshIpc(options = {}) {
 
   return {
     dispose,
+    connectOnLaunchProfiles,
     // Exposed for tests
     _internal: {
       buildInteractiveSshArgs,

@@ -3,7 +3,41 @@
 const path = require("path");
 const { sessionAliasKey } = require("./session-alias");
 const { getSessionFocusTarget } = require("./session-focus");
+const {
+  buildLatestLocalCodexProcessIds,
+  isSupersededLocalCodexProcessSession,
+} = require("./state-session-dedupe");
 const { readCodexThreadName } = require("../hooks/codex-session-index");
+const { normalizeQuotaGroup } = require("../hooks/quota-bucket");
+const { ANTIGRAVITY_QUOTA_FIELDS } = require("../hooks/antigravity-context-usage");
+const { CLAUDE_QUOTA_FIELDS } = require("../hooks/claude-rate-limits");
+
+// ── Session source derivation ────────────────────────────────────────
+
+const WSL_HOST_PREFIX = "wsl:";
+
+function deriveSourceInfo(host) {
+  if (typeof host === "string" && host.startsWith(WSL_HOST_PREFIX)) {
+    const distro = host.slice(WSL_HOST_PREFIX.length) || "unknown";
+    return {
+      sourceType: "wsl",
+      sourceLabel: distro,
+      displayLabel: `WSL: ${distro}`,
+    };
+  }
+  if (typeof host === "string" && host && host !== "local") {
+    return {
+      sourceType: "ssh",
+      sourceLabel: host,
+      displayLabel: host,
+    };
+  }
+  return {
+    sourceType: "local",
+    sourceLabel: "",
+    displayLabel: "",
+  };
+}
 
 const EVENT_LABEL_KEYS = {
   SessionStart: "eventLabelSessionStart",
@@ -15,6 +49,7 @@ const EVENT_LABEL_KEYS = {
   AfterAgent: "eventLabelAfterAgent",
   Stop: "eventLabelStop",
   StopFailure: "eventLabelStopFailure",
+  ApiError: "eventLabelApiError",
   SubagentStart: "eventLabelSubagentStart",
   SubagentStop: "eventLabelSubagentStop",
   PreCompress: "eventLabelPreCompress",
@@ -27,7 +62,9 @@ const EVENT_LABEL_KEYS = {
   "stale-cleanup": "eventLabelStaleCleanup",
 };
 
-const DONE_EVENTS = new Set(["Stop", "PostCompact", "event_msg:task_complete"]);
+// PostCompact intentionally excluded (#406): compaction finishing is not turn
+// completion, so it must not raise the "done" badge.
+const DONE_EVENTS = new Set(["Stop", "event_msg:task_complete"]);
 
 function isDoneEvent(event) {
   return DONE_EVENTS.has(event);
@@ -53,6 +90,17 @@ function sessionUpdatedAt(session) {
   return Number.isFinite(updatedAt) ? updatedAt : 0;
 }
 
+// A persisted session counts as "in progress" when it is non-headless and its
+// stored state is anything other than idle/sleeping (mirrors deriveSessionBadge's
+// "running" semantics). One-shot visuals like attention/notification are
+// normally stored as idle by updateSession(); permission prompts stay awake by
+// preserving the prior working/thinking state.
+function isSessionInProgress(session) {
+  if (!session || session.headless) return false;
+  if (session.state === "idle" || session.state === "sleeping") return false;
+  return true;
+}
+
 function deriveSessionBadge(session) {
   if (!session) return "idle";
   if (session.state !== "idle" && session.state !== "sleeping") return "running";
@@ -61,7 +109,7 @@ function deriveSessionBadge(session) {
   const events = Array.isArray(session.recentEvents) ? session.recentEvents : [];
   const latest = events.length ? events[events.length - 1] : null;
   const latestEvent = latest && latest.event;
-  if (latestEvent === "StopFailure" || latestEvent === "PostToolUseFailure") return "interrupted";
+  if (latestEvent === "StopFailure" || latestEvent === "PostToolUseFailure" || latestEvent === "ApiError") return "interrupted";
   if (isDoneEvent(latestEvent)) return "done";
   return "idle";
 }
@@ -126,7 +174,18 @@ function sessionDisplayTitle(id, sessionLike, sessionAliases = {}, options = {})
   const title = getEffectiveSessionTitle(id, sessionLike, options);
   if (title) return title;
   const cwd = sessionLike && sessionLike.cwd;
-  if (cwd) return path.basename(cwd);
+  if (cwd && typeof cwd === "string") {
+    // Skip the cwd fallback only for QoderWork sessions running inside a
+    // QoderWork internal workspace (~/.qoderwork/workspace/<id>) — the raw
+    // workspace ID like "mqgw60jiigjsjcid" is meaningless to the user. Other
+    // agents keep the basename fallback even under that path.
+    const isQoderWorkSession = (sessionLike && sessionLike.agentId === "qoderwork")
+      || (typeof id === "string" && id.startsWith("qoderwork:"));
+    const isQoderWorkWorkspaceCwd = /\/\.qoderwork\/workspace\/[^/]+$/.test(cwd.replace(/\\/g, "/"));
+    if (!(isQoderWorkSession && isQoderWorkWorkspaceCwd)) {
+      return path.basename(cwd);
+    }
+  }
   return id && id.length > 6 ? `${id.slice(0, 6)}..` : id;
 }
 
@@ -156,10 +215,14 @@ function buildSessionSnapshotEntry(id, session, sessionAliases = {}, options = {
     ? options.getAgentIconUrl
     : () => null;
   const state = (session && session.state) || "idle";
-  const hiddenFromHud = shouldAutoClearDetachedSession(session, badge, options);
+  const hiddenFromHud = shouldAutoClearDetachedSession(session, badge, options)
+    || isSupersededLocalCodexProcessSession(id, session, options.latestLocalCodexProcessIds);
   const focusTarget = session && !session.headless && state !== "sleeping" && !hiddenFromHud
-    ? getSessionFocusTarget({ ...(session || {}), id })
+    ? getSessionFocusTarget({ ...(session || {}), id }, {
+      osPlatform: options.focusHostPlatform || options.osPlatform,
+    })
     : { canFocus: false, type: null, url: null };
+  const source = deriveSourceInfo(session && session.host);
   return {
     id,
     agentId: (session && session.agentId) || null,
@@ -172,17 +235,32 @@ function buildSessionSnapshotEntry(id, session, sessionAliases = {}, options = {
     displayTitle: sessionDisplayTitle(id, session, sessionAliases, options),
     cwd: (session && session.cwd) || "",
     updatedAt: sessionUpdatedAt(session),
+    // Quota/context freshness (statusline metadata POSTs, which do not bump
+    // updatedAt). Excluded from sessionSnapshotSignature, like updatedAt.
+    metadataUpdatedAt: (session && Number.isFinite(session.metadataUpdatedAt)) ? session.metadataUpdatedAt : null,
     sourcePid: (session && session.sourcePid) || null,
     wtHwnd: (session && session.wtHwnd) || null,
+    editor: (session && session.editor) || null,
     canFocus: focusTarget.canFocus === true,
     focusTarget: focusTarget.type ? { type: focusTarget.type, url: focusTarget.url || null } : null,
     host: (session && session.host) || null,
+    wslDistro: (session && session.wslDistro) || null,
+    sourceType: source.sourceType,
+    sourceLabel: source.sourceLabel,
+    sourceDisplayLabel: source.displayLabel,
     headless: !!(session && session.headless),
     platform: (session && session.platform) || null,
     model: (session && session.model) || null,
     provider: (session && session.provider) || null,
     codexOriginator: (session && session.codexOriginator) || null,
     codexSource: (session && session.codexSource) || null,
+    contextUsage: snapshotContextUsage(session),
+    antigravityQuota: normalizeQuotaGroup(session && session.antigravityQuota, ANTIGRAVITY_QUOTA_FIELDS),
+    claudeQuota: normalizeQuotaGroup(session && session.claudeQuota, CLAUDE_QUOTA_FIELDS),
+    assistantLastOutput: (session && typeof session.assistantLastOutput === "string")
+      ? session.assistantLastOutput
+      : null,
+    assistantLastOutputTruncated: !!(session && session.assistantLastOutputTruncated === true),
     lastEvent: latestEvent ? {
       labelKey: rawEvent ? (EVENT_LABEL_KEYS[rawEvent] || null) : null,
       rawEvent,
@@ -192,6 +270,20 @@ function buildSessionSnapshotEntry(id, session, sessionAliases = {}, options = {
     // ackedAt stays internal — only the boolean reaches renderers.
     requiresCompletionAck: !!(session && session.requiresCompletionAck === true),
   };
+}
+
+function snapshotContextUsage(session) {
+  const usage = session && session.contextUsage;
+  if (!usage || typeof usage !== "object") return null;
+  const used = Number(usage.used);
+  if (!Number.isFinite(used) || used < 0) return null;
+  const out = { used };
+  const limit = Number(usage.limit);
+  if (Number.isFinite(limit) && limit > 0) out.limit = limit;
+  const percent = Number(usage.percent);
+  if (Number.isFinite(percent)) out.percent = Math.max(0, Math.min(100, Math.round(percent)));
+  if (usage.source === "claude" || usage.source === "codex" || usage.source === "antigravity") out.source = usage.source;
+  return out;
 }
 
 function normalizeSessionsIterable(sessions) {
@@ -206,8 +298,12 @@ function buildSessionSnapshot(sessions, options = {}) {
   const sessionAliases = options.sessionAliases && typeof options.sessionAliases === "object"
     ? options.sessionAliases
     : {};
+  const latestLocalCodexProcessIds = buildLatestLocalCodexProcessIds(sessions);
   for (const [id, session] of normalizeSessionsIterable(sessions)) {
-    entries.push(buildSessionSnapshotEntry(id, session, sessionAliases, options));
+    entries.push(buildSessionSnapshotEntry(id, session, sessionAliases, {
+      ...options,
+      latestLocalCodexProcessIds,
+    }));
   }
 
   const dashboardEntries = entries.slice().sort(sessionUpdatedAtComparator);
@@ -221,16 +317,20 @@ function buildSessionSnapshot(sessions, options = {}) {
   const groupMap = new Map();
   for (const entry of dashboardEntries) {
     const host = entry.host || "";
-    if (!groupMap.has(host)) groupMap.set(host, []);
-    groupMap.get(host).push(entry.id);
+    if (!groupMap.has(host)) {
+      const displayHost = entry.sourceDisplayLabel || host;
+      groupMap.set(host, { ids: [], displayHost });
+    }
+    groupMap.get(host).ids.push(entry.id);
   }
   const groups = [];
   if (groupMap.has("")) {
-    groups.push({ host: "", ids: groupMap.get("") });
+    const g = groupMap.get("");
+    groups.push({ host: "", ids: g.ids, displayHost: "" });
   }
-  for (const [host, ids] of groupMap) {
+  for (const [host, g] of groupMap) {
     if (!host) continue;
-    groups.push({ host, ids });
+    groups.push({ host, ids: g.ids, displayHost: g.displayHost });
   }
 
   const lastSession = dashboardEntries[0] || null;
@@ -286,11 +386,17 @@ function sessionSnapshotSignature(snapshot) {
       headless: entry.headless,
       hiddenFromHud: !!entry.hiddenFromHud,
       host: entry.host,
+      wslDistro: entry.wslDistro,
       platform: entry.platform,
       model: entry.model,
       provider: entry.provider,
       codexOriginator: entry.codexOriginator,
       codexSource: entry.codexSource,
+      contextUsage: entry.contextUsage,
+      antigravityQuota: entry.antigravityQuota,
+      claudeQuota: entry.claudeQuota,
+      assistantLastOutput: entry.assistantLastOutput,
+      assistantLastOutputTruncated: !!entry.assistantLastOutputTruncated,
       lastEventLabelKey: entry.lastEvent ? entry.lastEvent.labelKey : null,
       lastEventRawEvent: entry.lastEvent ? entry.lastEvent.rawEvent : null,
       lastEventAt: entry.lastEvent ? entry.lastEvent.at : null,
@@ -302,8 +408,10 @@ function sessionSnapshotSignature(snapshot) {
 module.exports = {
   EVENT_LABEL_KEYS,
   SESSION_TITLE_MAX,
+  deriveSourceInfo,
   normalizeTitle,
   sessionUpdatedAt,
+  isSessionInProgress,
   deriveSessionBadge,
   shouldAutoClearDetachedSession,
   getSessionAliasEntry,

@@ -2,6 +2,7 @@
 
 const { BrowserWindow, nativeTheme } = require("electron");
 const path = require("path");
+const { clampTextScale, scaleWidth, scaleHeight, applyZoomToWindow } = require("./text-scale");
 
 const DEFAULT_WIDTH = 480;
 const DEFAULT_HEIGHT = 600;
@@ -49,6 +50,21 @@ module.exports = function initDashboard(ctx) {
       : { sessions: [], groups: [], orderedIds: [], menuOrderedIds: [] };
   }
 
+  function getTextScale() {
+    return clampTextScale(typeof ctx.getTextScale === "function" ? ctx.getTextScale() : 1);
+  }
+
+  // DEFAULT_*/MIN_* are CSS px; windows are sized in DIP.
+  function getScaledMetrics() {
+    const scale = getTextScale();
+    return {
+      defaultWidth: scaleWidth(DEFAULT_WIDTH, scale),
+      defaultHeight: scaleHeight(DEFAULT_HEIGHT, scale),
+      minWidth: scaleWidth(MIN_WIDTH, scale),
+      minHeight: scaleHeight(MIN_HEIGHT, scale),
+    };
+  }
+
   function computeInitialBounds() {
     const petBounds = typeof ctx.getPetWindowBounds === "function"
       ? ctx.getPetWindowBounds()
@@ -58,8 +74,9 @@ module.exports = function initDashboard(ctx) {
     const workArea = typeof ctx.getNearestWorkArea === "function"
       ? ctx.getNearestWorkArea(cx, cy)
       : { x: 0, y: 0, width: 1280, height: 800 };
-    const width = Math.min(DEFAULT_WIDTH, Math.max(MIN_WIDTH, workArea.width));
-    const height = Math.min(DEFAULT_HEIGHT, Math.max(MIN_HEIGHT, workArea.height));
+    const metrics = getScaledMetrics();
+    const width = Math.min(metrics.defaultWidth, Math.max(metrics.minWidth, workArea.width));
+    const height = Math.min(metrics.defaultHeight, Math.max(metrics.minHeight, workArea.height));
     return {
       x: Math.round(workArea.x + (workArea.width - width) / 2),
       y: Math.round(workArea.y + (workArea.height - height) / 2),
@@ -89,8 +106,9 @@ module.exports = function initDashboard(ctx) {
     const workArea = typeof ctx.getNearestWorkArea === "function"
       ? ctx.getNearestWorkArea(cx, cy)
       : { x: 0, y: 0, width: 1280, height: 800 };
-    const width = Math.max(MIN_WIDTH, Math.min(DEFAULT_WIDTH, settingsBounds.width, workArea.width));
-    const height = Math.max(MIN_HEIGHT, Math.min(settingsBounds.height, workArea.height));
+    const metrics = getScaledMetrics();
+    const width = Math.max(metrics.minWidth, Math.min(metrics.defaultWidth, settingsBounds.width, workArea.width));
+    const height = Math.max(metrics.minHeight, Math.min(settingsBounds.height, workArea.height));
     return clampBoundsToWorkArea({
       x: settingsBounds.x + (settingsBounds.width - width) / 2,
       y: settingsBounds.y,
@@ -122,6 +140,10 @@ module.exports = function initDashboard(ctx) {
     const placement = getDashboardPlacement(options);
     if (isUsableBounds(placement.bounds) && typeof dashboardWindow.setBounds === "function") {
       dashboardWindow.setBounds(placement.bounds);
+      // The anchored placement can land the window on a display with a
+      // different textScale; re-zoom right away (memoized — cheap no-op when
+      // nothing changed).
+      applyTextScaleToWindow();
     }
   }
 
@@ -149,10 +171,11 @@ module.exports = function initDashboard(ctx) {
 
   function createDashboardWindow(options = {}) {
     const placement = getDashboardPlacement(options);
+    const metrics = getScaledMetrics();
     const opts = {
       ...placement.bounds,
-      minWidth: MIN_WIDTH,
-      minHeight: MIN_HEIGHT,
+      minWidth: metrics.minWidth,
+      minHeight: metrics.minHeight,
       show: false,
       frame: true,
       transparent: false,
@@ -174,7 +197,18 @@ module.exports = function initDashboard(ctx) {
     dashboardWindow = new BrowserWindow(opts);
     dashboardWindow.setMenuBarVisibility(false);
     dashboardWindow.loadFile(path.join(__dirname, "dashboard.html"));
+    // textScale is per-display: re-resolve after the user drags the window
+    // somewhere else (debounced — "move" fires continuously during drags).
+    let moveTextScaleTimer = null;
+    dashboardWindow.on("move", () => {
+      if (moveTextScaleTimer) clearTimeout(moveTextScaleTimer);
+      moveTextScaleTimer = scheduleLater(() => {
+        moveTextScaleTimer = null;
+        applyTextScaleToWindow();
+      }, 350);
+    });
     dashboardWindow.webContents.once("did-finish-load", () => {
+      applyZoomToWindow(dashboardWindow, getTextScale());
       sendI18n();
       sendSnapshot();
     });
@@ -218,10 +252,32 @@ module.exports = function initDashboard(ctx) {
     sendSnapshot(snapshot);
   }
 
+  // textScale changed while the dashboard is open: re-zoom, raise the minimum
+  // size, and only grow the window if it now sits below that minimum — never
+  // touch a user-chosen size otherwise.
+  function applyTextScaleToWindow() {
+    if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
+    const metrics = getScaledMetrics();
+    applyZoomToWindow(dashboardWindow, getTextScale());
+    if (typeof dashboardWindow.setMinimumSize === "function") {
+      dashboardWindow.setMinimumSize(metrics.minWidth, metrics.minHeight);
+    }
+    if (typeof dashboardWindow.getBounds !== "function") return;
+    const bounds = dashboardWindow.getBounds();
+    if (bounds.width < metrics.minWidth || bounds.height < metrics.minHeight) {
+      dashboardWindow.setBounds({
+        ...bounds,
+        width: Math.max(bounds.width, metrics.minWidth),
+        height: Math.max(bounds.height, metrics.minHeight),
+      });
+    }
+  }
+
   return {
     showDashboard,
     broadcastSessionSnapshot,
     sendI18n,
     getWindow: () => dashboardWindow,
+    applyTextScaleToWindow,
   };
 };

@@ -172,6 +172,9 @@ test("settings window runtime creates the Settings BrowserWindow with taskbar id
   assert.strictEqual(win.options.webPreferences.preload, "C:\\app\\src\\preload-settings.js");
   assert.strictEqual(win.options.webPreferences.nodeIntegration, false);
   assert.strictEqual(win.options.webPreferences.contextIsolation, true);
+  assert.deepStrictEqual(win.options.webPreferences.additionalArguments, [
+    "--discord-default-app-id-present=0",
+  ]);
   assert.match(win.options.icon, /assets[\\/]icons[\\/]256x256\.png$/);
   assert.strictEqual(win.menuBarVisible, false);
   assert.strictEqual(win.loadedFile, "C:\\app\\src\\settings.html");
@@ -196,6 +199,25 @@ test("settings window runtime creates the Settings BrowserWindow with taskbar id
   win.emit("closed");
   assert.deepStrictEqual(events, ["before-create", "before-closed", "after-closed-null"]);
   assert.strictEqual(runtime.getWindow(), null);
+});
+
+test("settings window injects the Discord default-App-ID flag into the sandboxed preload", () => {
+  // The flag can't be require()'d in a sandboxed preload, so it must ride
+  // additionalArguments. A missing/drifted injection here blanked the entire
+  // Settings window once — this guards both the presence and the "1"/"0" value.
+  const present = createRuntime({ runtime: { discordDefaultAppIdPresent: true } });
+  present.runtime.open();
+  assert.deepStrictEqual(
+    FakeBrowserWindow.instances[0].options.webPreferences.additionalArguments,
+    ["--discord-default-app-id-present=1"],
+  );
+
+  const absent = createRuntime({ runtime: { discordDefaultAppIdPresent: false } });
+  absent.runtime.open();
+  assert.deepStrictEqual(
+    FakeBrowserWindow.instances[0].options.webPreferences.additionalArguments,
+    ["--discord-default-app-id-present=0"],
+  );
 });
 
 test("settings window runtime reuses an existing non-destroyed Settings window", () => {
@@ -309,4 +331,43 @@ test("settings window runtime skips temporary front lift outside Windows", () =>
 
   assert.deepStrictEqual(win.calls.slice(-3), ["show", "moveTop", "focus"]);
   assert.strictEqual(win.calls.some((call) => Array.isArray(call) && call[0] === "setAlwaysOnTop"), false);
+});
+
+test("settings window move re-applies text scale and pokes the slider context (debounced)", () => {
+  const { runtime, timers } = createRuntime();
+
+  runtime.open();
+  const win = FakeBrowserWindow.instances[0];
+  const sends = [];
+  win.webContents = {
+    isDestroyed: () => false,
+    send: (channel) => sends.push(channel),
+  };
+
+  // Two quick moves: the first debounce timer is superseded, nothing fires
+  // until the surviving timer runs.
+  win.emit("move");
+  win.emit("move");
+  const moveTimers = timers.filter((timer) => timer.delay === 350);
+  assert.strictEqual(moveTimers.length, 2);
+  assert.strictEqual(moveTimers[0].cleared, true);
+  assert.strictEqual(moveTimers[1].cleared, false);
+  assert.deepStrictEqual(sends, []);
+
+  moveTimers[1].callback();
+  assert.deepStrictEqual(sends, ["settings:text-scale-context-changed"]);
+});
+
+test("applyTextScaleToWindow pokes the slider context even when zoom injection is unavailable", () => {
+  const { runtime } = createRuntime();
+
+  runtime.open();
+  const win = FakeBrowserWindow.instances[0];
+  const sends = [];
+  // No insertCSS: applyZoomToWindow bails, but the context poke (which the
+  // cross-display slider sync depends on) must still go out.
+  win.webContents = { send: (channel) => sends.push(channel) };
+
+  runtime.applyTextScaleToWindow();
+  assert.deepStrictEqual(sends, ["settings:text-scale-context-changed"]);
 });

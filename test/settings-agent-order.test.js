@@ -36,11 +36,14 @@ describe("settings agent order", () => {
       { id: "gemini-cli", name: "Gemini CLI", capabilities: { notificationHook: true } },
       { id: "antigravity-cli", name: "Antigravity CLI", capabilities: {} },
       { id: "claude-code", name: "Claude Code", capabilities: { permissionApproval: true, notificationHook: true } },
+      { id: "codewhale", name: "CodeWhale", capabilities: { notificationHook: true } },
       { id: "cursor-agent", name: "Cursor Agent", capabilities: {} },
       { id: "openclaw", name: "OpenClaw", capabilities: {} },
       { id: "hermes", name: "Hermes Agent", capabilities: {} },
+      { id: "reasonix", name: "Reasonix", capabilities: { notificationHook: true } },
       { id: "codex", name: "Codex CLI", capabilities: { interactiveBubble: true } },
       { id: "kimi-cli", name: "Kimi CLI", capabilities: { permissionApproval: true, notificationHook: true } },
+      { id: "qwen-code", name: "Qwen Code", capabilities: { permissionApproval: true, notificationHook: true } },
       { id: "pi", name: "Pi", capabilities: {} },
     ]);
 
@@ -49,8 +52,11 @@ describe("settings agent order", () => {
       "codex",
       "gemini-cli",
       "kimi-cli",
+      "qwen-code",
+      "codewhale",
       "opencode",
       "codebuddy",
+      "reasonix",
       "antigravity-cli",
       "cursor-agent",
       "copilot-cli",
@@ -59,6 +65,15 @@ describe("settings agent order", () => {
       "openclaw",
       "hermes",
     ]);
+  });
+
+  it("places Qoder in the collapsible group right after codebuddy", () => {
+    const sorted = sortAgentMetadataForSettings([
+      { id: "qoder", name: "Qoder", capabilities: { notificationHook: true } },
+      { id: "codebuddy", name: "CodeBuddy", capabilities: { permissionApproval: true, notificationHook: true } },
+      { id: "claude-code", name: "Claude Code", capabilities: { permissionApproval: true } },
+    ]);
+    assert.deepStrictEqual(sorted.map((agent) => agent.id), ["claude-code", "codebuddy", "qoder"]);
   });
 
   it("keeps unknown agents in their group but appends them after known priorities by name", () => {

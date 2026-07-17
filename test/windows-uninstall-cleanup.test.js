@@ -109,6 +109,10 @@ describe("Windows NSIS Claude hook uninstall cleanup", () => {
     assert.match(nsis, /!macro customUnInstall/);
     assert.match(nsis, /File "\/oname=\$INSTDIR\\uninstall-claude-hooks\.ps1"/);
     assert.match(nsis, /FileWrite \$0 "\$PROFILE"/);
+    assert.match(nsis, /FileRead \$0 \$1/);
+    assert.match(nsis, /ELECTRON_RUN_AS_NODE/);
+    assert.match(nsis, /resources\\app\.asar\.unpacked\\hooks\\cleanup-integrations\.js/);
+    assert.match(nsis, /--apply --user-home "\$1" --source nsis --fail-open/);
     assert.match(nsis, /nsExec::ExecToLog 'powershell\.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "\$INSTDIR\\uninstall-claude-hooks\.ps1" -InstallDir "\$INSTDIR"'/);
   });
 

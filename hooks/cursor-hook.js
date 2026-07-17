@@ -2,7 +2,7 @@
 // Clawd — Cursor Agent hook (stdin JSON, hook_event_name; stdout JSON for gating hooks)
 // Registered in ~/.cursor/hooks.json by hooks/cursor-install.js
 
-const { postStateToRunningServer, readHostPrefix } = require("./server-config");
+const { postStateToRunningServer, readHostPrefix, applyWslSourceFields } = require("./server-config");
 const { createPidResolver, readStdinJson, getPlatformConfig } = require("./shared-process");
 
 const HOOK_TO_STATE = {
@@ -52,48 +52,85 @@ function resolveStateAndEvent(payload, hookName) {
   return HOOK_TO_STATE[hookName] || null;
 }
 
-readStdinJson().then((payload) => {
-  const argvOverride = process.argv[2];
-  const hookNameResolved = argvOverride || (payload && payload.hook_event_name) || "";
-  const mapped = resolveStateAndEvent(payload, hookNameResolved);
-  if (!mapped) {
-    process.stdout.write(stdoutForCursorHook(hookNameResolved) + "\n");
-    process.exit(0);
-    return;
-  }
+// Safety timeout: guarantee valid JSON on stdout within 1s even if stdin never
+// arrives or the process tree walk hangs. Without this Cursor would see empty
+// stdout which is invalid JSON and logs an error on every hook invocation.
+const SAFETY_TIMEOUT_MS = 800;
+let _wrote = false;
+let _exited = false;
+let safetyTimer = null;
 
-  const { state, event } = mapped;
-  if (hookNameResolved === "sessionStart" && !process.env.CLAWD_REMOTE) resolve();
+// Write the stdout response exactly once. Kept separate from process exit so the
+// hook can answer Cursor immediately yet still let the fire-and-forget POST to
+// Clawd leave the process before it exits.
+function writeStdoutOnce(outLine) {
+  if (_wrote) return;
+  _wrote = true;
+  process.stdout.write(outLine + "\n");
+}
 
-  const sessionId =
-    (payload && (payload.conversation_id || payload.session_id)) || "default";
-  let cwd = (payload && payload.cwd) || "";
-  if (!cwd && payload && Array.isArray(payload.workspace_roots) && payload.workspace_roots[0]) {
-    cwd = payload.workspace_roots[0];
-  }
+function finish(outLine) {
+  writeStdoutOnce(outLine);
+  if (_exited) return;
+  _exited = true;
+  if (safetyTimer) clearTimeout(safetyTimer);
+  process.exit(0);
+}
 
-  const { stablePid, agentPid, detectedEditor, pidChain } = resolve();
+safetyTimer = setTimeout(() => finish("{}"), SAFETY_TIMEOUT_MS);
 
-  const body = { state, session_id: sessionId, event };
-  body.agent_id = "cursor-agent";
-  const hint = displaySvgFromToolHook(hookNameResolved, payload);
-  if (hint !== undefined) body.display_svg = hint;
-  if (cwd) body.cwd = cwd;
-  if (process.env.CLAWD_REMOTE) {
-    body.host = readHostPrefix();
-  } else {
-    body.source_pid = stablePid;
-    body.editor = detectedEditor || "cursor";
-    if (agentPid) {
-      body.agent_pid = agentPid;
-      body.cursor_pid = agentPid;
+readStdinJson()
+  .then((payload) => {
+    const argvOverride = process.argv[2];
+    const hookNameResolved = argvOverride || (payload && payload.hook_event_name) || "";
+    const mapped = resolveStateAndEvent(payload, hookNameResolved);
+    const outLine = stdoutForCursorHook(hookNameResolved);
+
+    if (!mapped) {
+      finish(outLine);
+      return;
     }
-    if (pidChain.length) body.pid_chain = pidChain;
-  }
 
-  const outLine = stdoutForCursorHook(hookNameResolved);
-  postStateToRunningServer(JSON.stringify(body), { timeoutMs: 100 }, () => {
-    process.stdout.write(outLine + "\n");
-    process.exit(0);
-  });
-});
+    const { state, event } = mapped;
+    if (hookNameResolved === "sessionStart" && !process.env.CLAWD_REMOTE) resolve();
+
+    const sessionId =
+      (payload && (payload.conversation_id || payload.session_id)) || "default";
+    let cwd = (payload && payload.cwd) || "";
+    if (!cwd && payload && Array.isArray(payload.workspace_roots) && payload.workspace_roots[0]) {
+      cwd = payload.workspace_roots[0];
+    }
+
+    const { stablePid, agentPid, detectedEditor, pidChain, tmuxSocket, tmuxClient } = resolve();
+
+    const body = { state, session_id: sessionId, event };
+    body.agent_id = "cursor-agent";
+    const hint = displaySvgFromToolHook(hookNameResolved, payload);
+    if (hint !== undefined) body.display_svg = hint;
+    if (cwd) body.cwd = cwd;
+    if (process.env.CLAWD_REMOTE) {
+      body.host = readHostPrefix();
+      applyWslSourceFields(body, { remote: true });
+    } else {
+      applyWslSourceFields(body);
+      body.source_pid = stablePid;
+      body.editor = detectedEditor || "cursor";
+      if (agentPid) {
+        body.agent_pid = agentPid;
+        body.cursor_pid = agentPid;
+      }
+      if (pidChain.length) body.pid_chain = pidChain;
+      if (tmuxSocket) body.tmux_socket = tmuxSocket;
+      if (tmuxClient) body.tmux_client = tmuxClient;
+    }
+
+    // Answer Cursor immediately so it never sees empty/malformed stdout, but
+    // don't exit yet — the fire-and-forget POST below still needs to leave the
+    // process, so we exit in its callback (with the safety timer as backstop).
+    writeStdoutOnce(outLine);
+
+    postStateToRunningServer(JSON.stringify(body), { timeoutMs: 100 }, () => {
+      finish(outLine);
+    });
+  })
+  .catch(() => finish("{}"));

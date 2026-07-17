@@ -91,6 +91,89 @@ function tokenizeCommand(command) {
   return tokens;
 }
 
+function looksLikeNodeCandidate(value) {
+  const text = String(value || "");
+  const base = path.basename(text.replace(/\\/g, "/")).toLowerCase();
+  return base === "node" || base === "node.exe";
+}
+
+function looksLikeHookScriptToken(value) {
+  return typeof value === "string" && /\.js$/i.test(value);
+}
+
+function looksLikePrimaryHookScriptToken(value) {
+  return typeof value === "string" && /(?:^|[\\/])[^\\/]*hook\.js$/i.test(value);
+}
+
+function extractQuotedTokens(command) {
+  const tokens = [];
+  const quotedRe = /'((?:''|[^'])*)'|"((?:\\"|[^"])*)"/g;
+  let match;
+  while ((match = quotedRe.exec(String(command || "")))) {
+    if (match[1] !== undefined) tokens.push(match[1].replace(/''/g, "'"));
+    else tokens.push(match[2].replace(/\\"/g, "\"").replace(/\\\\/g, "\\"));
+  }
+  return tokens;
+}
+
+function parseNodeScriptPairFromTokens(tokens) {
+  if (!Array.isArray(tokens)) return null;
+  const skip = new Set(["&", "=", "try", "{", "}", ";"]);
+  // A token consumed by a preload flag (--require/--import/--loader X) is NOT
+  // the hook script even when it ends in hook.js (e.g. a "pre-hook.js" preload).
+  const preloadFlags = new Set(["-r", "--require", "--import", "--loader", "--experimental-loader"]);
+  const consumed = new Set();
+  for (let k = 0; k < tokens.length - 1; k++) {
+    if (preloadFlags.has(tokens[k])) consumed.add(k + 1);
+  }
+  const pick = (pred) => tokens
+    .map((token, index) => ({ token, index }))
+    .filter(({ token, index }) => !consumed.has(index) && pred(token));
+  let scriptIndexes = pick(looksLikePrimaryHookScriptToken);
+  if (!scriptIndexes.length) scriptIndexes = pick(looksLikeHookScriptToken);
+  // Prefer the LAST matching script: the real hook script is the final
+  // positional argument, after any preload modules.
+  for (let s = scriptIndexes.length - 1; s >= 0; s--) {
+    const i = scriptIndexes[s].index;
+    for (let j = i - 1; j >= 0; j--) {
+      const candidate = tokens[j];
+      if (!candidate || skip.has(candidate) || candidate.startsWith("$")) continue;
+      if (!looksLikeNodeCandidate(candidate)) continue;
+      return {
+        ok: true,
+        nodeBin: candidate,
+        scriptPath: tokens[i],
+      };
+    }
+  }
+  return null;
+}
+
+function parseNodeScriptPairFromQuotedText(command) {
+  return parseNodeScriptPairFromTokens(extractQuotedTokens(command));
+}
+
+function extractPowerShellSingleQuotedAssignment(command, name) {
+  const pattern = new RegExp(`\\$psi\\.${name}\\s*=\\s*'((?:''|[^'])*)'`, "i");
+  const match = String(command || "").match(pattern);
+  return match ? match[1].replace(/''/g, "'") : null;
+}
+
+function parseProcessStartInfoNodePair(command) {
+  const nodeBin = extractPowerShellSingleQuotedAssignment(command, "FileName");
+  const args = extractPowerShellSingleQuotedAssignment(command, "Arguments");
+  if (!looksLikeNodeCandidate(nodeBin) || !args) return null;
+  const argTokens = tokenizeCommand(args);
+  if (!argTokens) return null;
+  const scriptToken = argTokens.find((token) => looksLikeHookScriptToken(token));
+  if (!scriptToken) return null;
+  return {
+    ok: true,
+    nodeBin,
+    scriptPath: scriptToken,
+  };
+}
+
 function decodePowerShellEncodedCommand(command) {
   const withoutCmd = stripCmdWrapper(command);
   const withoutPsEnv = stripPowerShellEnvPrefix(withoutCmd);
@@ -117,6 +200,7 @@ function commandContainsFragment(command, fragment) {
 function parseHookCommand(command, depth = 0) {
   const withoutCmd = stripCmdWrapper(command);
   const withoutPsEnv = stripPowerShellEnvPrefix(withoutCmd);
+  const quotedSource = stripPowerShellCallOperator(withoutPsEnv).trim();
   const withoutPosixEnv = stripPosixEnvPrefix(withoutPsEnv);
   const normalized = stripPowerShellCallOperator(withoutPosixEnv).trim();
   const tokens = tokenizeCommand(normalized);
@@ -125,6 +209,28 @@ function parseHookCommand(command, depth = 0) {
       ok: false,
       issue: "parse-failed",
       fragment: String(command || "").slice(0, HOOK_COMMAND_FRAGMENT_MAX),
+    };
+  }
+
+  const processStartInfoPair = parseProcessStartInfoNodePair(quotedSource);
+  if (processStartInfoPair) {
+    return {
+      ...processStartInfoPair,
+      normalizedCommand: normalized,
+    };
+  }
+  const quotedPair = parseNodeScriptPairFromQuotedText(quotedSource);
+  if (quotedPair) {
+    return {
+      ...quotedPair,
+      normalizedCommand: normalized,
+    };
+  }
+  const parsedPair = parseNodeScriptPairFromTokens(tokens);
+  if (parsedPair) {
+    return {
+      ...parsedPair,
+      normalizedCommand: normalized,
     };
   }
 

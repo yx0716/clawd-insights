@@ -159,6 +159,25 @@ function createCodexPetMain(options = {}) {
     lastSyncSummary = summary;
   }
 
+  function reloadActiveThemeIfUpdated(summary, activeThemeId) {
+    if (
+      !activeThemeId
+      || !summary
+      || !Array.isArray(summary.themes)
+      || typeof options.reloadActiveTheme !== "function"
+    ) {
+      return false;
+    }
+    const updatedActiveTheme = summary.themes.some((theme) => (
+      theme
+      && theme.themeId === activeThemeId
+      && theme.operation === "updated"
+    ));
+    if (!updatedActiveTheme) return false;
+    options.reloadActiveTheme();
+    return true;
+  }
+
   function getManagedThemeDir(themeId) {
     if (typeof themeId !== "string" || !themeId) return null;
     let userThemesDir;
@@ -235,6 +254,17 @@ function createCodexPetMain(options = {}) {
       if (cleanup.error) {
         return { status: "error", message: cleanup.error, summary, switchedToFallback };
       }
+    }
+
+    try {
+      reloadActiveThemeIfUpdated(summary, activeId);
+    } catch (err) {
+      return {
+        status: "error",
+        message: (err && err.message) || String(err),
+        summary,
+        switchedToFallback,
+      };
     }
 
     rebuildMenusBestEffort();
@@ -476,6 +506,7 @@ function createCodexPetMain(options = {}) {
     if (!result || result.status !== "ok") {
       throw new Error((result && result.message) || "failed to switch to imported theme");
     }
+    reloadActiveThemeIfUpdated(summary, activeId);
     rebuildMenusBestEffort({ logFailure: false });
     return { themeId: generated.themeId, summary };
   }

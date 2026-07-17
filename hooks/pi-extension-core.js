@@ -108,6 +108,23 @@ function buildPayload(options = {}) {
     : [];
   if (pidChain.length > 0) payload.pid_chain = pidChain;
 
+  const tmuxSocket = typeof metadata.tmuxSocket === "string" && /^[\w.-]{1,64}$/.test(metadata.tmuxSocket)
+    ? metadata.tmuxSocket : (
+      typeof metadata.tmuxSocket === "string"
+        && metadata.tmuxSocket.startsWith("/")
+        && metadata.tmuxSocket.length <= 4096
+        && !/[\0\r\n]/.test(metadata.tmuxSocket)
+        ? metadata.tmuxSocket : null
+    );
+  if (tmuxSocket) payload.tmux_socket = tmuxSocket;
+
+  const tmuxClient = typeof metadata.tmuxClient === "string"
+    && metadata.tmuxClient.length <= 256
+    && !metadata.tmuxClient.startsWith("-")
+    && /^[\w./:-]+$/.test(metadata.tmuxClient)
+    ? metadata.tmuxClient : null;
+  if (tmuxClient) payload.tmux_client = tmuxClient;
+
   if (metadata.editor === "code" || metadata.editor === "cursor") {
     payload.editor = metadata.editor;
   }

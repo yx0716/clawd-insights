@@ -78,8 +78,17 @@ describe("detectRunningAgentProcesses() agent coverage", () => {
     assert.strictEqual(seenFile, "powershell.exe");
     assert.match(seenScript, /'agy\.exe'/);
     assert.match(seenScript, /'kimi\.exe'/);
+    assert.match(seenScript, /'codewhale\.exe'/);
     assert.match(seenScript, /'pi\.exe'/);
+    assert.match(seenScript, /'qodercli\.exe'/);
+    assert.match(seenScript, /'qoder-cli\.exe'/);
+    // Conservative: only the Qoder CLI counts as active agent work. The IDE
+    // process (qoder.exe) must NOT trigger startup recovery.
+    assert.doesNotMatch(seenScript, /'qoder\.exe'/);
     assert.match(seenScript, /Get-CimInstance Win32_Process/);
+    assert.match(seenScript, /-Filter/);
+    assert.doesNotMatch(seenScript, /Win32_Process \| Where-Object/);
+    assert.match(seenScript, /CommandLine LIKE '%claude-code%'/);
   });
 
   it("includes agy, kimi, and Pi package markers in macOS/Linux pgrep query", async () => {
@@ -97,7 +106,10 @@ describe("detectRunningAgentProcesses() agent coverage", () => {
     assert.strictEqual(found, true);
     assert.match(seenCommand, /claude-code\|codex\|copilot\|codebuddy\|kimi/);
     assert.match(seenCommand, /pgrep -x 'agy'/);
+    assert.match(seenCommand, /pgrep -x 'codewhale'/);
     assert.match(seenCommand, /pi-coding-agent/);
+    assert.match(seenCommand, /pgrep -x 'qodercli'/);
+    assert.match(seenCommand, /pgrep -x 'qoder-cli'/);
     assert.doesNotMatch(seenCommand, /pgrep -x 'pi'/);
   });
 });

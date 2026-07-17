@@ -119,20 +119,24 @@ test("buildSshArgs places extraOpts after profile defaults, before host", () => 
   assert.ok(nIdx < hostIdx, "extraOpts must appear before host");
 });
 
-test("buildSshArgs extraOpts can override default via ssh last-wins (e.g. ConnectTimeout=2)", () => {
+// NOTE: ssh -o is FIRST-WINS, not last-wins (ssh_config(5): "the first
+// obtained value will be used"). Asserting `args[lastIndex] === "Foo=bar"`
+// does NOT prove ssh ends up with Foo=bar — it only proves where the token
+// sits in the array. These tests assert effective config by counting tokens
+// and checking the FIRST one, which is what ssh actually honors.
+
+test("buildSshArgs extraOpts cannot override base BatchMode (ssh first-wins)", () => {
+  // Even though BatchMode=no is appended after BatchMode=yes, ssh resolves
+  // the first occurrence — so non-interactive callers can NOT flip BatchMode
+  // by appending. This test pins that contract so a future "just add it to
+  // extraOpts" attempt fails loudly here instead of silently in production.
   const args = buildSshArgs(
     { host: "pi" },
-    { extraOpts: ["-o", "ConnectTimeout=2", "-o", "BatchMode=no"] }
+    { extraOpts: ["-o", "BatchMode=no"] }
   );
-  // The defaults come first, the overrides come second; ssh resolves last-wins.
-  const ctIndices = [];
-  args.forEach((v, i) => { if (v.startsWith("ConnectTimeout=")) ctIndices.push(i); });
-  assert.equal(ctIndices.length, 2);
-  assert.equal(args[ctIndices[ctIndices.length - 1]], "ConnectTimeout=2");
-  const bmIndices = [];
-  args.forEach((v, i) => { if (v.startsWith("BatchMode=")) bmIndices.push(i); });
-  assert.equal(bmIndices.length, 2);
-  assert.equal(args[bmIndices[bmIndices.length - 1]], "BatchMode=no");
+  const bmTokens = args.filter((v) => typeof v === "string" && v.startsWith("BatchMode="));
+  assert.equal(bmTokens.length, 2, "both tokens present in argv");
+  assert.equal(bmTokens[0], "BatchMode=yes", "first BatchMode wins; base must come first");
 });
 
 test("buildSshArgs validates extraOpts is an array", () => {
@@ -144,24 +148,35 @@ test("buildSshArgs default keeps -T (correct for backgrounded tunnels)", () => {
   assert.ok(args.includes("-T"), "non-interactive must include -T");
 });
 
-test("buildSshArgs interactive: true drops -T (Authenticate / Open Terminal path)", () => {
+test("buildSshArgs interactive: true uses empty base (no -T, BatchMode, ConnectTimeout)", () => {
   const args = buildSshArgs({ host: "pi" }, { interactive: true });
   assert.equal(args.includes("-T"), false, "interactive must drop -T to let pty negotiate");
-  // BatchMode + ConnectTimeout still present — only -T is dropped.
-  assert.ok(args.some((v) => v && v.startsWith && v.startsWith("BatchMode=")));
-  // Order check: identityFile / extraOpts / host still in correct slots.
+  assert.equal(
+    args.some((v) => typeof v === "string" && v.startsWith("BatchMode=")),
+    false,
+    "interactive base must not carry BatchMode (would block password / passphrase / host-key prompts)"
+  );
+  assert.equal(
+    args.some((v) => typeof v === "string" && v.startsWith("ConnectTimeout=")),
+    false,
+    "interactive base must not carry ConnectTimeout (user-initiated, they can wait)"
+  );
+  // Order check: host still last.
   assert.equal(args[args.length - 1], "pi");
 });
 
-test("buildSshArgs interactive + BatchMode=no override applies last-wins", () => {
+test("buildSshArgs interactive + BatchMode=no extraOpt: BatchMode=no is the only and first token", () => {
+  // With SSH_INTERACTIVE_BASE_OPTS empty, BatchMode=no from extraOpts is the
+  // FIRST and ONLY BatchMode ssh sees → effective config is BatchMode=no, so
+  // password / passphrase / host-key prompts can fire. This is the fix for
+  // issue #348 (Authenticate / Open Terminal path).
   const args = buildSshArgs(
     { host: "pi" },
     { interactive: true, extraOpts: ["-o", "BatchMode=no"] }
   );
-  const bmIdxs = [];
-  args.forEach((v, i) => { if (v && v.startsWith && v.startsWith("BatchMode=")) bmIdxs.push(i); });
-  assert.equal(bmIdxs.length, 2, "should have 2 BatchMode entries (default + override)");
-  assert.equal(args[bmIdxs[bmIdxs.length - 1]], "BatchMode=no");
+  const bmTokens = args.filter((v) => typeof v === "string" && v.startsWith("BatchMode="));
+  assert.equal(bmTokens.length, 1, "interactive base is empty; only the extraOpt BatchMode survives");
+  assert.equal(bmTokens[0], "BatchMode=no");
 });
 
 // ── buildScpArgs ──

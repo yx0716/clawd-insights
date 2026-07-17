@@ -7,7 +7,9 @@ const {
   SESSION_STALE_MS,
   WORKING_STALE_MS,
   DETACHED_IDLE_STALE_MS,
+  CODEX_LOCAL_WORKING_STALE_FLOOR_MS,
   isWorkingLikeState,
+  isLocalCodexWorkingLikeSession,
   getStaleSessionDecision,
 } = require("../src/state-stale-cleanup");
 
@@ -34,7 +36,6 @@ function decision(target, overrides = {}) {
     deriveSessionBadge: overrides.deriveSessionBadge || (() => "idle"),
     shouldAutoClearDetachedSession: overrides.shouldAutoClearDetachedSession || (() => false),
     staleConfig: overrides.staleConfig,
-    unackedMaxAgeMs: overrides.unackedMaxAgeMs,
   });
   return { result, calls };
 }
@@ -131,6 +132,15 @@ describe("state stale cleanup decisions", () => {
     assert.strictEqual(isWorkingLikeState("thinking"), true);
     assert.strictEqual(isWorkingLikeState("juggling"), true);
     assert.strictEqual(isWorkingLikeState("idle"), false);
+    assert.strictEqual(isLocalCodexWorkingLikeSession(session({
+      state: "working",
+      agentId: "codex",
+    })), true);
+    assert.strictEqual(isLocalCodexWorkingLikeSession(session({
+      state: "working",
+      agentId: "codex",
+      host: "ssh:example.com",
+    })), false);
   });
 
   it("falls back to module defaults when no staleConfig provided", () => {
@@ -175,6 +185,44 @@ describe("state stale cleanup decisions", () => {
       staleConfig: { workingStaleMs: 600_000 },
     });
     assert.deepStrictEqual(result, { action: null });
+  });
+
+  it("keeps local Codex working through the default short stale windows", () => {
+    const { result } = decision(session({
+      state: "working",
+      agentId: "codex",
+      updatedAt: 1000000 - 11 * 60 * 1000,
+      agentPid: 10,
+      sourcePid: 20,
+    }), {
+      alivePids: new Set([10, 20]),
+    });
+    assert.deepStrictEqual(result, { action: null });
+  });
+
+  it("still downgrades local Codex working after the Codex floor expires", () => {
+    const { result } = decision(session({
+      state: "thinking",
+      agentId: "codex",
+      updatedAt: 2000000 - CODEX_LOCAL_WORKING_STALE_FLOOR_MS - 1,
+      agentPid: 10,
+      sourcePid: 20,
+    }), {
+      now: 2000000,
+      alivePids: new Set([10, 20]),
+    });
+    assert.deepStrictEqual(result, { action: "idle", reason: "session-timeout", updateTimestamp: false });
+  });
+
+  it("does not extend remote Codex working sessions", () => {
+    const { result } = decision(session({
+      state: "working",
+      agentId: "codex",
+      host: "ssh:example.com",
+      updatedAt: 1000000 - WORKING_STALE_MS - 1,
+      sourcePid: null,
+    }));
+    assert.deepStrictEqual(result, { action: "idle", reason: "working-timeout", updateTimestamp: true });
   });
 
   it("honors a configured detachedIdleStaleMs cutoff", () => {
@@ -229,7 +277,23 @@ describe("state stale cleanup decisions", () => {
     assert.deepStrictEqual(result, { action: null });
   });
 
-  it("requiresCompletionAck=true holds an otherwise-deletable remote session", () => {
+  it("requiresCompletionAck within the session timeout is kept (done badge stays visible)", () => {
+    // Completion already pushed a notification; the session lingers only long
+    // enough for the user to spot the `done` badge — bounded by sessionStaleMs.
+    const { result } = decision(session({
+      updatedAt: 1000000 - 3 * 60 * 1000,
+      pidReachable: false,
+      requiresCompletionAck: true,
+    }), {
+      staleConfig: { sessionStaleMs: 10 * 60 * 1000 },
+    });
+    assert.deepStrictEqual(result, { action: null });
+  });
+
+  it("requiresCompletionAck no longer holds a remote session past the session timeout", () => {
+    // The completion notification already fired once, so an unacknowledged
+    // remote session deletes at the user-configured timeout like any other
+    // idle one — it does not get the old 24h hold.
     const { result } = decision(session({
       updatedAt: 1000000 - 11 * 60 * 1000,
       pidReachable: false,
@@ -237,24 +301,10 @@ describe("state stale cleanup decisions", () => {
     }), {
       staleConfig: { sessionStaleMs: 10 * 60 * 1000 },
     });
-    assert.deepStrictEqual(result, { action: null, reason: "ack-pending" });
+    assert.deepStrictEqual(result, { action: "delete", reason: "unreachable" });
   });
 
-  it("requiresCompletionAck=true past 24h cap deletes with reason ack-expired", () => {
-    // Use a realistic now baseline so updatedAt stays positive — the
-    // global referenceTs hoist uses Math.max(updatedAt, ackedAt||0), so
-    // a negative updatedAt would silently fall back to 0 and break the
-    // age math.
-    const now = 2_000_000_000_000;
-    const { result } = decision(session({
-      updatedAt: now - 86_400_000 - 1,
-      pidReachable: false,
-      requiresCompletionAck: true,
-    }), { now });
-    assert.deepStrictEqual(result, { action: "delete", reason: "ack-expired" });
-  });
-
-  it("ack-expired still fires with sessionStaleMs=0 (explicit delete, not fall-through)", () => {
+  it("requiresCompletionAck with sessionStaleMs=0 is kept forever, like a normal idle session", () => {
     const now = 2_000_000_000_000;
     const { result } = decision(session({
       state: "idle",
@@ -265,7 +315,7 @@ describe("state stale cleanup decisions", () => {
       now,
       staleConfig: { sessionStaleMs: 0 },
     });
-    assert.deepStrictEqual(result, { action: "delete", reason: "ack-expired" });
+    assert.deepStrictEqual(result, { action: null });
   });
 
   it("agent-exit wins over requiresCompletionAck", () => {
@@ -277,16 +327,5 @@ describe("state stale cleanup decisions", () => {
       alivePids: new Set(),
     });
     assert.deepStrictEqual(result, { action: "delete", reason: "agent-exit" });
-  });
-
-  it("options.unackedMaxAgeMs overrides the 24h cap for tests", () => {
-    const { result } = decision(session({
-      updatedAt: 1000000 - 6 * 60 * 1000,
-      pidReachable: false,
-      requiresCompletionAck: true,
-    }), {
-      unackedMaxAgeMs: 5 * 60 * 1000,
-    });
-    assert.deepStrictEqual(result, { action: "delete", reason: "ack-expired" });
   });
 });

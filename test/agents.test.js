@@ -138,4 +138,20 @@ describe("Agent config modules — data integrity", () => {
     assert.strictEqual(pi.capabilities.interactiveBubble, false);
   });
 
+  it("qoder is state-only and does not expose a bubble sub-toggle", () => {
+    const qoder = agents.find((a) => a.id === "qoder");
+    assert.ok(qoder);
+    assert.strictEqual(qoder.capabilities.permissionApproval, false);
+    assert.strictEqual(qoder.capabilities.interactiveBubble, false);
+    assert.strictEqual(qoder.capabilities.notificationHook, true);
+  });
+
+  it("codewhale is state-only and exposes only passive notifications", () => {
+    const codewhale = agents.find((a) => a.id === "codewhale");
+    assert.ok(codewhale);
+    assert.strictEqual(codewhale.capabilities.permissionApproval, false);
+    assert.strictEqual(codewhale.capabilities.interactiveBubble, false);
+    assert.strictEqual(codewhale.capabilities.notificationHook, true);
+  });
+
 });

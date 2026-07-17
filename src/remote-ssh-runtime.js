@@ -41,6 +41,12 @@ const { decodeShellBytes } = require("./remote-ssh-decode");
 
 const SSH_BASE_OPTS = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"];
 const SCP_BASE_OPTS = ["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"];
+// Interactive base intentionally empty: no -T (pty needed), no BatchMode=yes
+// (must allow password / passphrase / host-key prompts), no ConnectTimeout=15
+// (user-initiated; they can wait). Callers add `-o BatchMode=no` via extraOpts
+// to also beat any `BatchMode yes` in the user's ~/.ssh/config — command-line
+// -o wins because it's the FIRST BatchMode token ssh sees.
+const SSH_INTERACTIVE_BASE_OPTS = [];
 
 // "cmd is not recognized" — emitted by Windows OpenSSH when the remote
 // default shell is cmd.exe and our `sh -c <script>` probe lands on it.
@@ -135,12 +141,22 @@ function detectSsh({ spawnSync = childProcess.spawnSync } = {}) {
 // authenticate, and open-terminal paths MUST go through these. They guarantee:
 //
 //   1. Non-interactive defaults (-T, BatchMode=yes, ConnectTimeout=15) so
-//      the spawned process never wedges on a prompt.
+//      backgrounded tunnels / probes / deploys never wedge on a prompt.
 //   2. Profile's `-i identityFile` / `-p port` (scp: `-P port`) are always
 //      injected, so non-default-port / specified-key profiles work for
 //      Deploy, Codex monitor, Authenticate — not just Connect.
-//   3. extraOpts append AFTER profile defaults so `-o BatchMode=no` and
-//      `-o ConnectTimeout=2` overrides can win via ssh's last-wins semantics.
+//   3. Interactive callers (`interactive: true`) get an empty base via
+//      `SSH_INTERACTIVE_BASE_OPTS`, since `-T` breaks remote pty, and
+//      `BatchMode=yes` would suppress the very prompts (password,
+//      passphrase, host-key confirm) the user opened the terminal to answer.
+//
+// FIRST-WINS, NOT LAST-WINS. ssh_config(5): "For each parameter, the first
+// obtained value will be used." This applies to command-line `-o` too:
+// `-o BatchMode=yes -o BatchMode=no` resolves to BatchMode=yes, not no
+// (verified with `ssh -G` on OpenSSH 9.5p2 / 10.0p2). Consequence: a future
+// `extraOpts` `-o Foo=bar` only wins if Foo is NOT already in the base opt
+// list. If you need to override a base opt, change the base or add a
+// separate base array — appending in extraOpts is a no-op.
 //
 // Host is appended last for ssh; scp callers add `host:path` themselves.
 function buildSshArgs(profile, { extraOpts = [], interactive = false } = {}) {
@@ -150,15 +166,9 @@ function buildSshArgs(profile, { extraOpts = [], interactive = false } = {}) {
   if (!Array.isArray(extraOpts)) {
     throw new TypeError("buildSshArgs: extraOpts must be an array");
   }
-  // `-T` (no pseudo-tty) is correct for backgrounded tunnels, deploys, and
-  // probes — but **wrong** for Authenticate / Open Terminal: those land the
-  // user in an interactive shell, where -T breaks vim/less/bash readline.
-  // Caller passes interactive: true to drop -T, letting ssh negotiate a pty
-  // by default (terminal emulator already provides a local tty).
-  const baseOpts = interactive
-    ? SSH_BASE_OPTS.filter((opt) => opt !== "-T")
+  const args = interactive
+    ? SSH_INTERACTIVE_BASE_OPTS.slice()
     : SSH_BASE_OPTS.slice();
-  const args = baseOpts;
   if (profile.identityFile) args.push("-i", profile.identityFile);
   if (profile.port && profile.port !== 22) args.push("-p", String(profile.port));
   args.push(...extraOpts);
@@ -840,9 +850,10 @@ function createRemoteSshRuntime(deps = {}) {
       return;
     }
     const probeCmd = buildProbeCommand(profile.remoteForwardPort, nodeBin);
-    const probeArgs = buildSshArgs(profile, {
-      extraOpts: ["-o", "ConnectTimeout=2"],
-    }).concat([probeCmd]);
+    // No extraOpts override for ConnectTimeout: ssh -o is first-wins, so the
+    // base's ConnectTimeout=15 would always win anyway. PROBE_CHILD_TIMEOUT_MS
+    // (5s) is the real upper bound on each probe attempt.
+    const probeArgs = buildSshArgs(profile).concat([probeCmd]);
 
     let probe;
     try {

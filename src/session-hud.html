@@ -14,7 +14,7 @@
   --text-muted: #6b6b70;
   --shadow: rgba(0, 0, 0, 0.16);
   --running: #16a34a;
-  --done: #71717a;
+  --done: #2563eb;
   --interrupted: #d97706;
   --idle: #9ca3af;
 }
@@ -26,6 +26,7 @@
     --text: #f4f4f5;
     --text-muted: #a1a1aa;
     --shadow: rgba(0, 0, 0, 0.34);
+    --done: #60a5fa;
     --idle: #71717a;
   }
 }
@@ -148,6 +149,13 @@ body { padding: 2px 3px 8px; }
   background: var(--idle);
 }
 
+/* Compact source marker (🐧 WSL / 🔗 SSH) before the session title */
+.hud-source {
+  font-size: 11px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
 .dot-running { background: var(--running); animation: dot-pulse 1.6s ease-in-out infinite; }
 .dot-done { background: var(--done); }
 .dot-interrupted { background: var(--interrupted); }
@@ -182,7 +190,7 @@ body { padding: 2px 3px 8px; }
 }
 
 .right {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -190,7 +198,20 @@ body { padding: 2px 3px 8px; }
   line-height: 1;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  max-width: 45%;
+  max-width: 58%;
+  /* Flexbox quirk: overflow:hidden makes a flex item's AUTOMATIC minimum
+     size 0, so under squeeze .right shrinks below its chips and its own
+     overflow clipping cuts them mid-glyph. min-content restores a real
+     floor: it equals bell+chips+gaps exactly, because the elapsed span
+     carries its own zero floor and contributes nothing. Squeeze order:
+     title first, then elapsed, chips never clip. */
+  min-width: min-content;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.elapsed {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -213,6 +234,19 @@ body { padding: 2px 3px 8px; }
 .chip-worktree { background: rgba(59, 130, 246, 0.13); color: #2563eb; }
 .chip-interrupted { background: rgba(239, 68, 68, 0.10); color: #dc2626; }
 
+.usage-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.usage-neutral { background: rgba(107, 114, 128, 0.13); color: #52525b; }
+.usage-warm { background: rgba(245, 158, 11, 0.15); color: #b45309; }
+.usage-hot { background: rgba(239, 68, 68, 0.10); color: #dc2626; }
+
 @media (prefers-color-scheme: dark) {
   .chip-thinking { background: rgba(99, 102, 241, 0.20); color: #818cf8; }
   .chip-working { background: rgba(22, 163, 74, 0.20); color: #4ade80; }
@@ -221,6 +255,9 @@ body { padding: 2px 3px 8px; }
   .chip-notification { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
   .chip-worktree { background: rgba(59, 130, 246, 0.20); color: #60a5fa; }
   .chip-interrupted { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+  .usage-neutral { background: rgba(107, 114, 128, 0.20); color: #a1a1aa; }
+  .usage-warm { background: rgba(245, 158, 11, 0.20); color: #fbbf24; }
+  .usage-hot { background: rgba(239, 68, 68, 0.15); color: #f87171; }
 }
 
 .completion-bell {

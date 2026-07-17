@@ -2,6 +2,7 @@
 
 const defaultFs = require("fs");
 const defaultPath = require("path");
+const { detectAgentInstallations: defaultDetectAgentInstallations } = require("./agent-installation-detector");
 const settingsThemeImporter = require("./settings-theme-importer");
 
 const SOUND_OVERRIDE_ASSET_EXTS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
@@ -121,21 +122,18 @@ function registerSettingsIpc(options = {}) {
   const getDoNotDisturb = options.getDoNotDisturb || (() => false);
   const getSoundMuted = options.getSoundMuted || (() => false);
   const getSoundVolume = options.getSoundVolume || (() => 1);
+  const previewTextScale = options.previewTextScale
+    || (() => ({ status: "error", message: "text scale preview unavailable" }));
+  const endTextScalePreview = options.endTextScalePreview
+    || (() => ({ status: "error", message: "text scale preview unavailable" }));
+  const getTextScaleContext = options.getTextScaleContext
+    || (() => ({ percent: 100 }));
   const getAllAgents = requiredDependency(options.getAllAgents, "getAllAgents");
+  const detectAgentInstallations = options.detectAgentInstallations || defaultDetectAgentInstallations;
   const checkForUpdates = options.checkForUpdates || (() => {});
-  const getHardwareBuddyStatus = options.getHardwareBuddyStatus || (() => null);
-  const testHardwareBuddyApproval = options.testHardwareBuddyApproval || (async () => ({
+  const showTutorial = options.showTutorial || (() => ({
     status: "error",
-    message: "Hardware Buddy test approval is unavailable",
-  }));
-  const getQuickCommandPresets = options.getQuickCommandPresets || (() => ({
-    enabled: false,
-    presets: [],
-  }));
-  const sendQuickCommand = options.sendQuickCommand || (() => ({
-    status: "error",
-    code: "quick_commands_unavailable",
-    message: "Quick Commands are unavailable",
+    message: "Tutorial is unavailable",
   }));
   const now = options.now || (() => Date.now());
   const aboutHeroSvgPath = options.aboutHeroSvgPath
@@ -147,14 +145,6 @@ function registerSettingsIpc(options = {}) {
     disposers.push(() => ipcMain.removeHandler(channel));
   }
 
-  function sanitizeQuickCommandPayload(payload) {
-    const object = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-    return {
-      id: object.id,
-      clientRequestId: object.clientRequestId,
-    };
-  }
-
   function getDialogParent(event) {
     return getSettingsDialogParent(event, { BrowserWindow, getSettingsWindow });
   }
@@ -163,6 +153,15 @@ function registerSettingsIpc(options = {}) {
   handle("settings:update", (_event, payload) => {
     if (!payload || typeof payload !== "object") {
       return { status: "error", message: "settings:update payload must be { key, value }" };
+    }
+    if (payload.key === "tgMigration") {
+      return { status: "error", message: "tgMigration is internal; use telegramMigration.dispatch" };
+    }
+    // DANGER "auto-pilot": never let a plain settings:update flip this on. It
+    // must go through the setAutoApproveAll command, which demands confirmed:true.
+    // This makes the confirmation dialog a real boundary instead of UI-only.
+    if (payload.key === "autoApproveAllPermissions") {
+      return { status: "error", message: "autoApproveAllPermissions is gated; use the setAutoApproveAll command" };
     }
     return settingsController.applyUpdate(payload.key, payload.value);
   });
@@ -179,6 +178,21 @@ function registerSettingsIpc(options = {}) {
     }
     return settingsSizePreviewSession.end(value || null);
   });
+  // Transient textScale preview while the slider drags: applies zoom to live
+  // windows but never writes the store. Commit still goes through
+  // settings:update so the controller stays the only writer.
+  handle("settings:preview-text-scale", (_event, value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      return { status: "error", message: `invalid text scale "${value}"` };
+    }
+    return previewTextScale(n);
+  });
+  handle("settings:end-text-scale-preview", () => endTextScalePreview());
+  // textScale is per-display; the renderer can't resolve its own display, so
+  // the slider asks main for the committed value of the display the settings
+  // window currently sits on.
+  handle("settings:get-text-scale-context", () => getTextScaleContext());
   handle("settings:get-preview-sound-url", () => {
     try { return themeLoader.getPreviewSoundUrl(); }
     catch { return null; }
@@ -383,6 +397,30 @@ function registerSettingsIpc(options = {}) {
     }
   });
 
+  handle("settings:detect-agent-installations", async (_ev, opts) => {
+    try {
+      const options = opts && typeof opts === "object" ? opts : {};
+      if (options.refreshWsl) {
+        const { refreshWslDetection } = require("./agent-installation-detector");
+        await refreshWslDetection({ fs, path, now, skipDefaultIntegrations: false });
+        return detectAgentInstallations({ fs, path, now });
+      }
+      return detectAgentInstallations({ fs, path, now });
+    } catch (err) {
+      console.warn("Clawd: settings:detect-agent-installations failed:", err && err.message);
+      return {
+        checkedAt: now(),
+        agents: [],
+        skippedAgentIds: [],
+        wslAgents: [],
+        wslDistros: [],
+        // Keep the manual Scan entry point alive even on a hard failure.
+        wslSupported: process.platform === "win32",
+        error: err && err.message ? err.message : String(err),
+      };
+    }
+  });
+
   handle("settings:get-about-info", () => {
     let heroSvgContent = "";
     try {
@@ -390,6 +428,12 @@ function registerSettingsIpc(options = {}) {
     } catch (err) {
       console.warn("Clawd: failed to read about hero SVG:", err && err.message);
     }
+    let pendingUpdateVersion = "";
+    let autoUpdateCheck = true;
+    try {
+      pendingUpdateVersion = String(settingsController.get("pendingUpdateVersion") || "");
+      autoUpdateCheck = settingsController.get("autoUpdateCheck") !== false;
+    } catch {}
     return {
       version: app.getVersion(),
       repoUrl: "https://github.com/rullerzhou-afk/clawd-on-desk",
@@ -398,6 +442,8 @@ function registerSettingsIpc(options = {}) {
       authorName: "Ruller_Lulu / \u9e7f\u9e7f",
       authorUrl: "https://github.com/rullerzhou-afk",
       heroSvgContent,
+      pendingUpdateVersion,
+      autoUpdateCheck,
     };
   });
 
@@ -410,10 +456,15 @@ function registerSettingsIpc(options = {}) {
     }
   });
 
-  handle("settings:get-hardware-buddy-status", () => getHardwareBuddyStatus());
-  handle("settings:test-hardware-buddy-approval", () => testHardwareBuddyApproval());
-  handle("settings:get-quick-command-presets", () => getQuickCommandPresets());
-  handle("settings:send-quick-command", (_event, payload) => sendQuickCommand(sanitizeQuickCommandPayload(payload)));
+  handle("settings:show-tutorial", async () => {
+    try {
+      const result = await showTutorial();
+      return result || { status: "ok" };
+    } catch (err) {
+      return { status: "error", message: (err && err.message) || String(err) };
+    }
+  });
+
 
   handle("settings:open-external", async (_event, url) => {
     if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
@@ -422,6 +473,66 @@ function registerSettingsIpc(options = {}) {
     try {
       await shell.openExternal(url);
       return { status: "ok" };
+    } catch (err) {
+      return { status: "error", message: (err && err.message) || String(err) };
+    }
+  });
+
+  handle("settings:mobile-connection-info", async () => {
+    try {
+      const lanWsServer = options.getLanWsServer ? options.getLanWsServer() : null;
+      if (!lanWsServer) return { status: "error", message: "LAN bridge not available" };
+      const port = lanWsServer.getPort();
+      const tok = lanWsServer.getToken();
+      if (!Number.isInteger(port) || port <= 0 || typeof tok !== "string" || !tok) {
+        return { status: "starting", message: "LAN bridge is starting" };
+      }
+      const os = require("os");
+      let lanIp = "127.0.0.1";
+      const interfaces = os.networkInterfaces();
+      const wlanPattern = /WLAN|Wi-?Fi|Wireless|无线/i;
+      // 1) 优先找 WLAN 接口
+      for (const name of Object.keys(interfaces)) {
+        if (wlanPattern.test(name)) {
+          for (const iface of interfaces[name]) {
+            if (iface.family === "IPv4" && !iface.internal) { lanIp = iface.address; break; }
+          }
+          if (lanIp !== "127.0.0.1") break;
+        }
+      }
+      // 2) fallback：第一个非 internal IPv4
+      if (lanIp === "127.0.0.1") {
+        for (const name of Object.keys(interfaces)) {
+          for (const iface of interfaces[name]) {
+            if (iface.family === "IPv4" && !iface.internal) { lanIp = iface.address; break; }
+          }
+          if (lanIp !== "127.0.0.1") break;
+        }
+      }
+      const pairUrl = `http://${lanIp}:${port}/mobile/?host=${lanIp}&port=${port}&token=${tok}`;
+      return { status: "ok", port, token: tok, lanIp, pairUrl };
+    } catch (err) {
+      return { status: "error", message: (err && err.message) || String(err) };
+    }
+  });
+
+  handle("settings:regenerate-mobile-token", async () => {
+    try {
+      const lanWsServer = options.getLanWsServer ? options.getLanWsServer() : null;
+      if (!lanWsServer) return { status: "error", message: "LAN bridge not available" };
+      const newToken = lanWsServer.regenerateToken();
+      return { status: "ok", token: newToken };
+    } catch (err) {
+      return { status: "error", message: (err && err.message) || String(err) };
+    }
+  });
+
+  handle("settings:reset-mobile-access", async () => {
+    try {
+      const lanWsServer = options.getLanWsServer ? options.getLanWsServer() : null;
+      if (!lanWsServer) return { status: "error", message: "LAN bridge not available" };
+      const newToken = lanWsServer.resetMobileAccess();
+      return { status: "ok", token: newToken };
     } catch (err) {
       return { status: "error", message: (err && err.message) || String(err) };
     }

@@ -88,9 +88,17 @@ describe("state agent icons", () => {
   });
 
   it("has canonical runtime PNG icons for every registered agent", () => {
+    const runtimeIconFiles = new Set(
+      fs.readdirSync(AGENT_ICON_DIR, { withFileTypes: true })
+        .filter(shouldCheckRuntimeIconEntry)
+        .map((entry) => entry.name)
+    );
+
     for (const agent of getAllAgents()) {
-      const iconPath = path.join(AGENT_ICON_DIR, `${agent.id}.png`);
-      assert.ok(fs.existsSync(iconPath), `Missing runtime PNG icon for ${agent.id}`);
+      assert.ok(
+        runtimeIconFiles.has(`${agent.id}.png`),
+        `Missing exact runtime PNG icon for ${agent.id}`
+      );
     }
   });
 

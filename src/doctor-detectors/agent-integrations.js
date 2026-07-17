@@ -3,12 +3,28 @@
 const fs = require("fs");
 const path = require("path");
 
-const { isAgentEnabled, isAgentPermissionsEnabled } = require("../agent-gate");
+const {
+  isAgentEnabled,
+  isAgentIntegrationInstalled,
+  isAgentPermissionsEnabled,
+} = require("../agent-gate");
 const { getAgent } = require("../../agents/registry");
-const { findHookCommands } = require("../../hooks/json-utils");
+const { commandMatchesMarker, findHookCommands } = require("../../hooks/json-utils");
 const { GEMINI_HOOK_EVENTS } = require("../../hooks/gemini-install");
 const { ANTIGRAVITY_HOOK_EVENTS, HOOK_GROUP_ID: ANTIGRAVITY_HOOK_GROUP_ID } = require("../../hooks/antigravity-install");
-const { findKimiHookCommands } = require("../../hooks/kimi-install");
+const { QWEN_CODE_HOOK_EVENTS } = require("../../hooks/qwen-code-install");
+const {
+  hasUserPermissionHookInOtherFiles,
+  hasUserPermissionHookInSettingsJson,
+  isCopilotPermissionRegistrable,
+} = require("../../hooks/copilot-install");
+const {
+  findKimiHookCommands,
+  listClawdKimiHookEvents,
+  normalizePermissionMode: normalizeKimiPermissionMode,
+  KIMI_HOOK_EVENTS,
+} = require("../../hooks/kimi-install");
+const { parseTomlSections: parseCodewhaleTomlSections } = require("../../hooks/codewhale-install");
 const { getAgentDescriptors } = require("./agent-descriptors");
 const { commandContainsFragment, validateHookCommand } = require("./agent-node-bin-parser");
 const { checkCodexHookTrust, checkCodexHooksFeature } = require("./codex-features-check");
@@ -16,15 +32,10 @@ const { validateOpencodeEntry } = require("./opencode-entry-validator");
 const { validateOpenClawEntry } = require("./openclaw-entry-validator");
 const { hasIncludeDirective } = require("../../hooks/openclaw-install");
 
-const INFO_ONLY_STATUSES = new Set([
-  "disabled",
-  "manual-managed",
-  "manual-only",
-  "not-installed",
-]);
 const REPAIRABLE_AGENT_STATUSES = new Set(["not-connected", "broken-path"]);
 const GEMINI_HOOKS_DISABLED_DETAIL = "Gemini hooks are disabled in settings.json; Clawd preserves this user setting and will not receive hook events";
 const ANTIGRAVITY_HOOKS_DISABLED_DETAIL = "Antigravity Clawd hooks are disabled in hooks.json; Clawd preserves this user setting and will not receive hook events";
+const QWEN_HOOKS_DISABLED_DETAIL = "Qwen Code hooks are disabled in settings.json; Clawd preserves this user setting and will not receive hook events";
 
 function dirExists(fsImpl, dirPath) {
   try {
@@ -43,14 +54,23 @@ function fileExists(fsImpl, filePath) {
 }
 
 function readJson(fsImpl, filePath) {
-  return JSON.parse(fsImpl.readFileSync(filePath, "utf8"));
+  // Strip the UTF-8 BOM (U+FEFF). PowerShell `Set-Content -Encoding utf8`
+  // and some Notepad saves prepend it; Node's JSON.parse refuses to parse
+  // a leading BOM. Without this, a user who hand-edits hooks.json in those
+  // tools makes the doctor pane silently flip to config-corrupt while
+  // installers (which already strip BOM) keep working — the mismatch makes
+  // the offered Fix button useless because clicking it doesn't reproduce
+  // the parse error path.
+  let raw = fsImpl.readFileSync(filePath, "utf8");
+  if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+  return JSON.parse(raw);
 }
 
 function withAgentBubbleNote(detail, prefs, agentId) {
   // State-only agents (capabilities.permissionApproval === false) never
   // surface a Clawd bubble in the first place, so annotating them as
   // "permission bubbles disabled" would be misleading. Antigravity, Pi,
-  // OpenClaw, and Hermes are current examples.
+  // and OpenClaw are current examples.
   const agent = getAgent(agentId);
   if (agent && agent.capabilities && agent.capabilities.permissionApproval === false) {
     return detail;
@@ -65,7 +85,109 @@ function withAgentBubbleNote(detail, prefs, agentId) {
   return detail;
 }
 
+function getClaudeHookGuardStatus(options) {
+  const server = options && options.server;
+  if (!server || typeof server.getClaudeHookGuardStatus !== "function") return null;
+  try {
+    return server.getClaudeHookGuardStatus();
+  } catch {
+    return null;
+  }
+}
+
+function getClaudeHookHealthStatus(options) {
+  const server = options && options.server;
+  if (!server || typeof server.getClaudeHookHealthStatus !== "function") return null;
+  try {
+    return server.getClaudeHookHealthStatus();
+  } catch {
+    return null;
+  }
+}
+
+// Explains *why* Claude Code's hook config hasn't self-healed, using the
+// periodic health supervisor's runtime status (#657) — the disk inspector
+// above remains the source of truth for whether it's currently broken; this
+// only annotates that verdict. Covers not-connected, broken-path,
+// source-script-missing, and manual-fix-required per the #657 plan §6.9.
+function withClaudeHookGuardNotice(detail, descriptor, options) {
+  if (descriptor.agentId !== "claude-code" || !detail) return detail;
+  if (!REPAIRABLE_AGENT_STATUSES.has(detail.status)) return detail;
+
+  const runtimeHealth = getClaudeHookHealthStatus(options);
+
+  // Reconcile can never fix a missing source script, so this must never
+  // offer a configuration Repair — overriding the status keeps it out of
+  // REPAIRABLE_AGENT_STATUSES for the withAgentFixAction() check below.
+  if (runtimeHealth && runtimeHealth.status === "degraded" && runtimeHealth.degradedReason === "source-script-missing") {
+    return {
+      ...detail,
+      status: "source-script-missing",
+      level: "warning",
+      detail: "The current Clawd installation's Claude hook script is missing. Reinstall or re-extract Clawd to restore automatic hook repair.",
+      claudeHookRuntimeStatus: {
+        status: runtimeHealth.status,
+        degradedReason: runtimeHealth.degradedReason,
+        at: runtimeHealth.at || null,
+      },
+    };
+  }
+
+  const guard = getClaudeHookGuardStatus(options);
+  if (guard && guard.type === "suspicious-shrink") {
+    return {
+      ...detail,
+      detail: "Clawd paused automatic Claude hook repair after settings.json shrank during an external rewrite. Use Fix or restart Clawd to reinstall Clawd hooks.",
+      claudeHookGuard: {
+        type: guard.type,
+        at: guard.at || null,
+        before: guard.before || null,
+        after: guard.after || null,
+      },
+    };
+  }
+
+  if (runtimeHealth && runtimeHealth.status === "guarded") {
+    return {
+      ...detail,
+      detail: "Clawd paused automatic Claude hook repair because settings.json shrank suspiciously. Use Fix or restart Clawd to reinstall Clawd hooks.",
+      claudeHookRuntimeStatus: {
+        status: runtimeHealth.status,
+        issueSignature: runtimeHealth.issueSignature || null,
+        at: runtimeHealth.at || null,
+      },
+    };
+  }
+
+  if (runtimeHealth && runtimeHealth.status === "manual-fix-required") {
+    return {
+      ...detail,
+      detail: "Clawd's automatic Claude hook repair failed 3 times in a row and stopped retrying. Use Fix to try once more, or check the hook script manually.",
+      claudeHookRuntimeStatus: {
+        status: runtimeHealth.status,
+        issueSignature: runtimeHealth.issueSignature || null,
+        attempt: runtimeHealth.attempt || null,
+        message: runtimeHealth.message || null,
+        at: runtimeHealth.at || null,
+      },
+    };
+  }
+
+  return detail;
+}
+
 function withAgentFixAction(detail, descriptor) {
+  if (
+    descriptor.agentId === "kimi-cli"
+    && detail.status === "needs-review"
+    && detail.supplementary
+    && detail.supplementary.key === "kimi_legacy_mode"
+  ) {
+    // Stale legacy install (missing events / retired env-prefix mode /
+    // missing --permission-mode flag): re-running the integration installer
+    // strips and rewrites every Clawd block in the current canonical form.
+    return { ...detail, fixAction: { type: "agent-integration", agentId: descriptor.agentId } };
+  }
   if (!descriptor.autoInstall || !REPAIRABLE_AGENT_STATUSES.has(detail.status)) return detail;
   if (
     descriptor.agentId === "gemini-cli"
@@ -81,6 +203,28 @@ function withAgentFixAction(detail, descriptor) {
     && detail.supplementary.key === "antigravity_hooks"
     && detail.supplementary.value !== "enabled"
   ) {
+    return detail;
+  }
+  if (
+    descriptor.agentId === "qwen-code"
+    && detail.supplementary
+    && detail.supplementary.key === "qwen_hooks"
+    && detail.supplementary.value !== "enabled"
+  ) {
+    return detail;
+  }
+  if (
+    descriptor.agentId === "copilot-cli"
+    && detail.supplementary
+    && detail.supplementary.key === "copilot_hooks"
+    && typeof detail.supplementary.value === "string"
+    && (detail.supplementary.value.startsWith("disabled")
+        || detail.supplementary.value === "permission-user-hook")
+  ) {
+    // disabled-*: user set disableAllHooks; Clawd must not override.
+    // permission-user-hook: user (or a sibling *.json) owns permissionRequest;
+    // running Fix would re-trigger the same safe-v1 skip — surface a warning
+    // without a button so the user wires Clawd in manually if they want it.
     return detail;
   }
   const fixAction = { type: "agent-integration", agentId: descriptor.agentId };
@@ -118,6 +262,40 @@ function statusLevel(status) {
     return "warning";
   }
   return status === "ok" ? null : "info";
+}
+
+// codex resolves commandWindows on Windows and command on POSIX
+// (openai/codex#22159). Since #544, a win32-authored hooks.json carries a
+// WSL-interop form in `command` that is only executable inside WSL, so the
+// doctor must validate the field THIS platform's codex would run — the
+// generic findHookCommands (command only) would flag every dual-field
+// Windows install as broken-path, and Repair would regenerate the same
+// fields forever.
+function resolveCodexPlatformCommand(hook, platform) {
+  if (!hook || typeof hook !== "object") return null;
+  const windowsVariant = typeof hook.commandWindows === "string" ? hook.commandWindows : null;
+  const base = typeof hook.command === "string" ? hook.command : null;
+  return platform === "win32" ? (windowsVariant || base) : base;
+}
+
+function findCodexPlatformHookCommands(settings, marker, platform) {
+  if (!settings || !settings.hooks || typeof settings.hooks !== "object") return [];
+  const commands = [];
+  const push = (hook) => {
+    const resolved = resolveCodexPlatformCommand(hook, platform);
+    if (resolved && commandMatchesMarker(resolved, marker)) commands.push(resolved);
+  };
+  for (const entries of Object.values(settings.hooks)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      if (Array.isArray(entry.hooks)) {
+        for (const hook of entry.hooks) push(hook);
+      }
+      push(entry);
+    }
+  }
+  return commands;
 }
 
 function validateCommandList(descriptor, commands, options) {
@@ -164,12 +342,12 @@ function findHookCommandsForEvent(settings, eventName, marker, options) {
     if (!entry || typeof entry !== "object") continue;
     if (nested && Array.isArray(entry.hooks)) {
       for (const hook of entry.hooks) {
-        if (hook && typeof hook.command === "string" && hook.command.includes(marker)) {
+        if (hook && typeof hook.command === "string" && commandContainsFragment(hook.command, marker)) {
           commands.push(hook.command);
         }
       }
     }
-    if (typeof entry.command === "string" && entry.command.includes(marker)) {
+    if (typeof entry.command === "string" && commandContainsFragment(entry.command, marker)) {
       commands.push(entry.command);
     }
   }
@@ -234,6 +412,217 @@ function validateGeminiHookEvents(descriptor, settings, options) {
   return makeDetail(descriptor, "ok", {
     level: null,
     detail: `${descriptor.configPath} Gemini hooks registered for ${GEMINI_HOOK_EVENTS.length} events, scriptPath verified`,
+    commandCount,
+    scriptPath: firstOk && firstOk.scriptPath ? firstOk.scriptPath : null,
+  });
+}
+
+function validateQwenHookEvents(descriptor, settings, options) {
+  const events = Array.isArray(descriptor.hookEvents) ? descriptor.hookEvents : QWEN_CODE_HOOK_EVENTS;
+  const missingEvents = [];
+  let commandCount = 0;
+  let firstOk = null;
+  let firstFailure = null;
+
+  for (const eventName of events) {
+    const commands = findHookCommandsForEvent(settings, eventName, descriptor.marker, { nested: !!descriptor.nested });
+    commandCount += commands.length;
+    if (!commands.length) {
+      missingEvents.push(eventName);
+      continue;
+    }
+
+    const results = commands.map((command) => options.validateCommand(command, {
+      platform: options.platform,
+      fs: options.fs,
+    }));
+    const ok = results.find((result) => result.ok);
+    if (ok) {
+      if (!firstOk) firstOk = ok;
+      continue;
+    }
+    if (!firstFailure) {
+      firstFailure = {
+        eventName,
+        result: results[0] || { issue: "parse-failed" },
+        command: commands[0],
+      };
+    }
+  }
+
+  if (missingEvents.length) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      detail: `${descriptor.configPath} missing Qwen Code hook event(s): ${missingEvents.join(", ")}`,
+      commandCount,
+      missingQwenHookEvents: missingEvents,
+    });
+  }
+
+  if (firstFailure) {
+    const first = firstFailure.result;
+    return makeDetail(descriptor, "broken-path", {
+      level: "warning",
+      detail: `Qwen Code hook command failed validation for ${firstFailure.eventName}: ${first.issue || "parse-failed"}`,
+      commandCount,
+      hookCommandIssue: first.issue || "parse-failed",
+      nodeBin: first.nodeBin || null,
+      scriptPath: first.scriptPath || null,
+      commandFragment: first.fragment || String(firstFailure.command || "").slice(0, 128),
+      brokenQwenHookEvent: firstFailure.eventName,
+    });
+  }
+
+  return makeDetail(descriptor, "ok", {
+    level: null,
+    detail: `${descriptor.configPath} Qwen Code hooks registered for ${events.length} events, scriptPath verified`,
+    commandCount,
+    scriptPath: firstOk && firstOk.scriptPath ? firstOk.scriptPath : null,
+  });
+}
+
+// Copilot CLI's hooks.json entries store the command in per-platform `bash` /
+// `powershell` fields (not the single `command` field used by Claude/Cursor/
+// Gemini). Generic findHookCommandsForEvent would miss them, so scan all three
+// fields and let the validator decide which is platform-appropriate.
+function findCopilotHookCommandsForEvent(settings, eventName, marker) {
+  if (!settings || !settings.hooks || typeof marker !== "string" || !marker) return [];
+  const entries = settings.hooks[eventName];
+  if (!Array.isArray(entries)) return [];
+  const commands = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    for (const field of ["bash", "powershell", "command"]) {
+      const cmd = entry[field];
+      if (typeof cmd === "string" && commandContainsFragment(cmd, marker)) {
+        commands.push(cmd);
+      }
+    }
+  }
+  return commands;
+}
+
+function validateCopilotHookEvents(descriptor, settings, settingsJson, options) {
+  // disableAllHooks short-circuit — check both hooks.json (file-scoped) and
+  // settings.json (global). Either being true means hooks won't run.
+  if (settings && settings.disableAllHooks === true) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      detail: `${descriptor.configPath} has disableAllHooks=true; Clawd hooks will not run`,
+      supplementary: { key: "copilot_hooks", value: "disabled-file" },
+    });
+  }
+  if (settingsJson && settingsJson.disableAllHooks === true) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      detail: `${descriptor.settingsPath || "settings.json"} has disableAllHooks=true; Clawd hooks will not run`,
+      supplementary: { key: "copilot_hooks", value: "disabled-global" },
+    });
+  }
+
+  // Safe-v1 cross-file check. Mirrors hooks/copilot-install.js so the
+  // installer's silent skip is visible to the user via the doctor pane:
+  //   - in-file: another (non-Clawd) entry in hooks.json's permissionRequest
+  //   - cross-file: any sibling *.json in the same hooks/ dir declares the event
+  // When triggered, permissionRequest is removed from the per-event validation
+  // pass and the result is annotated with `permission-user-hook`. The Fix
+  // button is suppressed at attachFixAction() so the user cannot trigger an
+  // install that the installer itself will reject. Without this layer the
+  // doctor reports "missing permissionRequest" and offers a Fix that never
+  // does anything.
+  const inFileArr = (settings && settings.hooks && Array.isArray(settings.hooks.permissionRequest))
+    ? settings.hooks.permissionRequest
+    : [];
+  const hasInFileUserHook = !isCopilotPermissionRegistrable(inFileArr);
+  const hooksDirForScan = descriptor.configPath
+    ? require("path").dirname(descriptor.configPath)
+    : null;
+  const hasCrossFileUserHook = hooksDirForScan
+    ? hasUserPermissionHookInOtherFiles(hooksDirForScan, descriptor.configPath, { fs: options.fs })
+    : false;
+  // settings.json inline `hooks` block also merges into Copilot's hook chain.
+  // Doctor only covers installer-time signals here — repo-level
+  // .github/hooks/*.json is checked at request time by copilot-hook.js.
+  const hasInlineSettingsHook = descriptor.settingsPath
+    ? hasUserPermissionHookInSettingsJson(descriptor.settingsPath, { fs: options.fs })
+    : false;
+  const permissionOwnedByUser = hasInFileUserHook || hasCrossFileUserHook || hasInlineSettingsHook;
+
+  const events = (Array.isArray(descriptor.hookEvents) ? descriptor.hookEvents : [])
+    .filter((e) => !(permissionOwnedByUser && e === "permissionRequest"));
+  const missingEvents = [];
+  let commandCount = 0;
+  let firstOk = null;
+  let firstFailure = null;
+
+  for (const eventName of events) {
+    const commands = findCopilotHookCommandsForEvent(settings, eventName, descriptor.marker);
+    commandCount += commands.length;
+    if (!commands.length) {
+      missingEvents.push(eventName);
+      continue;
+    }
+
+    const results = commands.map((command) => options.validateCommand(command, {
+      platform: options.platform,
+      fs: options.fs,
+    }));
+    const ok = results.find((result) => result.ok);
+    if (ok) {
+      if (!firstOk) firstOk = ok;
+      continue;
+    }
+    if (!firstFailure) {
+      firstFailure = {
+        eventName,
+        result: results[0] || { issue: "parse-failed" },
+        command: commands[0],
+      };
+    }
+  }
+
+  if (missingEvents.length) {
+    const detail = {
+      level: "warning",
+      detail: `${descriptor.configPath} missing Copilot hook event(s): ${missingEvents.join(", ")}`,
+      commandCount,
+      missingCopilotHookEvents: missingEvents,
+    };
+    if (permissionOwnedByUser) {
+      detail.supplementary = { key: "copilot_hooks", value: "permission-user-hook" };
+      detail.permissionUserHook = true;
+    }
+    return makeDetail(descriptor, "not-connected", detail);
+  }
+
+  if (firstFailure) {
+    const first = firstFailure.result;
+    return makeDetail(descriptor, "broken-path", {
+      level: "warning",
+      detail: `Copilot hook command failed validation for ${firstFailure.eventName}: ${first.issue || "parse-failed"}`,
+      commandCount,
+      hookCommandIssue: first.issue || "parse-failed",
+      nodeBin: first.nodeBin || null,
+      scriptPath: first.scriptPath || null,
+      commandFragment: first.fragment || String(firstFailure.command || "").slice(0, 128),
+      brokenCopilotHookEvent: firstFailure.eventName,
+    });
+  }
+
+  if (permissionOwnedByUser) {
+    return makeDetail(descriptor, "ok", {
+      level: "warning",
+      detail: `${descriptor.configPath} Copilot state hooks registered; permissionRequest left to user hook`,
+      commandCount,
+      scriptPath: firstOk && firstOk.scriptPath ? firstOk.scriptPath : null,
+      supplementary: { key: "copilot_hooks", value: "permission-user-hook" },
+      permissionUserHook: true,
+    });
+  }
+
+  return makeDetail(descriptor, "ok", {
+    level: null,
+    detail: `${descriptor.configPath} Copilot hooks registered for ${events.length} events, scriptPath verified`,
     commandCount,
     scriptPath: firstOk && firstOk.scriptPath ? firstOk.scriptPath : null,
   });
@@ -330,10 +719,12 @@ function validateAntigravityHookEvents(descriptor, settings, options) {
 
 function applyCodexSupplementary(detail, descriptor, options, settings) {
   if (!descriptor.supplementary || descriptor.supplementary.key !== "hooks") return detail;
-  if (detail.status !== "ok") return detail;
 
   const supplementary = checkCodexHooksFeature(descriptor.supplementary.configPath, { fs: options.fs });
-  if (supplementary.value === "disabled") {
+  if (
+    supplementary.value === "disabled"
+    && (detail.status === "ok" || REPAIRABLE_AGENT_STATUSES.has(detail.status))
+  ) {
     return {
       ...detail,
       status: "not-connected",
@@ -346,6 +737,7 @@ function applyCodexSupplementary(detail, descriptor, options, settings) {
       detail: "Codex hooks feature is disabled",
     };
   }
+  if (detail.status !== "ok") return detail;
   const codexHookTrust = checkCodexHookTrust(
     descriptor.supplementary.configPath,
     settings,
@@ -429,6 +821,40 @@ function applyGeminiSupplementary(detail, descriptor, settings) {
   };
 }
 
+function getQwenHooksSupplementary(settings) {
+  if (settings && typeof settings === "object" && settings.disableAllHooks === true) {
+    return {
+      key: "qwen_hooks",
+      value: "disabled-global",
+      detail: "disableAllHooks is true",
+    };
+  }
+  return {
+    key: "qwen_hooks",
+    value: "enabled",
+    detail: "settings.json allows Clawd Qwen hooks",
+  };
+}
+
+function applyQwenSupplementary(detail, descriptor, settings) {
+  if (descriptor.agentId !== "qwen-code") return detail;
+
+  const supplementary = getQwenHooksSupplementary(settings);
+  if (supplementary.value !== "enabled") {
+    return {
+      ...detail,
+      status: "not-connected",
+      level: "warning",
+      detail: QWEN_HOOKS_DISABLED_DETAIL,
+      supplementary,
+    };
+  }
+  return {
+    ...detail,
+    supplementary,
+  };
+}
+
 function getAntigravityHooksSupplementary(settings) {
   const hookGroup = settings && typeof settings === "object" ? settings[ANTIGRAVITY_HOOK_GROUP_ID] : null;
   if (hookGroup && typeof hookGroup === "object" && hookGroup.enabled === false) {
@@ -492,13 +918,24 @@ function checkFileMode(descriptor, options) {
     return checkOpencodeSettings(descriptor, settings, options);
   }
 
-  let detail = descriptor.agentId === "gemini-cli"
-    ? validateGeminiHookEvents(descriptor, settings, options)
-    : validateCommandList(
+  let detail;
+  if (descriptor.agentId === "gemini-cli") {
+    detail = validateGeminiHookEvents(descriptor, settings, options);
+  } else if (descriptor.agentId === "qwen-code") {
+    detail = validateQwenHookEvents(descriptor, settings, options);
+  } else if (descriptor.agentId === "codex") {
+    detail = validateCommandList(
+      descriptor,
+      findCodexPlatformHookCommands(settings, descriptor.marker, options.platform || process.platform),
+      options
+    );
+  } else {
+    detail = validateCommandList(
       descriptor,
       findHookCommands(settings, descriptor.marker, { nested: !!descriptor.nested }),
       options
     );
+  }
   detail = {
     ...detail,
     parentDirExists: true,
@@ -506,7 +943,54 @@ function checkFileMode(descriptor, options) {
     configPath: descriptor.configPath,
   };
   detail = applyCodexSupplementary(detail, descriptor, options, settings);
-  return applyGeminiSupplementary(detail, descriptor, settings);
+  detail = applyGeminiSupplementary(detail, descriptor, settings);
+  return applyQwenSupplementary(detail, descriptor, settings);
+}
+
+function checkCopilotHooksMode(descriptor, options) {
+  if (!fileExists(options.fs, descriptor.configPath)) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      parentDirExists: true,
+      configFileExists: false,
+      configPath: descriptor.configPath,
+      detail: `${descriptor.configPath} missing`,
+    });
+  }
+
+  let hooksJson;
+  try {
+    hooksJson = readJson(options.fs, descriptor.configPath);
+  } catch (err) {
+    return makeDetail(descriptor, "config-corrupt", {
+      level: "warning",
+      parentDirExists: true,
+      configFileExists: true,
+      configPath: descriptor.configPath,
+      detail: err && err.message ? err.message : "hooks.json parse failed",
+    });
+  }
+
+  // settings.json is optional and auxiliary — its only doctor signal is the
+  // disableAllHooks flag. Parse errors are ignored so a malformed
+  // settings.json never blocks hooks.json validation (see the matching
+  // "ignores parse errors in settings.json" test case).
+  let settingsJson = null;
+  if (descriptor.settingsPath && fileExists(options.fs, descriptor.settingsPath)) {
+    try {
+      settingsJson = readJson(options.fs, descriptor.settingsPath);
+    } catch {
+      // ignore parse errors; settings.json is auxiliary
+    }
+  }
+
+  const detail = validateCopilotHookEvents(descriptor, hooksJson, settingsJson, options);
+  return {
+    ...detail,
+    parentDirExists: true,
+    configFileExists: true,
+    configPath: descriptor.configPath,
+  };
 }
 
 function checkTomlTextMode(descriptor, options) {
@@ -535,6 +1019,186 @@ function checkTomlTextMode(descriptor, options) {
 
   return {
     ...validateCommandList(descriptor, findKimiHookCommands(text, descriptor.marker), options),
+    parentDirExists: true,
+    configFileExists: true,
+    configPath: descriptor.configPath,
+  };
+}
+
+function unescapeTomlDoubleQuotedValue(value) {
+  return String(value || "")
+    .replace(/\\"/g, "\"")
+    .replace(/\\\\/g, "\\");
+}
+
+function parseTomlScalarValue(raw) {
+  const value = String(raw || "").trim();
+  if (value.startsWith("'''")) {
+    const end = value.indexOf("'''", 3);
+    return end >= 0 ? value.slice(3, end) : null;
+  }
+  if (value.startsWith('"""')) {
+    const end = value.indexOf('"""', 3);
+    return end >= 0 ? unescapeTomlDoubleQuotedValue(value.slice(3, end)) : null;
+  }
+  if (value.startsWith("'")) {
+    const end = value.indexOf("'", 1);
+    return end >= 0 ? value.slice(1, end) : null;
+  }
+  if (value.startsWith("\"")) {
+    let escaped = false;
+    for (let i = 1; i < value.length; i++) {
+      const ch = value[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        return unescapeTomlDoubleQuotedValue(value.slice(1, i));
+      }
+    }
+    return null;
+  }
+  const bare = value.replace(/\s+#.*$/, "").trim();
+  return bare || null;
+}
+
+function tomlAssignmentValue(lines, key) {
+  const pattern = new RegExp(`^\\s*${key}\\s*=\\s*(.+)$`);
+  for (const line of lines) {
+    const match = String(line || "").match(pattern);
+    if (!match) continue;
+    return parseTomlScalarValue(match[1]);
+  }
+  return null;
+}
+
+function findCodewhaleHookCommandsForEvent(text, eventName, descriptor) {
+  if (typeof text !== "string" || !text) return [];
+  const sectionMarker = descriptor.marker;
+  const commandMarker = descriptor.commandMarker || "codewhale-hook.js";
+  return parseCodewhaleTomlSections(text)
+    .filter((section) => section.header === "hooks.hooks")
+    .filter((section) => section.lines.some((line) => commandContainsFragment(line, sectionMarker)))
+    .filter((section) => tomlAssignmentValue(section.lines, "event") === eventName)
+    .map((section) => tomlAssignmentValue(section.lines, "command"))
+    .filter((command) => typeof command === "string" && commandContainsFragment(command, commandMarker));
+}
+
+function codewhaleHooksExplicitlyDisabled(text) {
+  const hooksSection = parseCodewhaleTomlSections(text)
+    .find((section) => section.header === "hooks");
+  if (!hooksSection) return false;
+  return tomlAssignmentValue(hooksSection.lines, "enabled") === "false";
+}
+
+function validateCodewhaleHookEvents(descriptor, text, options) {
+  const events = Array.isArray(descriptor.hookEvents) ? descriptor.hookEvents : [];
+  const missingEvents = [];
+  let commandCount = 0;
+  let firstOk = null;
+  let firstFailure = null;
+
+  if (codewhaleHooksExplicitlyDisabled(text)) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      detail: "CodeWhale hooks are disabled in config.toml; Clawd will not receive hook events",
+      supplementary: {
+        key: "codewhale_hooks",
+        value: "disabled",
+        detail: "[hooks].enabled is false",
+      },
+      commandCount: 0,
+    });
+  }
+
+  for (const eventName of events) {
+    const commands = findCodewhaleHookCommandsForEvent(text, eventName, descriptor);
+    commandCount += commands.length;
+    if (!commands.length) {
+      missingEvents.push(eventName);
+      continue;
+    }
+
+    const results = commands.map((command) => options.validateCommand(command, {
+      platform: options.platform,
+      fs: options.fs,
+    }));
+    const ok = results.find((result) => result.ok);
+    if (ok) {
+      if (!firstOk) firstOk = ok;
+      continue;
+    }
+    if (!firstFailure) {
+      firstFailure = {
+        eventName,
+        result: results[0] || { issue: "parse-failed" },
+        command: commands[0],
+      };
+    }
+  }
+
+  if (missingEvents.length) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      detail: `${descriptor.configPath} missing CodeWhale hook event(s): ${missingEvents.join(", ")}`,
+      commandCount,
+      missingCodewhaleHookEvents: missingEvents,
+    });
+  }
+
+  if (firstFailure) {
+    const first = firstFailure.result;
+    return makeDetail(descriptor, "broken-path", {
+      level: "warning",
+      detail: `CodeWhale hook command failed validation for ${firstFailure.eventName}: ${first.issue || "parse-failed"}`,
+      commandCount,
+      hookCommandIssue: first.issue || "parse-failed",
+      nodeBin: first.nodeBin || null,
+      scriptPath: first.scriptPath || null,
+      commandFragment: first.fragment || String(firstFailure.command || "").slice(0, 128),
+      brokenCodewhaleHookEvent: firstFailure.eventName,
+    });
+  }
+
+  return makeDetail(descriptor, "ok", {
+    level: null,
+    detail: `${descriptor.configPath} CodeWhale hooks registered for ${events.length} events, scriptPath verified`,
+    commandCount,
+    scriptPath: firstOk && firstOk.scriptPath ? firstOk.scriptPath : null,
+  });
+}
+
+function checkCodewhaleHooksTomlMode(descriptor, options) {
+  if (!fileExists(options.fs, descriptor.configPath)) {
+    return makeDetail(descriptor, "not-connected", {
+      level: "warning",
+      parentDirExists: true,
+      configFileExists: false,
+      configPath: descriptor.configPath,
+      detail: `${descriptor.configPath} missing`,
+    });
+  }
+
+  let text;
+  try {
+    text = options.fs.readFileSync(descriptor.configPath, "utf8");
+  } catch (err) {
+    return makeDetail(descriptor, "config-corrupt", {
+      level: "warning",
+      parentDirExists: true,
+      configFileExists: true,
+      configPath: descriptor.configPath,
+      detail: err && err.message ? err.message : "CodeWhale config read failed",
+    });
+  }
+
+  return {
+    ...validateCodewhaleHookEvents(descriptor, text, options),
     parentDirExists: true,
     configFileExists: true,
     configPath: descriptor.configPath,
@@ -881,6 +1545,25 @@ function findOpenClawPluginEntry(pluginPaths, marker) {
   return null;
 }
 
+function describeOpencodeEntryIssue(reason) {
+  switch (reason) {
+    case "not-absolute":
+      return "the plugin path is not absolute";
+    case "directory-missing":
+      return "the plugin directory does not exist";
+    case "not-a-directory":
+      return "the plugin entry is not a directory";
+    case "index-mjs-missing":
+      return "the plugin directory has no index.mjs";
+    case "index-mjs-unreadable":
+      return "the plugin index.mjs could not be read";
+    case "extra-module-exports":
+      return "the module exports more than the default function, so opencode rejects it and loads nothing (#413)";
+    default:
+      return reason;
+  }
+}
+
 function checkOpencodeSettings(descriptor, settings, options) {
   const entry = findOpencodePluginEntry(settings && settings.plugin, descriptor.marker);
   if (!entry) {
@@ -900,7 +1583,7 @@ function checkOpencodeSettings(descriptor, settings, options) {
       parentDirExists: true,
       configFileExists: true,
       configPath: descriptor.configPath,
-      detail: `opencode plugin entry is invalid: ${validation.reason}`,
+      detail: `opencode plugin entry is invalid: ${describeOpencodeEntryIssue(validation.reason)}`,
       opencodeEntryIssue: validation.reason,
       opencodeEntry: entry,
     });
@@ -1085,6 +1768,13 @@ function checkPiExtensionMode(descriptor, options) {
 
 function checkAgent(descriptor, options) {
   const prefs = options.prefs || {};
+  if (!isAgentIntegrationInstalled(prefs, descriptor.agentId)) {
+    return makeDetail(descriptor, "not-managed", {
+      level: "info",
+      detail: "This integration is not installed in Settings",
+    });
+  }
+
   if (!isAgentEnabled(prefs, descriptor.agentId)) {
     return makeDetail(descriptor, "disabled", {
       level: "info",
@@ -1102,27 +1792,45 @@ function checkAgent(descriptor, options) {
   if (descriptor.configMode === "none-global") {
     return makeDetail(descriptor, "manual-only", {
       level: "info",
-      detail: "This agent uses project-level config",
+      detail: "This agent does not use a host-managed config file",
       scriptPath: descriptor.scriptPath || null,
       scriptExists: descriptor.scriptPath ? fileExists(options.fs, descriptor.scriptPath) : null,
     });
   }
 
-  const parentDirExists = descriptor.parentDir ? dirExists(options.fs, descriptor.parentDir) : false;
+  // Multi-generation agents (#563: kimi legacy + kimi-code) declare ordered
+  // configTargets; the first whose directory exists is the one doctor judges.
+  const activeTarget = Array.isArray(descriptor.configTargets)
+    ? descriptor.configTargets.find((target) => dirExists(options.fs, target.parentDir))
+    : null;
+  const effectiveDescriptor = activeTarget
+    ? { ...descriptor, parentDir: activeTarget.parentDir, configPath: activeTarget.configPath }
+    : descriptor;
+
+  const parentDirExists = effectiveDescriptor.parentDir
+    ? dirExists(options.fs, effectiveDescriptor.parentDir)
+    : false;
   if (!parentDirExists) {
     return makeDetail(descriptor, "not-installed", {
       level: "info",
       parentDirExists: false,
       configPath: descriptor.configPath,
-      detail: `${descriptor.parentDir} missing`,
+      detail: Array.isArray(descriptor.configTargets)
+        ? `${descriptor.configTargets.map((target) => target.parentDir).join(" / ")} missing`
+        : `${descriptor.parentDir} missing`,
     });
   }
+  descriptor = effectiveDescriptor;
 
   let detail;
   if (descriptor.configMode === "file") {
     detail = checkFileMode(descriptor, options);
+  } else if (descriptor.configMode === "copilot-hooks") {
+    detail = checkCopilotHooksMode(descriptor, options);
   } else if (descriptor.configMode === "toml-text") {
     detail = checkTomlTextMode(descriptor, options);
+  } else if (descriptor.configMode === "codewhale-hooks-toml") {
+    detail = checkCodewhaleHooksTomlMode(descriptor, options);
   } else if (descriptor.configMode === "dir") {
     detail = checkKiroDirMode(descriptor, options);
   } else if (descriptor.configMode === "pi-extension") {
@@ -1140,7 +1848,79 @@ function checkAgent(descriptor, options) {
     });
   }
 
+  if (descriptor.agentId === "kimi-cli") {
+    detail = withKimiLegacyPermissionModeSupplement(detail, descriptor, options);
+  }
+  detail = withClaudeHookGuardNotice(detail, descriptor, options);
   return withAgentFixAction(withAgentBubbleNote(detail, prefs, descriptor.agentId), descriptor);
+}
+
+// #563 follow-up: with both Kimi generations installed, the primary check
+// judges the first existing configTarget (kimi-code) and the legacy
+// ~/.kimi/config.toml is never inspected — yet that is the config the Python
+// kimi-cli actually reads. And even when legacy IS the active target, the
+// generic command check only asserts "some command exists and its script
+// resolves". Since the suspect default ships as an argv flag on the hook
+// command (--permission-mode), a stale legacy install — retired env-prefix
+// form (not executed on Windows), missing flag, or missing events — silently
+// means "no cues at all" for legacy sessions. Assert completeness here
+// whenever the legacy directory carries Clawd hooks, whichever target the
+// primary check judged.
+function withKimiLegacyPermissionModeSupplement(detail, descriptor, options) {
+  // Never mask a primary finding — the supplement only tightens an "ok".
+  if (detail.status !== "ok") return detail;
+  const targets = Array.isArray(descriptor.configTargets) ? descriptor.configTargets : [];
+  const legacyTarget = targets.find((target) => target.label === "legacy");
+  if (!legacyTarget || !dirExists(options.fs, legacyTarget.parentDir)) return detail;
+  if (!fileExists(options.fs, legacyTarget.configPath)) return detail;
+  let text;
+  try {
+    text = options.fs.readFileSync(legacyTarget.configPath, "utf8");
+  } catch {
+    // Unreadable legacy config: if legacy is the active target the primary
+    // check already surfaced it; if kimi-code is active, don't turn a read
+    // hiccup into a warning.
+    return detail;
+  }
+  const commands = findKimiHookCommands(text, descriptor.marker);
+  // No Clawd hooks on legacy at all: connection status is the primary
+  // check's business (when legacy is active) or a deliberate non-install.
+  if (!commands.length) return detail;
+
+  const issues = [];
+  const registeredEvents = new Set(listClawdKimiHookEvents(text, descriptor.marker));
+  const missingEvents = KIMI_HOOK_EVENTS.filter((event) => !registeredEvents.has(event));
+  if (missingEvents.length) {
+    issues.push(`missing hook events: ${missingEvents.join(", ")}`);
+  }
+  // The retired env prefix is checked UNCONDITIONALLY: a command carrying
+  // both the prefix and a valid argv flag is still dead on Windows (the
+  // leading `VAR=x` form never executes under a real shell there), yet its
+  // node/script substrings would pass the generic command validation.
+  if (/CLAWD_KIMI_PERMISSION_MODE=/.test(commands.join("\n"))) {
+    issues.push("hook commands carry the retired env-prefix mode form (never executed on Windows)");
+  }
+  const modes = commands.map((command) => {
+    const argvMatch = command.match(/--permission-mode=([A-Za-z]+)/);
+    return argvMatch ? normalizeKimiPermissionMode(argvMatch[1]) : null;
+  });
+  const missingModeCount = modes.filter((mode) => !mode).length;
+  if (missingModeCount > 0) {
+    issues.push(`${missingModeCount} hook command(s) missing the --permission-mode flag`);
+  }
+  const distinctModes = new Set(modes.filter(Boolean));
+  if (distinctModes.size > 1) {
+    issues.push(`inconsistent --permission-mode values: ${[...distinctModes].join(", ")}`);
+  }
+  if (!issues.length) return detail;
+  return {
+    ...detail,
+    status: "needs-review",
+    level: "warning",
+    detail: `${legacyTarget.configPath}: ${issues.join("; ")} — Fix rewrites Clawd's Kimi hooks in the current format`,
+    supplementary: { key: "kimi_legacy_mode", value: "stale" },
+    kimiLegacyConfigPath: legacyTarget.configPath,
+  };
 }
 
 function summarize(details) {
@@ -1155,10 +1935,12 @@ function summarize(details) {
   if (warningCount > 0) {
     status = "warning";
     level = "warning";
-  } else if (okCount === 0 && details.every((detail) => INFO_ONLY_STATUSES.has(detail.status))) {
-    status = "critical";
-    level = "critical";
   }
+  // An all-info aggregate (every integration disabled / manual-managed / not
+  // installed) is a deliberate user or environment choice, not a fault, so the
+  // summary stays green (#490). The "nothing is wired up" hint is surfaced as
+  // info-level UI copy instead, and a genuinely broken local server is still
+  // flagged red by the separate local-server check.
   return { status, level, counts, okCount, warningCount };
 }
 
@@ -1167,6 +1949,7 @@ function checkAgentIntegrations(options = {}) {
     fs: options.fs || fs,
     platform: options.platform || process.platform,
     prefs: options.prefs || {},
+    server: options.server || null,
     validateCommand: options.validateCommand || validateHookCommand,
   };
   const descriptors = options.descriptors || getAgentDescriptors();
@@ -1194,6 +1977,7 @@ module.exports = {
     checkAntigravityHooksMode,
     findAntigravityHookCommandsForEvent,
     parseYamlPluginEnabled,
+    codewhaleHooksExplicitlyDisabled,
     checkTomlTextMode,
     validateCommandList,
   },

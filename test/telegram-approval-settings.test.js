@@ -31,6 +31,9 @@ test("normalizeTelegramApproval trims ids and accepts numeric chat id shorthand"
     enabled: true,
     allowedTgUserId: "123456789",
     targetSessionKey: "telegram:987654321",
+    notifyOnComplete: false,
+    completionOutputMode: "off",
+    r3DirectSendEnabled: false,
   });
 });
 
@@ -61,6 +64,42 @@ test("validateTelegramApproval permits incomplete saved config but rejects malfo
     targetSessionKey: "",
     botToken: "123:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi",
   }).status, "error");
+  assert.equal(settings.validateTelegramApproval({
+    enabled: true,
+    allowedTgUserId: "123456789",
+    targetSessionKey: "telegram:987654321",
+    completionOutputMode: "full",
+  }).status, "ok");
+  assert.equal(settings.validateTelegramApproval({
+    enabled: true,
+    allowedTgUserId: "123456789",
+    targetSessionKey: "telegram:987654321",
+    completionOutputMode: "tail",
+  }).status, "error");
+  assert.equal(settings.validateTelegramApproval({
+    enabled: true,
+    allowedTgUserId: "123456789",
+    targetSessionKey: "telegram:987654321",
+    completionOutputMode: "everything",
+  }).status, "error");
+  assert.equal(settings.validateTelegramApproval({
+    enabled: true,
+    allowedTgUserId: "123456789",
+    targetSessionKey: "telegram:987654321",
+    r3DirectSendEnabled: true,
+  }).status, "ok");
+  assert.equal(settings.validateTelegramApproval({
+    enabled: true,
+    allowedTgUserId: "123456789",
+    targetSessionKey: "telegram:987654321",
+    r3DirectSendEnabled: "yes",
+  }).status, "error");
+});
+
+test("normalizeTelegramApproval maps legacy tail completion output to full", () => {
+  assert.equal(settings.normalizeTelegramApproval({
+    completionOutputMode: "tail",
+  }).completionOutputMode, "full");
 });
 
 test("readiness blocks enabled Telegram approval until ids and token are configured", () => {
@@ -76,6 +115,9 @@ test("readiness blocks enabled Telegram approval until ids and token are configu
       enabled: true,
       allowedTgUserId: "",
       targetSessionKey: "telegram:987654321",
+      notifyOnComplete: false,
+      completionOutputMode: "off",
+      r3DirectSendEnabled: false,
     },
   });
   assert.equal(settings.readiness({
@@ -231,10 +273,17 @@ test("invariant: Clawd source never reads process.env.CLAWD_TG_BOT_TOKEN", () =>
   // content for the sidecar to read) and in src/telegram-approval-sidecar.js
   // (handshake constants and child env stripping). What's forbidden is
   // process.env access to that specific name in Clawd's own code.
+  const srcDir = path.join(__dirname, "..", "src");
+  // Cover main.js plus every src/telegram-*.js (sidecar, settings, the new
+  // native-client / owner-manager / migration-state / token-store added in
+  // the v0.9.0 spike) so future Telegram modules can't silently regress this
+  // invariant.
   const sourceFiles = [
-    path.join(__dirname, "..", "src", "main.js"),
-    path.join(__dirname, "..", "src", "telegram-approval-sidecar.js"),
-    path.join(__dirname, "..", "src", "telegram-approval-settings.js"),
+    path.join(srcDir, "main.js"),
+    ...fs
+      .readdirSync(srcDir)
+      .filter((name) => /^telegram-.*\.js$/.test(name))
+      .map((name) => path.join(srcDir, name)),
   ];
   const offenders = [];
   const needle = "process.env.CLAWD_TG_BOT_TOKEN";

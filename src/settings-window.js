@@ -8,6 +8,7 @@ const {
   getSettingsWindowIconPath,
   getSettingsWindowTaskbarDetails,
 } = require("./settings-window-icon");
+const { clampTextScale, scaleWidth, scaleHeight, applyZoomToWindow } = require("./text-scale");
 
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 560;
@@ -64,6 +65,7 @@ function createSettingsWindowRuntime(options = {}) {
   const appDir = options.appDir || path.join(__dirname, "..");
   const settingsHtmlPath = options.settingsHtmlPath || path.join(__dirname, "settings.html");
   const preloadPath = options.preloadPath || path.join(__dirname, "preload-settings.js");
+  const discordDefaultAppIdPresent = !!options.discordDefaultAppIdPresent;
   const scheduleLater = typeof options.setTimeout === "function" ? options.setTimeout : setTimeout;
   const clearScheduled = typeof options.clearTimeout === "function" ? options.clearTimeout : clearTimeout;
 
@@ -142,14 +144,53 @@ function createSettingsWindowRuntime(options = {}) {
       }
     }
 
-    const width = Math.min(DEFAULT_WIDTH, Math.max(1, workArea.width));
-    const height = Math.min(DEFAULT_HEIGHT, Math.max(1, workArea.height));
+    const scale = getTextScale();
+    const width = Math.min(scaleWidth(DEFAULT_WIDTH, scale), Math.max(1, workArea.width));
+    const height = Math.min(scaleHeight(DEFAULT_HEIGHT, scale), Math.max(1, workArea.height));
     return clampBoundsToWorkArea({
       x: workArea.x + (workArea.width - width) / 2,
       y: workArea.y + (workArea.height - height) / 2,
       width,
       height,
     }, workArea);
+  }
+
+  function getTextScale() {
+    return clampTextScale(typeof options.getTextScale === "function" ? options.getTextScale() : 1);
+  }
+
+  // The text-scale slider shows the committed percent of the display this
+  // window sits on, which it can only learn via getTextScaleContext() — a
+  // display change never goes through the settings store, so without this
+  // poke the slider keeps showing the previous display's value (and a nudge
+  // would commit from that stale base).
+  function notifyTextScaleContextChanged(win) {
+    const wc = win && win.webContents;
+    if (!wc || (typeof wc.isDestroyed === "function" && wc.isDestroyed())) return;
+    if (typeof wc.send !== "function") return;
+    try { wc.send("settings:text-scale-context-changed"); } catch {}
+  }
+
+  // textScale changed while settings is open: re-zoom, raise the minimum
+  // size, and only grow the window if it now sits below that minimum — never
+  // touch a user-chosen size otherwise.
+  function applyTextScaleToWindow() {
+    const win = getWindow();
+    if (!isLiveWindow(win)) return;
+    const scale = getTextScale();
+    applyZoomToWindow(win, scale);
+    notifyTextScaleContextChanged(win);
+    const minW = scaleWidth(MIN_WIDTH, scale);
+    const minH = scaleHeight(MIN_HEIGHT, scale);
+    if (typeof win.setMinimumSize === "function") win.setMinimumSize(minW, minH);
+    const bounds = typeof win.getBounds === "function" ? win.getBounds() : null;
+    if (bounds && (bounds.width < minW || bounds.height < minH)) {
+      win.setBounds({
+        ...bounds,
+        width: Math.max(bounds.width, minW),
+        height: Math.max(bounds.height, minH),
+      });
+    }
   }
 
   function temporarilyLiftSettingsWindow(win) {
@@ -203,10 +244,11 @@ function createSettingsWindowRuntime(options = {}) {
 
     const iconPath = getIconPath();
     const bounds = computeInitialBounds();
+    const createScale = getTextScale();
     const opts = {
       ...bounds,
-      minWidth: MIN_WIDTH,
-      minHeight: MIN_HEIGHT,
+      minWidth: scaleWidth(MIN_WIDTH, createScale),
+      minHeight: scaleHeight(MIN_HEIGHT, createScale),
       show: false,
       frame: true,
       transparent: false,
@@ -224,6 +266,10 @@ function createSettingsWindowRuntime(options = {}) {
         preload: preloadPath,
         nodeIntegration: false,
         contextIsolation: true,
+        // Sandboxed preloads can't require app modules; pass build-time flags by value.
+        additionalArguments: [
+          `--discord-default-app-id-present=${discordDefaultAppIdPresent ? "1" : "0"}`,
+        ],
       },
     };
     if (iconPath) opts.icon = iconPath;
@@ -239,6 +285,23 @@ function createSettingsWindowRuntime(options = {}) {
     }
     createdWindow.setMenuBarVisibility(false);
     createdWindow.loadFile(settingsHtmlPath);
+    if (createdWindow.webContents && typeof createdWindow.webContents.once === "function") {
+      createdWindow.webContents.once("did-finish-load", () => {
+        applyZoomToWindow(createdWindow, getTextScale());
+      });
+    }
+    // textScale is per-display: re-resolve after the user drags the window
+    // somewhere else (debounced — "move" fires continuously during drags).
+    if (typeof createdWindow.on === "function") {
+      let moveTextScaleTimer = null;
+      createdWindow.on("move", () => {
+        if (moveTextScaleTimer) clearScheduled(moveTextScaleTimer);
+        moveTextScaleTimer = scheduleTimer(() => {
+          moveTextScaleTimer = null;
+          applyTextScaleToWindow();
+        }, 350);
+      });
+    }
     let didShowCreatedWindow = false;
     function showCreatedWindow(showOptions = {}) {
       if (didShowCreatedWindow) return;
@@ -271,6 +334,7 @@ function createSettingsWindowRuntime(options = {}) {
     getWindow,
     open,
     openWhenReady,
+    applyTextScaleToWindow,
   };
 }
 

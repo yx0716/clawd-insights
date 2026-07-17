@@ -71,6 +71,7 @@ const VISUAL_FALLBACK_STATES = new Set([
   "sweeping",
   "carrying",
   "sleeping",
+  "roam",
 ]);
 
 function validateTheme(cfg) {
@@ -178,12 +179,16 @@ function validateTheme(cfg) {
     }
   }
 
+  if (cfg.roamFlipAssets !== undefined && typeof cfg.roamFlipAssets !== "boolean") {
+    errors.push(`roamFlipAssets must be a boolean, got ${JSON.stringify(cfg.roamFlipAssets)}`);
+  }
+
   const fallbackStateKeys = Object.keys(normalizedStates);
   for (const stateKey of fallbackStateKeys) {
     const entry = normalizedStates[stateKey];
     if (!entry.fallbackTo) continue;
     if (!VISUAL_FALLBACK_STATES.has(stateKey)) {
-      errors.push(`states.${stateKey}.fallbackTo is only allowed on error/attention/notification/sweeping/carrying/sleeping`);
+      errors.push(`states.${stateKey}.fallbackTo is only allowed on error/attention/notification/sweeping/carrying/sleeping/roam`);
       continue;
     }
     if (!Object.prototype.hasOwnProperty.call(normalizedStates, entry.fallbackTo)) {
@@ -293,6 +298,8 @@ function hasReactionBindings(reactions) {
     isPlainObject(entry)
     && (
       (typeof entry.file === "string" && entry.file.length > 0)
+      || (typeof entry.fileLeft === "string" && entry.fileLeft.length > 0)
+      || (typeof entry.fileRight === "string" && entry.fileRight.length > 0)
       || (Array.isArray(entry.files) && entry.files.some((file) => typeof file === "string" && file.length > 0))
     )
   );
@@ -321,7 +328,29 @@ function deriveSleepMode(cfg) {
   return (cfg && cfg.sleepSequence && cfg.sleepSequence.mode === "direct") ? "direct" : "full";
 }
 
-function buildCapabilities(cfg) {
+function isSvgFilename(value) {
+  return typeof value === "string" && value.toLowerCase().endsWith(".svg");
+}
+
+function hasScriptedSvgRuntime(cfg, options = {}) {
+  const trustedRuntimeAllowed = !!options.trustedRuntimeAllowed;
+  const scriptedFiles = cfg
+    && cfg.trustedRuntime
+    && Array.isArray(cfg.trustedRuntime.scriptedSvgFiles)
+    ? cfg.trustedRuntime.scriptedSvgFiles
+    : [];
+  if (trustedRuntimeAllowed && scriptedFiles.some((file) => isSvgFilename(file))) return true;
+  return !!(
+    isPlainObject(cfg && cfg.rendering)
+    && cfg.rendering.svgChannel === "object"
+  );
+}
+
+function derivePowerProfile(cfg, options = {}) {
+  return hasScriptedSvgRuntime(cfg, options) ? "scripted" : "standard";
+}
+
+function buildCapabilities(cfg, options = {}) {
   return {
     eyeTracking: !!(
       isPlainObject(cfg && cfg.eyeTracking)
@@ -335,6 +364,7 @@ function buildCapabilities(cfg) {
     jugglingTiers: hasNonEmptyArray(cfg && cfg.jugglingTiers),
     idleMode: deriveIdleMode(cfg),
     sleepMode: deriveSleepMode(cfg),
+    powerProfile: derivePowerProfile(cfg, options),
   };
 }
 
@@ -372,6 +402,8 @@ function collectRequiredAssetFiles(theme) {
     for (const entry of Object.values(theme.reactions)) {
       if (!entry || typeof entry !== "object") continue;
       if (typeof entry.file === "string") addThemeAssetFile(files, entry.file);
+      if (typeof entry.fileLeft === "string") addThemeAssetFile(files, entry.fileLeft);
+      if (typeof entry.fileRight === "string") addThemeAssetFile(files, entry.fileRight);
       if (Array.isArray(entry.files)) {
         for (const file of entry.files) addThemeAssetFile(files, file);
       }
@@ -384,6 +416,13 @@ function collectRequiredAssetFiles(theme) {
   }
   if (isPlainObject(theme && theme.updateVisuals) && typeof theme.updateVisuals.checking === "string") {
     addThemeAssetFile(files, theme.updateVisuals.checking);
+  }
+  if (isPlainObject(theme && theme.rendering) && isPlainObject(theme.rendering.lowPowerStaticImageOverrides)) {
+    for (const override of Object.values(theme.rendering.lowPowerStaticImageOverrides)) {
+      if (!isPlainObject(override)) continue;
+      if (typeof override.from === "string") addThemeAssetFile(files, override.from);
+      if (typeof override.to === "string") addThemeAssetFile(files, override.to);
+    }
   }
   return [...files];
 }
@@ -448,8 +487,24 @@ function normalizeTrustedRuntime(value, isBuiltin, themeId) {
 
 function normalizeRendering(value) {
   if (!isPlainObject(value)) return { svgChannel: "auto" };
-  return {
+  const lowPowerStaticImageOverrides = {};
+  if (isPlainObject(value.lowPowerStaticImageOverrides)) {
+    for (const [state, override] of Object.entries(value.lowPowerStaticImageOverrides)) {
+      if (!isPlainObject(override)) continue;
+      const from = basenameOnly(override.from);
+      const to = basenameOnly(override.to);
+      if (!state || !from || !to) continue;
+      lowPowerStaticImageOverrides[state] = { from, to };
+    }
+  }
+  const rendering = {
     svgChannel: value.svgChannel === "object" ? "object" : "auto",
+  };
+  if (Object.keys(lowPowerStaticImageOverrides).length > 0) {
+    rendering.lowPowerStaticImageOverrides = lowPowerStaticImageOverrides;
+  }
+  return {
+    ...rendering,
   };
 }
 
@@ -590,6 +645,11 @@ function mergeDefaults(raw, themeId, isBuiltin) {
 
   theme.sleepSequence = { mode: deriveSleepMode(raw) };
 
+  // Roam visuals are mirrored while walking left, assuming right-facing
+  // artwork; themes whose roam asset is drawn facing left set this to invert
+  // the mirror. Pure rendering flag — safe for external themes.
+  theme.roamFlipAssets = !!raw.roamFlipAssets;
+
   // miniMode
   if (raw.miniMode) {
     theme.miniMode = {
@@ -661,6 +721,8 @@ function mergeDefaults(raw, themeId, isBuiltin) {
   if (theme.reactions) {
     for (const r of Object.values(theme.reactions)) {
       if (r && r.file) r.file = bn(r.file);
+      if (r && r.fileLeft) r.fileLeft = bn(r.fileLeft);
+      if (r && r.fileRight) r.fileRight = bn(r.fileRight);
       if (r && Array.isArray(r.files)) r.files = r.files.map(bn);
     }
   }

@@ -220,6 +220,28 @@ describe("CodexLogMonitor", () => {
     monitor.start();
   });
 
+  it("should map no-tool task_complete to attention when assistant output is present", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      '{"type":"event_msg","payload":{"type":"agent_message","message":"Short answer."}}',
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const states = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      states.push(state);
+      if (state === "attention") {
+        assert.deepStrictEqual(states, ["idle", "thinking", "attention"]);
+        assert.strictEqual(extra.assistantLastOutput, "Short answer.");
+        done();
+      }
+    });
+    monitor.start();
+  });
+
   it("should map task_complete to attention when tools were used", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, [
@@ -236,6 +258,63 @@ describe("CodexLogMonitor", () => {
       states.push(state);
       if (state === "attention") {
         assert.deepStrictEqual(states, ["idle", "thinking", "working", "attention"]);
+        done();
+      }
+    });
+    monitor.start();
+  });
+
+  it("carries Codex assistant output on task_complete", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"ls\\"}"}}',
+      '{"type":"event_msg","payload":{"type":"exec_command_end"}}',
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Implemented the Codex fix." }],
+        },
+      }),
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      if (event === "event_msg:task_complete") {
+        assert.strictEqual(state, "attention");
+        assert.strictEqual(extra.assistantLastOutput, "Implemented the Codex fix.");
+        assert.strictEqual(extra.assistantLastOutputTruncated, false);
+        done();
+      }
+    });
+    monitor.start();
+  });
+
+  it("clears Codex assistant output on a new task_started turn", (_, done) => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      '{"type":"event_msg","payload":{"type":"agent_message","message":"Previous answer"}}',
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"ls\\"}"}}',
+      '{"type":"event_msg","payload":{"type":"exec_command_end"}}',
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const completions = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      if (event !== "event_msg:task_complete") return;
+      completions.push(extra);
+      if (completions.length === 2) {
+        assert.strictEqual(completions[0].assistantLastOutput, "Previous answer");
+        assert.strictEqual(Object.prototype.hasOwnProperty.call(completions[1], "assistantLastOutput"), false);
         done();
       }
     });
@@ -361,6 +440,171 @@ describe("CodexLogMonitor", () => {
     monitor.start();
   });
 
+  it("carries token_count context usage on the next mapped state update", () => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: 999999 },
+            last_token_usage: { total_tokens: 24846 },
+            model_context_window: 258400,
+          },
+        },
+      }),
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      events.push({ sid, state, event, extra });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    assert.deepStrictEqual(events.map((entry) => entry.event), [
+      "session_meta",
+      "event_msg:task_started",
+      "event_msg:token_count",
+      "event_msg:task_complete",
+    ]);
+    assert.deepStrictEqual(events[2].extra.contextUsage, {
+      used: 24846,
+      limit: 258400,
+      percent: 10,
+      source: "codex",
+    });
+    assert.deepStrictEqual(events[3].extra.contextUsage, {
+      used: 24846,
+      limit: 258400,
+      percent: 10,
+      source: "codex",
+    });
+  });
+
+  it("does not replay attention from a metadata-only token_count write (#535)", () => {
+    // token_count is a metadata refresh, not a turn boundary — Codex Desktop
+    // rewrites it on focus, long after a session went idle. Carrying lastState
+    // verbatim re-announces the finished turn's one-shot `attention`, and the
+    // pet celebrates work the user already watched complete.
+    //
+    // The consumer's preserveState does not save us: it pins the stored state
+    // only, while state.js's one-shot branch plays whatever state it is handed
+    // (`attention` is in ONESHOT_STATE_NAMES). So a stored-idle session still
+    // animates unless the carry is filtered here.
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{}"}}',
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event) => {
+      events.push({ state, event });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+    assert.strictEqual(events[events.length - 1].state, "attention",
+      "the real turn end must still celebrate once");
+
+    // Desktop refreshes token_count against the now-idle session.
+    fs.appendFileSync(testFile, JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { total_tokens: 2000 }, model_context_window: 200000 },
+      },
+    }) + "\n");
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    const last = events[events.length - 1];
+    assert.strictEqual(last.event, "event_msg:token_count");
+    assert.strictEqual(last.state, "idle",
+      `token_count must not re-emit the one-shot attention, got: ${last.state}`);
+  });
+
+  it("does not treat cumulative Codex total_token_usage as context-window usage", () => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: 27799148 },
+            model_context_window: 258400,
+          },
+        },
+      }),
+      '{"type":"event_msg","payload":{"type":"task_complete"}}',
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      events.push({ sid, state, event, extra });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    assert.strictEqual(events.length, 3);
+    assert.deepStrictEqual(events.map((entry) => entry.event), [
+      "session_meta",
+      "event_msg:task_started",
+      "event_msg:task_complete",
+    ]);
+    assert.strictEqual(events[2].extra.contextUsage, undefined);
+  });
+
+  it("emits token_count context usage even when token_count is the final live record", () => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    fs.writeFileSync(testFile, [
+      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
+      '{"type":"event_msg","payload":{"type":"task_started"}}',
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: { total_tokens: 8118607 },
+            last_token_usage: { total_tokens: 23959 },
+            model_context_window: 258400,
+          },
+        },
+      }),
+    ].join("\n") + "\n");
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      events.push({ sid, state, event, extra });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    assert.deepStrictEqual(events.map((entry) => entry.event), [
+      "session_meta",
+      "event_msg:task_started",
+      "event_msg:token_count",
+    ]);
+    assert.deepStrictEqual(events[2].extra.contextUsage, {
+      used: 23959,
+      limit: 258400,
+      percent: 9,
+      source: "codex",
+    });
+  });
+
   it("should skip old files (>5min mtime)", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, '{"type":"session_meta","payload":{"cwd":"/tmp"}}\n');
@@ -470,12 +714,19 @@ describe("CodexLogMonitor", () => {
     }, 250);
   });
 
-  it("emits codex-permission before attention when attaching mid-turn to a stale pending shell call", (_, done) => {
+  it("emits working before attention when attaching mid-turn to a stale shell call", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
-      '{"type":"event_msg","payload":{"type":"task_started"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"echo hi\\"}"}}',
+      JSON.stringify({ type: "session_meta", payload: { cwd: "/tmp" } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell_command",
+          arguments: JSON.stringify({ command: "echo hi" }),
+        },
+      }),
     ].join("\n") + "\n");
     const recent = new Date(Date.now() - 60 * 1000);
     fs.utimesSync(testFile, recent, recent);
@@ -485,7 +736,7 @@ describe("CodexLogMonitor", () => {
     monitor = new CodexLogMonitor(config, (sid, state) => {
       seen.push(state);
       if (state === "attention") {
-        assert.deepStrictEqual(seen, ["codex-permission", "attention"]);
+        assert.deepStrictEqual(seen, ["working", "attention"]);
         done();
       }
     });
@@ -573,7 +824,7 @@ describe("CodexLogMonitor", () => {
     const config = makeConfig(tmpDir);
     const events = [];
     monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
-      events.push({ sid, state, event, cwd: extra.cwd });
+      events.push({ sid, state, event, cwd: extra.cwd, contextUsage: extra.contextUsage });
     });
 
     monitor._tracked.set(testFile, {
@@ -586,6 +837,7 @@ describe("CodexLogMonitor", () => {
       hadToolUse: false,
       isSubagent: false,
       agentPid: null,
+      contextUsage: { used: 1200, limit: 12000, percent: 10, source: "codex" },
       lastEventTime: 1,
     });
     for (let i = 0; i < 49; i++) {
@@ -608,7 +860,98 @@ describe("CodexLogMonitor", () => {
       state: "thinking",
       event: "event_msg:task_started",
       cwd: "/tmp",
+      contextUsage: { used: 1200, limit: 12000, percent: 10, source: "codex" },
     }]);
+  });
+
+  it("includes token_count context usage in backfill snapshots", () => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    const oldTimestamp = new Date(Date.now() - 60 * 1000).toISOString();
+    fs.writeFileSync(testFile, [
+      JSON.stringify({
+        timestamp: oldTimestamp,
+        type: "session_meta",
+        payload: { cwd: "/tmp" },
+      }),
+      JSON.stringify({
+        timestamp: oldTimestamp,
+        type: "event_msg",
+        payload: { type: "task_started" },
+      }),
+      JSON.stringify({
+        timestamp: oldTimestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { total_tokens: 50000 },
+            model_context_window: 200000,
+          },
+        },
+      }),
+    ].join("\n") + "\n");
+    const oldTime = new Date(Date.now() - 60 * 1000);
+    fs.utimesSync(testFile, oldTime, oldTime);
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      events.push({ sid, state, event, extra });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].state, "thinking");
+    assert.deepStrictEqual(events[0].extra.contextUsage, {
+      used: 50000,
+      limit: 200000,
+      percent: 25,
+      source: "codex",
+    });
+  });
+
+  it("emits token_count metadata when backfill has context usage but no sustained state", () => {
+    const testFile = path.join(dateDir, TEST_FILENAME);
+    const oldTimestamp = new Date(Date.now() - 60 * 1000).toISOString();
+    fs.writeFileSync(testFile, [
+      JSON.stringify({
+        timestamp: oldTimestamp,
+        type: "session_meta",
+        payload: { cwd: "/tmp" },
+      }),
+      JSON.stringify({
+        timestamp: oldTimestamp,
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: {
+            last_token_usage: { total_tokens: 64027 },
+            model_context_window: 258400,
+          },
+        },
+      }),
+    ].join("\n") + "\n");
+    const oldTime = new Date(Date.now() - 60 * 1000);
+    fs.utimesSync(testFile, oldTime, oldTime);
+
+    const config = makeConfig(tmpDir);
+    const events = [];
+    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
+      events.push({ sid, state, event, extra });
+    });
+
+    monitor._pollFile(testFile, path.basename(testFile));
+
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].state, "idle");
+    assert.strictEqual(events[0].event, "event_msg:token_count");
+    assert.deepStrictEqual(events[0].extra.contextUsage, {
+      used: 64027,
+      limit: 258400,
+      percent: 25,
+      source: "codex",
+    });
   });
 
   it("should handle corrupted JSON lines gracefully", (_, done) => {
@@ -632,60 +975,51 @@ describe("CodexLogMonitor", () => {
     monitor.start();
   });
 
-  // ── Approval heuristic tests ──
+  // ── Shell function_call mapping tests ──
 
-  it("should emit codex-permission after 2s timeout when no exec_command_end arrives", (_, done) => {
+  it("should map shell function_call to working without inferring codex-permission", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
-    // function_call with shell_command but no exec_command_end following
     fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/projects/foo"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"rm -rf node_modules\\"}"}}',
+      JSON.stringify({ type: "session_meta", payload: { cwd: "/projects/foo" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell_command",
+          arguments: JSON.stringify({ command: "rm -rf node_modules" }),
+        },
+      }),
     ].join("\n") + "\n");
 
     const config = makeConfig(tmpDir);
     const states = [];
     monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
       states.push(state);
-      if (state === "codex-permission") {
-        assert.strictEqual(extra.permissionDetail.command, "rm -rf node_modules");
-        assert.strictEqual(extra.cwd, "/projects/foo");
-        done();
-      }
-    });
-    monitor.start();
-  });
-
-  it("should NOT emit codex-permission if exec_command_end arrives within 2s", (_, done) => {
-    const testFile = path.join(dateDir, TEST_FILENAME);
-    // function_call immediately followed by exec_command_end — auto-approved
-    fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"ls\\"}"}}',
-      '{"type":"event_msg","payload":{"type":"exec_command_end"}}',
-    ].join("\n") + "\n");
-
-    const config = makeConfig(tmpDir);
-    const states = [];
-    monitor = new CodexLogMonitor(config, (sid, state) => {
-      states.push(state);
+      if (state === "working") assert.strictEqual(extra.cwd, "/projects/foo");
     });
     monitor.start();
 
-    // Wait 3s — if codex-permission doesn't appear, the timer was correctly cancelled
     setTimeout(() => {
-      assert.ok(!states.includes("codex-permission"), "should not have emitted codex-permission");
-      assert.ok(states.includes("idle"));
-      assert.ok(states.includes("working"));
+      assert.deepStrictEqual(states, ["idle", "working"]);
+      assert.ok(!states.includes("codex-permission"), "JSONL must not synthesize approval notifications");
       done();
-    }, 3000);
+    }, 2300);
   });
 
-  it("should NOT emit codex-permission if guardian assessment starts before command end", (_, done) => {
+  it("should keep command completion and guardian activity as working signals", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\\"command\\":\\"npm run build\\"}"}}',
-      '{"type":"event_msg","payload":{"type":"guardian_assessment","status":"in_progress"}}',
+      JSON.stringify({ type: "session_meta", payload: { cwd: "/tmp" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell_command",
+          arguments: JSON.stringify({ command: "npm run build" }),
+        },
+      }),
+      JSON.stringify({ type: "event_msg", payload: { type: "guardian_assessment", status: "in_progress" } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "exec_command_end" } }),
     ].join("\n") + "\n");
 
     const config = makeConfig(tmpDir);
@@ -696,40 +1030,28 @@ describe("CodexLogMonitor", () => {
     monitor.start();
 
     setTimeout(() => {
-      assert.ok(!states.includes("codex-permission"), "should not emit permission while auto-review is active");
-      assert.ok(states.includes("working"));
+      assert.ok(!states.includes("codex-permission"));
+      assert.deepStrictEqual(states, ["idle", "working"]);
       done();
-    }, 3000);
+    }, 100);
   });
 
-  it("should return to working when guardian approves after an explicit permission signal", (_, done) => {
+  it("should map explicit escalated exec_command JSONL records to working only", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\"npm run build\\",\\"sandbox_permissions\\":\\"require_escalated\\",\\"justification\\":\\"needs local build\\"}"}}',
-    ].join("\n") + "\n");
-
-    const config = makeConfig(tmpDir);
-    const states = [];
-    monitor = new CodexLogMonitor(config, (sid, state) => {
-      states.push(state);
-      if (state === "codex-permission") {
-        fs.appendFileSync(testFile, '{"type":"event_msg","payload":{"type":"guardian_assessment","status":"approved"}}\n');
-      }
-      if (state === "working" && states.includes("codex-permission")) {
-        assert.deepStrictEqual(states, ["idle", "codex-permission", "working"]);
-        done();
-      }
-    });
-    monitor.start();
-  });
-
-  it("should NOT emit codex-permission for non-shell function calls", (_, done) => {
-    const testFile = path.join(dateDir, TEST_FILENAME);
-    // web_search_call — not a shell command, no approval needed
-    fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/tmp"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"web_search","arguments":"{\\"query\\":\\"test\\"}"}}',
+      JSON.stringify({ type: "session_meta", payload: { cwd: "/projects/foo" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          arguments: JSON.stringify({
+            cmd: "git push",
+            sandbox_permissions: "require_escalated",
+            justification: "needs network",
+          }),
+        },
+      }),
     ].join("\n") + "\n");
 
     const config = makeConfig(tmpDir);
@@ -740,75 +1062,38 @@ describe("CodexLogMonitor", () => {
     monitor.start();
 
     setTimeout(() => {
-      assert.ok(!states.includes("codex-permission"), "should not emit for non-shell calls");
+      assert.deepStrictEqual(states, ["idle", "working"]);
+      assert.ok(!states.includes("codex-permission"));
       done();
-    }, 3000);
+    }, 100);
   });
 
-  it("should extract shell command from function_call arguments JSON", () => {
-    const config = makeConfig(tmpDir);
-    monitor = new CodexLogMonitor(config, () => {});
-    // JSON string arguments
-    assert.strictEqual(
-      monitor._extractShellCommand({ name: "shell_command", arguments: '{"command":"ls -la"}' }),
-      "ls -la"
-    );
-    // Object arguments
-    assert.strictEqual(
-      monitor._extractShellCommand({ name: "shell_command", arguments: { command: "git status" } }),
-      "git status"
-    );
-    // exec_command with cmd field
-    assert.strictEqual(
-      monitor._extractShellCommand({ name: "exec_command", arguments: '{"cmd":"ls -la"}' }),
-      "ls -la"
-    );
-    // Non-shell function
-    assert.strictEqual(
-      monitor._extractShellCommand({ name: "web_search", arguments: '{"query":"test"}' }),
-      ""
-    );
-    // null/empty
-    assert.strictEqual(monitor._extractShellCommand(null), "");
-    assert.strictEqual(monitor._extractShellCommand({}), "");
-  });
-
-  it("should emit codex-permission for exec_command function calls", (_, done) => {
+  it("should map non-shell function_call records to working without approval detail", (_, done) => {
     const testFile = path.join(dateDir, TEST_FILENAME);
     fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/projects/foo"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\"git status\\"}"}}',
+      JSON.stringify({ type: "session_meta", payload: { cwd: "/tmp" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "web_search",
+          arguments: JSON.stringify({ query: "test" }),
+        },
+      }),
     ].join("\n") + "\n");
 
     const config = makeConfig(tmpDir);
+    const states = [];
     monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
-      if (state === "codex-permission") {
-        assert.strictEqual(extra.permissionDetail.command, "git status");
-        done();
-      }
+      states.push(state);
+      assert.strictEqual(extra.permissionDetail, undefined);
     });
     monitor.start();
-  });
 
-  it("should emit codex-permission immediately for explicit escalated requests", (_, done) => {
-    const testFile = path.join(dateDir, TEST_FILENAME);
-    fs.writeFileSync(testFile, [
-      '{"type":"session_meta","payload":{"cwd":"/projects/foo"}}',
-      '{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\\"cmd\\":\\"git push\\",\\"sandbox_permissions\\":\\"require_escalated\\",\\"justification\\":\\"needs network\\"}"}}',
-    ].join("\n") + "\n");
-
-    const config = makeConfig(tmpDir);
-    const startedAt = Date.now();
-    monitor = new CodexLogMonitor(config, (sid, state, event, extra) => {
-      if (state === "codex-permission") {
-        const elapsed = Date.now() - startedAt;
-        // Should fire immediately (well under the 2s heuristic timer)
-        assert.ok(elapsed < 1500, `expected immediate permission signal, got ${elapsed}ms`);
-        assert.strictEqual(extra.permissionDetail.command, "git push");
-        done();
-      }
-    });
-    monitor.start();
+    setTimeout(() => {
+      assert.deepStrictEqual(states, ["idle", "working"]);
+      done();
+    }, 100);
   });
 
   describe("session title extraction (turn_context.summary)", () => {
