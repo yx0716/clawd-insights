@@ -439,7 +439,7 @@ describe("menu dashboard action", () => {
     const menu = initMenu(ctx);
     menu.buildContextMenu();
 
-    const openDashboard = ctx.contextMenu.template.find((item) => item.label === "Open Dashboard");
+    const openDashboard = ctx.contextMenu.template.find((item) => item.label === "Session Dashboard");
     assert.ok(openDashboard, "context menu should expose dashboard entry");
     openDashboard.click();
     assert.strictEqual(called, 1);
@@ -483,7 +483,7 @@ describe("menu dashboard action", () => {
     const menu = initMenu(ctx);
     menu.createTray();
 
-    const openDashboard = ctx.tray.contextMenu.template.find((item) => item.label === "Open Dashboard");
+    const openDashboard = ctx.tray.contextMenu.template.find((item) => item.label === "Session Dashboard");
     assert.ok(openDashboard, "tray menu should expose dashboard entry");
     openDashboard.click();
     assert.strictEqual(called, 1);

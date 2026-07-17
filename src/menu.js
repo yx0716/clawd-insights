@@ -194,18 +194,20 @@ module.exports = function initMenu(ctx) {
       },
     ];
 
-    // Dashboard + the danger auto-approve toggle (danger last, as in the
-    // context menu).
+    // Dashboards + the danger auto-approve toggle (danger last, as in the
+    // context menu). Analytics first: it is the fork's signature surface, and
+    // keeping it above the upstream session dashboard avoids the two being
+    // confused.
     const workGroup = [
+      {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
       {
         label: t("openDashboard"),
         click: () => {
           if (typeof ctx.openDashboard === "function") ctx.openDashboard();
         },
-      },
-      {
-        label: t("analytics"),
-        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
       },
       buildAutoApproveMenuItem(),
     ];
@@ -415,14 +417,14 @@ module.exports = function initMenu(ctx) {
 
     const workGroup = [
       {
+        label: t("analytics"),
+        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
+      {
         label: t("openDashboard"),
         click: () => {
           if (typeof ctx.openDashboard === "function") ctx.openDashboard();
         },
-      },
-      {
-        label: t("analytics"),
-        click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
       },
       {
         label: t("newSession"),
