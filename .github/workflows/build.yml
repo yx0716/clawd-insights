@@ -28,6 +28,15 @@ jobs:
 
   build-mac:
     runs-on: macos-latest
+    # Signing + notarization activate automatically once the five repo
+    # secrets exist (docs/guides/release-signing.md). Two build steps, mutually
+    # exclusive: a missing secret renders as an EMPTY env var, and
+    # electron-builder treats a defined-but-empty CSC_LINK as a certificate
+    # path ("not a file" hard error) — so the signing env is only injected
+    # when the secret actually exists. `secrets` is not allowed in step-level
+    # `if`, hence the job-level HAS_MAC_CERT indirection.
+    env:
+      HAS_MAC_CERT: ${{ secrets.MAC_CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -36,17 +45,11 @@ jobs:
       - run: npm install
       - run: npm run fetch:sidecars -- --target darwin-x64,darwin-arm64
       - run: node scripts/verify-sidecar-binaries.js prebuild:mac
-      # Signing + notarization activate automatically once the five repo
-      # secrets exist (docs/guides/release-signing.md). The two steps are
-      # mutually exclusive: a missing secret renders as an EMPTY env var, and
-      # electron-builder treats a defined-but-empty CSC_LINK as a certificate
-      # path ("not a file" hard error) — so the signing env must only be
-      # injected when the secret actually exists.
       - name: Build (unsigned)
-        if: ${{ secrets.MAC_CSC_LINK == '' }}
+        if: ${{ env.HAS_MAC_CERT == 'false' }}
         run: npx electron-builder --mac --publish never
       - name: Build (signed + notarized)
-        if: ${{ secrets.MAC_CSC_LINK != '' }}
+        if: ${{ env.HAS_MAC_CERT == 'true' }}
         run: npx electron-builder --mac --publish never
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
