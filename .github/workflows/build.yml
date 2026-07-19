@@ -36,7 +36,16 @@ jobs:
       - run: npm install
       - run: npm run fetch:sidecars -- --target darwin-x64,darwin-arm64
       - run: node scripts/verify-sidecar-binaries.js prebuild:mac
+      # Signing + notarization activate automatically once the five repo
+      # secrets exist (docs/guides/release-signing.md); with them absent the
+      # empty env vars are ignored and the build stays unsigned, as today.
       - run: npx electron-builder --mac --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       - uses: actions/upload-artifact@v4
         with:
           name: mac-installer

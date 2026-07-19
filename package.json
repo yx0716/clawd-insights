@@ -76,6 +76,11 @@
     "mac": {
       "icon": "assets/icon.png",
       "artifactName": "Clawd-Insights-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "target": [
         {
           "target": "dmg",

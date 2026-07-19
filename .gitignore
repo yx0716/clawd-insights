@@ -26,6 +26,7 @@ docs/**
 !docs/guides/setup-guide.zh-CN.md
 !docs/guides/guide-remote-ssh.md
 !docs/guides/guide-remote-ssh.zh-CN.md
+!docs/guides/release-signing.md
 !docs/guides/state-mapping.md
 !docs/guides/state-mapping.zh-CN.md
 !docs/guides/telegram-approval.md
