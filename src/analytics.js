@@ -370,14 +370,21 @@ module.exports = function initAnalytics(ctx) {
   ipcMain.handle("analytics-get-oneliners", async (_event, sessionIds) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return {};
     const results = {};
-    // Process sequentially to avoid flooding the CLI
+    // Batched: one AI call per ~10 sessions instead of one CLI spawn per
+    // session — see getSessionOneLiners in analytics-ai.js.
+    const pairs = [];
     for (const { id, agent } of sessionIds) {
       const detail = ctx.analyticsScan.getSessionDetail(id, agent);
-      if (detail) {
-        try {
-          results[id] = await ctx.analyticsAI.getSessionOneLiner(detail);
-        } catch { results[id] = null; }
+      if (detail) pairs.push({ id, detail });
+    }
+    if (!pairs.length) return results;
+    try {
+      const lines = await ctx.analyticsAI.getSessionOneLiners(pairs.map(p => p.detail));
+      for (const { id, detail } of pairs) {
+        results[id] = lines[detail.sessionId] != null ? lines[detail.sessionId] : null;
       }
+    } catch {
+      for (const { id } of pairs) results[id] = null;
     }
     return results;
   });

@@ -1858,6 +1858,8 @@ module.exports = function initAnalyticsAI(ctx) {
   // v6: fluency — every clause needs an explicit subject; no coined verb
   // abbreviations (补同步/漏跑-style); cause/process details belong to
   // situation/actions, not the summary
+  // 2026-07: static-first prompt reorder (rules before context) for prompt-
+  // cache prefix reuse — output contract unchanged, so no version bump.
   const ANALYSIS_CACHE_VERSION = 6;
   const sessionAnalysisCache = new Map(); // `${sessionId}:${provider}` → result
 
@@ -1954,11 +1956,15 @@ module.exports = function initAnalyticsAI(ctx) {
   }
 
   // ── Brief mode prompt (default: concise, plain-spoken) ──
+  // Prompt layout: ALL static text (instructions + JSON format + rules) comes
+  // first, the per-session context goes last. Backends with prefix-based
+  // prompt caching (Ollama KV reuse, OpenAI-compat auto caching) can then
+  // share the whole static block across sessions; with context in the middle
+  // the common prefix ended after two lines.
   function buildSessionBriefPrompt(detail) {
-    let p = "你是用户的编程搭档。以下是用户与 AI agent 的对话摘要。\n";
+    let p = "你是用户的编程搭档。下面会给出用户与 AI agent 的对话摘要。\n";
     p += "请用简短、平实的中文总结这段对话的核心收获。\n\n";
-    p += buildSessionContext(detail);
-    p += "\n请返回 JSON（不要 markdown code block），格式：\n";
+    p += "请返回 JSON（不要 markdown code block），格式：\n";
     p += '{"summary":"1 句话概括核心收获"';
     p += ',"keyTopics":["话题1","话题2"]';
     p += ',"outcomes":[{"headline":"成果短语","detail":"一句话具体说明"}]}\n';
@@ -1970,17 +1976,20 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "- keyTopics：2-3 个，每个 ≤ 8 字。\n";
     p += "- outcomes：最多 2 条。headline 是 ≤ 10 字的自然短语（如'定时同步上线'），不加标点，不要硬压成三字动宾词；detail 要具体。\n";
     p += "- 所有字段用中文。不要返回 suggestions 和 timeBreakdown。\n";
-    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
+    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。\n\n";
+    p += "## 对话摘要\n\n";
+    p += buildSessionContext(detail);
+    p += "\n（请按上面给定的 JSON 格式输出）";
     return p;
   }
 
   // ── Detail mode prompt (full analysis, STAR-structured) ──
+  // Same static-first layout as buildSessionBriefPrompt — see comment there.
   function buildSessionDetailPrompt(detail) {
-    let p = "你是一个对话分析助手。以下是用户与 AI 编程 agent 的对话记录摘要。\n";
+    let p = "你是一个对话分析助手。下面会给出用户与 AI 编程 agent 的对话记录摘要。\n";
     p += "请从**用户视角**按 STAR 梳理这次会话：背景（situation）、目标（task）、做法（actions）、结果（outcomes），以及时间花在哪里。\n";
     p += "不要描述 agent 的工作流程，而是关注用户的意图和收获。\n\n";
-    p += buildSessionContext(detail);
-    p += "\n请返回 JSON（不要 markdown code block），格式：\n";
+    p += "请返回 JSON（不要 markdown code block），格式：\n";
     p += '{"summary":"≤60字概括主线成果"';
     p += ',"situation":"背景","task":"目标"';
     p += ',"actions":["关键动作或决策"]';
@@ -2001,7 +2010,10 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "- suggestions：1-2 条简短实用的建议。做得好可以返回空数组。\n";
     p += "- 语言平实准确，不用感叹号、寒暄语和比喻；宁可平淡，不要俏皮。\n";
     p += "- 所有字段用中文。确保 JSON 完整闭合。\n";
-    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。";
+    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。\n\n";
+    p += "## 对话记录摘要\n\n";
+    p += buildSessionContext(detail);
+    p += "\n（请按上面给定的 JSON 格式输出）";
     return p;
   }
 
@@ -2453,64 +2465,131 @@ module.exports = function initAnalyticsAI(ctx) {
 
   const onelinerCache = new Map();
 
-  async function getSessionOneLiner(detail) {
-    if (!detail) return null;
-    if (onelinerCache.has(detail.sessionId)) return onelinerCache.get(detail.sessionId);
+  // Per-message char cap for one-liner context. Scan already caps messages at
+  // 400 chars for full analysis; a topic one-liner needs far less, and in
+  // batch mode this cap directly bounds the merged prompt size.
+  const ONELINER_MSG_CAP = 160;
 
-    const msgs = ((detail.conversation && detail.conversation.length)
-      ? detail.conversation.slice(0, 6).map(m => (m && m.text ? `${m.role === "assistant" ? "助手" : "用户"}: ${m.text}` : ""))
-      : (detail.userMessages || []).slice(0, 5).map(m => (m && m.text) || ""))
+  function buildOnelinerSnippet(detail) {
+    return ((detail.conversation && detail.conversation.length)
+      ? detail.conversation.slice(0, 6).map(m => (m && m.text ? `${m.role === "assistant" ? "助手" : "用户"}: ${String(m.text).slice(0, ONELINER_MSG_CAP)}` : ""))
+      : (detail.userMessages || []).slice(0, 5).map(m => String((m && m.text) || "").slice(0, ONELINER_MSG_CAP)))
       .filter(Boolean)
       .join("\n");
-    if (!msgs) return null;
+  }
 
-    const prompt = `用一句中文（15-25字）概括以下对话的主题，不要加标点符号结尾：\n${msgs}`;
+  function cleanOnelinerText(text) {
+    return String(text || "").trim().split("\n")[0].replace(/^["'""'']|["'""'']$/g, "").trim();
+  }
 
+  // Shared provider chain for one-liner prompts: local Claude CLI first, then
+  // the "brief" registry provider, then legacy config fields. Returns the raw
+  // response text, or null when no backend is available / every one failed.
+  async function callOnelinerBackend(prompt, maxTokens = 500) {
     const claudePath = findClaudeBinary();
     if (claudePath) {
       try {
         const { text } = await callClaudeCLI(claudePath, prompt);
-        const line = (text || "").trim().split("\n")[0].replace(/^["'""'']|["'""'']$/g, "").trim();
-        if (line) { onelinerCache.set(detail.sessionId, line); return line; }
+        if (text) return text;
       } catch { /* fall through */ }
     }
 
     // Fallback to API — registry-first, then legacy fields
-    const cfg = getConfig();
-    // Try registry: use the "brief" default provider if set
     const registryProvider = getProvider(getDefaultProvider("brief"));
     if (registryProvider) {
       try {
         let text;
         if (registryProvider.type === "claude") {
-          text = await callClaude(registryProvider.apiKey, registryProvider.model, prompt, 500, registryProvider.baseUrl);
+          text = await callClaude(registryProvider.apiKey, registryProvider.model, prompt, maxTokens, registryProvider.baseUrl);
         } else if (registryProvider.type === "ollama") {
           text = await callOllama(registryProvider.model, prompt, registryProvider.baseUrl);
         } else {
-          text = await callOpenAICompat(registryProvider.apiKey, registryProvider.model, prompt, registryProvider.baseUrl);
+          text = await callOpenAICompat(registryProvider.apiKey, registryProvider.model, prompt, registryProvider.baseUrl, maxTokens);
         }
-        const line = (text || "").trim().split("\n")[0].replace(/^["'""'']|["'""'']$/g, "").trim();
-        if (line) { onelinerCache.set(detail.sessionId, line); return line; }
+        if (text) return text;
       } catch { /* fall through to legacy */ }
     }
 
     // Legacy fallback (for users not yet on v3 or with no registry provider)
+    const cfg = getConfig();
     const provider = (cfg && cfg.provider) || "claude";
     const apiKey = cfg && cfg.apiKey;
     if (!apiKey && PROVIDERS[provider] && PROVIDERS[provider].needsKey) return null;
-
     try {
       const model = (cfg && cfg.model) || PROVIDERS[provider].defaultModel;
       const baseUrl = (cfg && cfg.baseUrl) || PROVIDERS[provider].baseUrl;
-      let text;
-      if (provider === "claude") text = await callClaude(apiKey, model, prompt);
-      else if (provider === "ollama") text = await callOllama(model, prompt, baseUrl);
-      else text = await callOpenAICompat(apiKey, model, prompt, baseUrl);
-      const line = (text || "").trim().split("\n")[0].replace(/^["'""'']|["'""'']$/g, "").trim();
-      if (line) { onelinerCache.set(detail.sessionId, line); return line; }
-    } catch { /* ignore */ }
+      if (provider === "claude") return await callClaude(apiKey, model, prompt, maxTokens);
+      if (provider === "ollama") return await callOllama(model, prompt, baseUrl);
+      return await callOpenAICompat(apiKey, model, prompt, baseUrl, maxTokens);
+    } catch { return null; }
+  }
 
+  async function getSessionOneLiner(detail) {
+    if (!detail) return null;
+    if (onelinerCache.has(detail.sessionId)) return onelinerCache.get(detail.sessionId);
+    const msgs = buildOnelinerSnippet(detail);
+    if (!msgs) return null;
+    const prompt = `用一句中文（15-25字）概括以下对话的主题，不要加标点符号结尾：\n${msgs}`;
+    const line = cleanOnelinerText(await callOnelinerBackend(prompt));
+    if (line) { onelinerCache.set(detail.sessionId, line); return line; }
     return null;
+  }
+
+  // Batched one-liners: one provider call covers up to ONELINER_BATCH_SIZE
+  // sessions (numbered snippets in, numbered JSON out) instead of one CLI
+  // spawn per session — spawn + handshake dominates each call, so N sessions
+  // collapse from N calls to ceil(N/batch). Chunks run sequentially, so chunk
+  // 2+ also reads the prompt cache entry chunk 1 just wrote.
+  const ONELINER_BATCH_SIZE = 10;
+
+  function buildOnelinerBatchPrompt(chunk) {
+    // Static-first layout (rules before content) — same prefix-cache
+    // rationale as buildSessionBriefPrompt.
+    let p = "下面会给出多段用户与 AI agent 的对话片段，每段有一个编号。\n";
+    p += "请为每一段对话分别用一句中文（15-25字）概括主题，句末不要加标点符号。\n\n";
+    p += "请返回 JSON（不要 markdown code block），格式：\n";
+    p += '{"1":"第一段的概括","2":"第二段的概括"}\n';
+    p += "要求：\n";
+    p += "- 键是对话编号，每个编号都要有对应的概括，不要遗漏、不要合并。\n";
+    p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。\n";
+    for (let i = 0; i < chunk.length; i++) {
+      p += `\n### 对话 ${i + 1}\n${chunk[i].snippet}\n`;
+    }
+    p += "\n（请按上面给定的 JSON 格式输出）";
+    return p;
+  }
+
+  async function getSessionOneLiners(details) {
+    const results = {};
+    const misses = [];
+    for (const detail of Array.isArray(details) ? details : []) {
+      if (!detail || !detail.sessionId) continue;
+      if (onelinerCache.has(detail.sessionId)) {
+        results[detail.sessionId] = onelinerCache.get(detail.sessionId);
+        continue;
+      }
+      const snippet = buildOnelinerSnippet(detail);
+      if (!snippet) { results[detail.sessionId] = null; continue; }
+      misses.push({ sessionId: detail.sessionId, snippet });
+    }
+
+    for (let start = 0; start < misses.length; start += ONELINER_BATCH_SIZE) {
+      const chunk = misses.slice(start, start + ONELINER_BATCH_SIZE);
+      const text = await callOnelinerBackend(buildOnelinerBatchPrompt(chunk), Math.max(500, 80 * chunk.length));
+      const parsed = text ? extractFirstJsonObject(text) : null;
+      for (let i = 0; i < chunk.length; i++) {
+        const raw = Array.isArray(parsed) ? parsed[i] : parsed && parsed[String(i + 1)];
+        const line = typeof raw === "string" ? cleanOnelinerText(raw) : "";
+        if (line) {
+          onelinerCache.set(chunk[i].sessionId, line);
+          results[chunk[i].sessionId] = line;
+        } else {
+          // Not cached — a later invocation retries this session.
+          results[chunk[i].sessionId] = null;
+        }
+      }
+    }
+    return results;
   }
 
   // ── Knowledge Compound Interest (multi-session cross-analysis) ──
@@ -2863,6 +2942,24 @@ module.exports = function initAnalyticsAI(ctx) {
     let cacheHits = 0;
     let cacheMisses = 0;
     let stubs = 0;
+    // Aggregated provider-side prompt-cache usage across every AI call this
+    // report makes (stage 1 misses + stage 2 aggregation). Purely for the
+    // timing log — lets us see whether the warm-up below actually pays off.
+    const promptCacheTotals = { fresh: 0, read: 0, write: 0 };
+    function addPromptCacheUsage(usage) {
+      if (!usage) return;
+      const read = usage.cache_read_input_tokens ?? usage.cached_input_tokens ?? 0;
+      let fresh = usage.input_tokens || 0;
+      // OpenAI-shaped usage (codex) counts cached tokens inside input_tokens;
+      // Anthropic reports them disjointly. Subtract so hit-rate math is
+      // comparable across providers.
+      if (usage.cached_input_tokens != null && usage.cache_read_input_tokens == null) {
+        fresh = Math.max(0, fresh - read);
+      }
+      promptCacheTotals.fresh += fresh;
+      promptCacheTotals.read += read;
+      promptCacheTotals.write += usage.cache_creation_input_tokens || 0;
+    }
 
     // Stage 1: collect per-session brief summaries. Cache hits return instantly;
     // misses spawn a CLI per session. We split the work into a fast path (all
@@ -2908,13 +3005,35 @@ module.exports = function initAnalyticsAI(ctx) {
     }
 
     // Slow path: parallel CLI for misses.
+    //
+    // Prompt-cache warm-up: the provider's cache entry only becomes readable
+    // once the first response has started streaming. If all workers fire at
+    // t=0, the first MULTI_BRIEF_CONCURRENCY requests carry identical system
+    // prefixes yet each pays the full cold prefill (and 1.25× cache-write
+    // price). Hold every worker except the first until the first call has
+    // settled (cache guaranteed written — or the provider is failing and
+    // waiting is pointless), with a stagger-timeout fallback of roughly one
+    // cold call's spawn + time-to-first-token so a slow first call doesn't
+    // serialize the whole batch.
+    const WARMUP_STAGGER_MS = 4000;
+    let releaseWarmupHold;
+    const warmupHold = new Promise(resolve => { releaseWarmupHold = resolve; });
+    const warmupTimeout = () => new Promise(resolve => {
+      const t = setTimeout(resolve, WARMUP_STAGGER_MS);
+      if (t && typeof t.unref === "function") t.unref();
+    });
     let queueIdx = 0;
-    async function worker() {
+    async function worker(workerIndex) {
+      if (workerIndex > 0) {
+        await Promise.race([warmupHold, warmupTimeout()]);
+      }
       while (queueIdx < missQueue.length) {
         const myIdx = queueIdx++;
         const { index, detail } = missQueue[myIdx];
         let brief = null;
         try { brief = await analyzeSession(detail, "brief"); } catch { brief = null; }
+        releaseWarmupHold();
+        if (brief && brief._usage) addPromptCacheUsage(brief._usage);
         const good = brieffromAny(brief);
         if (good) {
           items[index] = { detail, brief: good };
@@ -2927,7 +3046,7 @@ module.exports = function initAnalyticsAI(ctx) {
     }
     const workerCount = Math.min(MULTI_BRIEF_CONCURRENCY, missQueue.length);
     if (workerCount > 0) {
-      await Promise.all(Array.from({ length: workerCount }, worker));
+      await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(i)));
     }
     const stage1Ms = Date.now() - tStage1Start;
 
@@ -2950,11 +3069,20 @@ module.exports = function initAnalyticsAI(ctx) {
         cacheHits,
         cacheMisses,
         stubs,
+        promptCache: { ...promptCacheTotals },
       };
     }
     function logTiming(tag, extra) {
       const m = makeTimingMeta();
-      console.log(`[clawd-insights] report timing (${tag}): ${m.totalMs}ms total, stage1=${m.stage1Ms}ms (briefs: ${m.cacheHits} cached, ${m.cacheMisses} generated, ${m.stubs} stubs), stage2=${m.stage2Ms}ms${extra ? " · " + extra : ""}`);
+      const pc = m.promptCache;
+      const pcTotal = pc.fresh + pc.read + pc.write;
+      // Hit rate over all input-side tokens: read tokens were served from the
+      // provider's prompt cache, fresh + write were prefilled cold. A rate
+      // stuck at 0 across warm runs means the prefix is being broken somewhere.
+      const pcNote = pcTotal
+        ? ` · promptCache ${Math.round((pc.read / pcTotal) * 100)}% hit (${pc.read} read / ${pc.write} write / ${pc.fresh} fresh)`
+        : "";
+      console.log(`[clawd-insights] report timing (${tag}): ${m.totalMs}ms total, stage1=${m.stage1Ms}ms (briefs: ${m.cacheHits} cached, ${m.cacheMisses} generated, ${m.stubs} stubs), stage2=${m.stage2Ms}ms${pcNote}${extra ? " · " + extra : ""}`);
       return m;
     }
 
@@ -2963,6 +3091,7 @@ module.exports = function initAnalyticsAI(ctx) {
       if (codexPath) {
         try {
           const result = await callCodexCLI(codexPath, prompt, { outputSchema: null });
+          if (result) addPromptCacheUsage(result.usage);
           if (result && result.text) {
             const _timing = logTiming("codex-cli", `${items.length} sessions`);
             return { text: result.text, _provider: "codex", _timing };
@@ -2975,7 +3104,8 @@ module.exports = function initAnalyticsAI(ctx) {
       if (tclaudePath) {
         try {
           const sysPrompt = "你是一个对话分析助手。请按用户的要求直接返回 markdown 文本，不要返回 JSON，不要把回答包在 code block 里。";
-          const { text } = await callClaudeCLIWithSystem(tclaudePath, prompt, sysPrompt);
+          const { text, usage } = await callClaudeCLIWithSystem(tclaudePath, prompt, sysPrompt);
+          addPromptCacheUsage(usage);
           if (text) {
             const _timing = logTiming("tclaude-cli", `${items.length} sessions`);
             return { text, _provider: "tclaude", _timing };
@@ -2987,7 +3117,8 @@ module.exports = function initAnalyticsAI(ctx) {
       if (claudePath) {
         try {
           const sysPrompt = "你是一个对话分析助手。请按用户的要求直接返回 markdown 文本，不要返回 JSON，不要把回答包在 code block 里。";
-          const { text } = await callClaudeCLIWithSystem(claudePath, prompt, sysPrompt);
+          const { text, usage } = await callClaudeCLIWithSystem(claudePath, prompt, sysPrompt);
+          addPromptCacheUsage(usage);
           if (text) {
             const _timing = logTiming("claude-cli", `${items.length} sessions`);
             return { text, _provider: "claude-code", _timing };
@@ -3037,7 +3168,7 @@ module.exports = function initAnalyticsAI(ctx) {
     return { text: null, error: "AI 调用失败。", _timing: makeTimingMeta() };
   }
 
-  return { getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, analyzeMultipleSessions, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses, analyzeKnowledgeCompound, getProviderRegistry, addProvider, updateProvider, deleteProvider, getProvider, testProvider, getDefaultProvider, setDefaultProvider, generateUUID, validateProvider };
+  return { getApiKey, setApiKey, getConfig, setConfig, PROVIDERS, analyzeSession, analyzeMultipleSessions, getAnalysisProvider, getAvailableAnalysisProviders, findClaudeBinary, getSessionOneLiner, getSessionOneLiners, getCliDiagnostics, testCliPath, clearAnalysisCaches, loadPersistedAnalyses, analyzeKnowledgeCompound, getProviderRegistry, addProvider, updateProvider, deleteProvider, getProvider, testProvider, getDefaultProvider, setDefaultProvider, generateUUID, validateProvider };
 };
 
 module.exports.__test = {

@@ -1,7 +1,8 @@
 <div align="center">
 
 # clawd-insights
-## 本地 Agent 编程会话分析面板
+
+**本地 Agent 会话分析与复盘面板**
 
 > "你好clawd，该你写周报了"
 
@@ -36,34 +37,51 @@
 </table>
 
 
-**这是Agent会话分析面板。** 它将自动扫描你和 Claude Code、Claude Internal、tclaude、Codex、Cursor 等 Agent 已经进行的对话,生成时间线和会话智能分析摘要。再也不用翻漫长的对话历史,clawd-insights 将帮你快速整理知识卡片。
+**这是 Agent 会话记录与复盘面板。** 它将自动扫描本地 **Claude Code、Codex、OpenClaw、tclaude、Cursor** 等 Agent 已进行的任务,生成对应时间线和会话智能分析摘要。如果你token 富足，还可以让他综合本地所有 agent 对话信息，生成你本周的工作汇报。
 
-每一段对话都留下了**痕迹**,所有你尝试的想法、解决的 bug、和 Agent 讨论做出的决定,都将在 **Analytics Dashboard** 中一一呈现。
+分析数据始终留在本地。会话分析会通过通过你本地 `claude` / `codex` CLI (或已配置的其他 API) 完成。会话分析不会被第三方获取。
 
-数据全部留在本地。AI 分析通过你自己的本地 `claude` / `codex` CLI(或者你配置的 API / Ollama 后端)完成,你的对话不被第三方获取。
-
-> 现阶段主要支持 macOS。Windows/Linux 可能可以运行，但还不是主支持环境。需要 Node.js。
+> 现阶段主要支持 macOS。Windows/Linux 已初步适配，欢迎提供问题反馈。
 
 ## 快速安装
 
+**方式一:命令行手动安装**
+
 ```bash
-git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
+git clone https://github.com/yx0716/clawd-insights.git  # 获取源码
+cd clawd-insights && npm install # 通过源码安装
+npm start # 启动运行
 ```
 
-启动后桌面上出现一只小螃蟹——在 macOS 上可右键它打开 **Analytics Dashboard**。详细的 Provider 配置和分析触发方式见下方[上手指南](#上手指南)。
+**方式二:将 prompt 喂给你本地的 agent,让本地 agent完成安装**
+
+懒得手动配环境？把下面整段复制进本地 agent 即可安装:
+
+```text
+帮我安装 clawd-insights(本地 agent 会话记录与复盘面板,仓库:https://github.com/yx0716/clawd-insights):
+1. 先确认 git、node、npm 都可用;缺哪个就停下来告诉我怎么装,不要硬装。
+2. 在合适的目录(默认 ~/clawd-insights,如果已存在先问我)执行:
+   git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install
+3. 启动 npm start。注意它是常驻的桌面应用,请用后台方式启动,不要在前台一直等它退出。
+4. 启动后桌面上会出现一只像素小螃蟹,看到它就算安装成功。
+5. 任何一步报错,把报错原文发给我,先说你的修复思路、经我确认再动手。
+6. 最后告诉我:装在了哪个目录、下次怎么启动。
+```
+
+启动后桌面上出现一只小螃蟹——右键打开 **📊会话复盘面板**,即可开始使用。
 
 
 ## 功能特性
 
 | 能力 | 说明 |
 |---|---|
-| **时间线视图** | 按日期 / 项目 / Agent / 时长可视化所有会话——一眼看清自己什么时候在忙什么、忙了多久 |
-| **本地历史扫描** | 直接读 `~/.claude/projects/`、`~/.claude-internal/projects/`、`~/.tclaude/projects/`、`~/.codex/sessions/`、`~/.cursor/projects/`,不上传、无遥测 |
-| **AI 会话复盘** | 从**用户视角**总结每段对话:你想做什么、最后拿到了什么、关键话题、时间分配 |
-| **灵活分析后端** | 本地 `claude` CLI、本地 `codex` CLI,或回退到你配置的 API provider / Ollama——你的选择,你的 key |
-| **批量预分析** | 对最近会话批量预生成摘要,按 provider 隔离的缓存可复用 |
+| **时间线视图** | 按日期 / 项目 / Agent使用 / 可视化所有会话。我们希望你能全局有清晰把握 |
+| **日历视图切换** | 除时间线外，提供日历视图 |
+| **本地历史扫描** | 获取本地会话记录(支持Claude Code / Claude Internal / tclaude / Codex / Cursor / OpenClaw / opencode / Gemini CLI / Qwen Code)等，不上传、无隐私风险 |
+| **AI 会话复盘** | 从**用户视角**总结每段对话：你希望解决什么问题、AI 解决的交付结果，有哪些可以复用的技巧。我们支持速览、深入两档，后者将按 **STAR** 原则（情境-任务-行动-结果）进行结构化复盘 |
+| **日报 / 周报** | 面板顶部，可对所选时间范围一键生成周报/日报 |
+| **批量预分析** | 对最近会话批量预生成摘要,通过 provider 隔离的缓存支持复用 |
 | **成本追踪** | 显示每次 AI 分析的 token 用量与费用 |
-| **快捷入口** | 托盘菜单、右键桌面宠物或快捷键一键打开 |
 
 ### 使用示例
 
@@ -93,77 +111,50 @@ git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && n
 ### 1. 安装并启动
 
 ```bash
-git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
+git clone https://github.com/yx0716/clawd-insights.git 
+cd clawd-insights && npm install
+npm start
 ```
 
-启动后桌面右下角会出现一只小螃蟹(默认主题),它就是 Clawd 桌面宠物。**洞察面板的入口都通过它**。
+启动后桌面右下角会出现一只小螃蟹，这是会话复盘的主入口。
 
-### 2. 打开 Analytics Dashboard
+### 2. 打开会话复盘面板
 
 有三种方式可以打开洞察面板,选你顺手的:
 
-- **右键点击桌面宠物** → 在弹出菜单中选 **Analytics Dashboard**
-- **点击托盘图标**(macOS 顶部菜单栏) → **Analytics Dashboard**
+- **右键点击桌面宠物** → 在弹出菜单中选 **📊会话复盘面板**
+- **点击托盘图标**(macOS 顶部菜单栏) → **📊会话复盘面板**
 - **快捷键**:macOS `⌘ + Shift + Option + A`
 
 <p align="center">
   <img src="assets/screenshot-dashboard-menu.gif" width="720" alt="右键菜单中的 Analytics Dashboard">
 </p>
 
-第一次打开就能立刻看到时间线视图——它直接读你硬盘上已有的会话日志,**不需要任何配置**。
 
-### 3.配置 AI Provider, 启用会话摘要
+### 3.配置会话分析模型, 启用会话只能复盘
 
-时间线本身是开箱即用的,但要让面板自动**生成每段会话的复盘摘要**,需要告诉它一个能调用大模型的入口， **AI Provider**(分析后端)。具体而言，有以下三种配置选择：
+会话时间线本身开箱即用，不需要额外操作。对 Agent 会话进行智能总结复盘，需要使用对应模型。提供分析能力的模型有以下三种配置选择：
 
 | Provider 类型 | 是什么 | 怎么配置 | 适合谁 |
 |---|---|---|---|
-| **本地 CLI**(推荐) | 复用你已经装在电脑上的 `claude`(Claude Code)或 `codex` 命令行 | **不用配**,面板会自动检测 | 已经在用 Claude Code / Codex 订阅的人——使用订阅内的额度，无额外开销 |
+| **本地 CLI**(推荐) | 复用你已经装在电脑上的 `claude`(Claude Code)或 `codex` 命令行 | **不用额外配置**,面板会自动检测 | 已有 Claude Code / Codex / Cursor 订阅的朋友——使用订阅内的额度，无额外开销 |
 | **API Key** | Anthropic、OpenAI 等服务商的 API key,按 token 计费 | 在面板设置里粘贴 key | 没装本地 CLI、又愿意为分析付一点 token 费用 |
 | **Ollama** | 本地跑的开源模型服务(如 Ollama) | 在设置里填本地 endpoint | 想完全离线、不发送任何数据到云端 |
 
-> **💡 强烈推荐**:如果你电脑上已经装了 Claude Code 或 Codex CLI,**直接什么都不用配**——面板会自动找到它们,直接复用你已有的订阅额度。这是最省事也最便宜的方案。
+> **💡 强烈推荐**:如果你电脑上已经装了 Claude Code 或 Codex CLI ——面板会自动识别,直接复用你已有的订阅额度。是最省简单、性价比最高的方案方案。
 
-如果暂时还不想配置，可以在启动界面点选 Skip，后续也可以随时在设置里配置。
+如果后续希望更改分析模型提供方，可随时在设置中修改。
 <p align="center">
   <img src="assets/screen-shot-select-AI-provider.gif" width="720" alt="选择并配置 AI Provider 的实际操作演示">
 </p>
 
+一旦完成配置，可对需要复盘的会话、会话具体时间段内容（如果会话在时间周期较长，经历较多次间隔）进行分析。分析提供简要和深入两种版本。简要版将对会话进行 digest 概述，深入分析将按照 **STAR** 原则分析本地对话完成的任务，方便您进行项目复盘。
 
-### 4. 在哪里配置 / 修改 Provider?
-
-如果第 3 步跳过了，或者此后想更换 provider，可以通过 **AI Provider Settings** 进行调整:
-
-打开 Analytics Dashboard → 点右上角的 **齿轮图标 ⚙** → 弹出 **AI Provider Settings** 面板。
-
-<p align="center">
-  <img src="assets/screenshot-ai-provider-settings.gif" width="720" alt="AI Provider Settings 弹窗">
-</p>
-
-这个面板有两块内容:
-
-- **LOCAL CLI DETECTION**(本地 CLI 自动检测) — 显示面板有没有找到你本地的 `claude` 和 `codex`。绿点 = 找到了,显示版本号和路径;红点 = 没找到。**已显示绿点说明一切正常，可以直接进行下一步**。
-- **API PROVIDER (FALLBACK)**(API 备选) — 如果未安装本地 CLI，可以通过 API Key 进行 会话智能分析(Claude / OpenAI / Ollama 等)、粘贴 API key 即可。
-
-> **小提示**:如果你的 `claude` / `codex` 是通过 NVM、fnm、Volta 这类版本管理工具装的,自动检测可能找不到。这时候在终端执行 `which claude` 或 `which codex`,把输出的路径粘贴到上面的 **Claude binary path** / **Codex binary path** 输入框里就行。
-
-### 使用前自检
-
-1. 已在本地使用 `Claude Code`、`Codex` 或 `Cursor Agent`，且当前仍可使用
-2. 本地有会话记录 （默认存在）
-
-**快速检查**
-
-- 打开设置,看 `Local CLI Detection`
-- 切到 `Week` 或 `Month` 看 timeline 里是否有 session
-
-### 5. 开始 Agent 会话分析
+### 4. 开始 Agent 会话分析
 
 #### 方法 A:批量预分析(开 Dashboard 时弹出)
 
-每次打开 Analytics Dashboard,如果检测到有未分析的会话,面板会**自动弹出一个对话框** —— `Pre-analyze Sessions`,让你一次性把一段时间内的会话全部分析掉。
-
-> **说明**: 面板自身发起的内部 AI 总结任务会自动从时间线和会话统计里排除。即使你是在别的目录执行 `npm start`,这些内部分析任务也不会被算进工作会话。
+每次打开 Analytics Dashboard,如果检测到有未分析的会话,面板会**自动弹出一个对话框** —— `Pre-analyze Sessions`, 一键启动开时间周期内所有会话分析。
 
 可选范围:
 
@@ -172,12 +163,11 @@ git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && n
 - **Week** — 最近一周
 - **Custom** — 自定义最近 N 条
 
-选好之后点确认,面板会显示 `Analyzing 1/N`、`2/N`...的进度条,在后台一条条跑分析。**已经分析过的会话会自动跳过**(按 provider 隔离的缓存),所以重复点击不会浪费 token。
+选好之后点确认,面板会显示 `Analyzing 1/N`、`2/N`...的进度条,后台将逐步完成。**已分析的会话会自动跳过**(按 provider 隔离的缓存), 重复点击不会浪费 token。
+
 <p align="center">
   <img src="assets/screen-shot-select-AI-provider.gif" width="720" alt="批量预分析与单条会话分析演示">
 </p>
-
-> **适合谁**:第一次打开面板的新用户、想做一次性月度复盘、批量回顾过去一段时间的工作。
 
 #### 方法 B:点单条会话(timeline / sessions 列表里点击)
 
@@ -195,15 +185,33 @@ git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && n
   <img src="assets/screenshot-ai-analysis.gif" width="720" alt="批量预分析与单条会话分析演示">
 </p>
 
-
-> **适合谁**:已经知道自己想看哪段会话的、临时想起来的查阅、平时按需"刷"历史。
-
-**总体而言**：
-- **第一次用** → 建议先跑一次 **方法 A 的 Week**, 选择特定数目/周期的对话进行分析(几分钟,消耗token较多，但之后可以随时秒开记录)
-- **日常用** → 跑完一次 多条绘画分析后，日常采用 **方法 B 选择特定对话进行分析** 
-- **token 敏感** → 用 **方法 B 按需触发**,只分析你真的想看的那几条,不浪费一分钱
-
 > **关于成本**:本地 CLI(Claude Code / Codex 订阅)分析**走你已有的订阅额度**,通常几乎不需要额外付费。API key 模式下,面板会在每条分析完成后**显示 token 用量和费用**(顶部状态栏),让你心里有数。
+
+### 5. 修改会话分析模型配置
+
+如果第 3 步跳过了，或者此后想更换 provider，可以通过 **AI Provider Settings** 进行调整:
+
+打开 Analytics Dashboard → 点右上角的 **齿轮图标 ⚙** → 弹出 **AI Provider Settings** 面板。
+
+<p align="center">
+  <img src="assets/screenshot-ai-provider-settings.gif" width="720" alt="AI Provider Settings 弹窗">
+</p>
+
+
+- **LOCAL CLI DETECTION**(本地 CLI 自动检测) — 显示面板有没有找到你本地的 `claude` 和 `codex`。绿点 = 找到了,显示版本号和路径;红点 = 没找到。**已显示绿点说明一切正常，可以直接进行下一步**。
+- **API PROVIDER (FALLBACK)**(API 备选) — 如果未安装本地 CLI，可以通过 API Key 进行 会话智能分析(Claude / OpenAI / Ollama 等)、粘贴 API key 即可。
+
+> **小提示**:如果你的 `claude` / `codex` 是通过 NVM、fnm、Volta 这类版本管理工具装的,自动检测可能找不到。这时候在终端执行 `which claude` 或 `which codex`,把输出的路径粘贴到上面的 **Claude binary path** / **Codex binary path** 输入框里就行。
+
+### 使用前自检
+
+1. 已在本地使用 `Claude Code`、`Codex` 或 `Cursor Agent`，且当前仍可使用
+2. 本地有会话记录 （默认存在）
+
+**快速检查**
+
+- 打开设置,看 `Local CLI Detection`
+- 切到 `Week` 或 `Month` 看 timeline 里是否有 session
 
 ## 它是怎么工作的
 
@@ -214,16 +222,16 @@ Clawd 同时跑着两条互不依赖的数据通路:
   │                                    │
   ├── 实时事件 ──→ hook / 轮询 / 插件 ──→ 🦀 桌面宠物动画
   │                                    │
-  └── 对话历史 ──→ 本地 JSONL 文件 ────→ 📊 洞察面板
+  └── 对话历史 ──→ 本地 JSONL 文件 ────→ 📊 会话复盘面板
 ```
 
 ### 通路 ①:实时感知 → 桌宠动画
 
-Agent 工作时(调用工具、等待用户输入、报错、完成任务……)会产生事件。Clawd 通过三种方式捕获这些事件,驱动桌面宠物播放对应动画:
+Agent runtime(调用工具、等待用户输入、报错、完成任务……)会产生事件。Clawd 通过三种方式捕获这些事件,驱动桌面宠物播放对应动画:
 
 | 集成方式 | 原理 | 延迟 | 使用的 Agent |
 |---|---|---|---|
-| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 把事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Claude Internal、tclaude、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、Antigravity CLI、CodeBuddy、Kimi CLI |
+| **Command hook** | Agent 触发事件时自动执行一段脚本,脚本通过 HTTP POST 将事件发给 Clawd 本地服务器(`127.0.0.1:23333`) | 近乎零 | Claude Code、Claude Internal、tclaude、Copilot CLI、Gemini CLI、Cursor Agent、Kiro CLI、Antigravity CLI、CodeBuddy、Kimi CLI |
 | **日志轮询** | Clawd 每 ~1.5 秒扫描 Agent 写入的 JSONL 日志文件,检测新事件 | ~1.5 秒 | Codex CLI、Gemini CLI(备选)、Kimi CLI(备选) |
 | **In-process 插件** | 插件直接跑在 Agent 进程内部,零开销转发事件 | 零 | opencode、openclaw、Hermes、Pi |
 
@@ -255,9 +263,6 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 - **WSL 与远程开发**(本次同步重点)—— Codex 官方支持 **WSL2**,Clawd 通过 Codex 官方 hooks 集成(JSONL 轮询作为兜底)。当 Agent 跑在远程主机或 WSL 独立的 Linux home 里时,**远程 SSH** 会通过 SSH 隧道把 hooks 部署过去,让桌宠也能感知这些会话;远程端必须使用 POSIX shell —— **Git Bash 或 WSL `bash`,而不是 Windows `cmd.exe`**。详见 [docs/guides/codex-wsl-clarification.zh-CN.md](docs/guides/codex-wsl-clarification.zh-CN.md) 与 [docs/guides/setup-guide.zh-CN.md](docs/guides/setup-guide.zh-CN.md)。
 - **图形化设置面板** —— 完整的设置窗口(Agent、主题、快捷键、远程 SSH、Telegram 审批),不必再手改配置文件。
 - **主题系统** —— 把螃蟹换成其他角色(如 Cloudling 主题),或用 `npm run create-theme` 自建主题。
-- **Telegram 审批** —— 在手机上远程批准/拒绝权限请求。
-- **Doctor 诊断** —— 内置健康检查,逐个验证 hook 安装与各 Agent 的集成状态。
-- **Session HUD 与快捷命令** —— 可选的屏上会话状态标签与快捷命令面板。
 - **经典能力** —— 权限气泡、极简模式、点击反应、眼球追踪、睡眠序列、多显示器支持全部保留。
 
 平台相关说明(Windows 终端聚焦、macOS 聚焦、已知限制)见 [docs/guides/](docs/guides/)。
@@ -273,6 +278,149 @@ Agent 工作时(调用工具、等待用户输入、报错、完成任务……)
 **Q:我没有 Claude Code 也没有 Codex,能用吗?**
 可以。你可以只用时间线视图(完全免费、不需要任何 LLM),或者在 AI Provider Settings 里填一个 Anthropic / OpenAI API key 走云端模式。
 
+## 参与贡献
+
+Clawd Insights 是一个社区驱动的 fork。欢迎 bug 反馈、功能想法和 pull request——开一个 [issue](https://github.com/yx0716/clawd-insights/issues) 来讨论,或者直接提 PR。
+
+致谢名单分成两部分:建设**本 fork**(分析层及上文列出的一切)的人,以及本 fork 所依托的桌宠背后的**上游社区**。
+
+### 贡献者
+
+感谢每一位为本 fork 做出贡献的人:
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/yx0716"><img src="https://github.com/yx0716.png" width="50" style="border-radius:50%" /><br /><sub>yx0716</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/kingsley-wade"><img src="https://github.com/kingsley-wade.png" width="50" style="border-radius:50%" /><br /><sub>kingsley-wade</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/dopawei"><img src="https://github.com/dopawei.png" width="50" style="border-radius:50%" /><br /><sub>dopawei</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/XingLiu1"><img src="https://github.com/XingLiu1.png" width="50" style="border-radius:50%" /><br /><sub>XingLiu1</sub></a></td>
+  </tr>
+</table>
+
+### 上游 · clawd-on-desk
+
+底下这只桌宠——动画、权限气泡、多 Agent 追踪、主题系统等等——是 [`clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) 社区的工作成果。下面的名单搬运自上游 README(快照时间:2026 年 7 月);权威、随时更新的名单以[上游仓库](https://github.com/rullerzhou-afk/clawd-on-desk#contributing)为准。
+
+#### 维护者
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="140"><a href="https://github.com/rullerzhou-afk"><img src="https://github.com/rullerzhou-afk.png" width="72" style="border-radius:50%" /><br /><sub><b>@rullerzhou-afk</b><br />鹿鹿 · creator</sub></a></td>
+    <td align="center" valign="top" width="140"><a href="https://github.com/YOIMIYA66"><img src="https://github.com/YOIMIYA66.png" width="72" style="border-radius:50%" /><br /><sub><b>@YOIMIYA66</b><br />maintainer</sub></a></td>
+    <td align="center" valign="top" width="140"><a href="https://github.com/Bynlk"><img src="https://github.com/Bynlk.png" width="72" style="border-radius:50%" /><br /><sub><b>@Bynlk</b><br />core contributor · Mobile / PWA</sub></a></td>
+  </tr>
+</table>
+
+#### 贡献者
+
+感谢每一位让 Clawd 变得更好的人:
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/PixelCookie-zyf"><img src="https://github.com/PixelCookie-zyf.png" width="50" style="border-radius:50%" /><br /><sub>PixelCookie-zyf</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/yujiachen-y"><img src="https://github.com/yujiachen-y.png" width="50" style="border-radius:50%" /><br /><sub>yujiachen-y</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/AooooooZzzz"><img src="https://github.com/AooooooZzzz.png" width="50" style="border-radius:50%" /><br /><sub>AooooooZzzz</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/purefkh"><img src="https://github.com/purefkh.png" width="50" style="border-radius:50%" /><br /><sub>purefkh</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Tobeabellwether"><img src="https://github.com/Tobeabellwether.png" width="50" style="border-radius:50%" /><br /><sub>Tobeabellwether</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Jasonhonghh"><img src="https://github.com/Jasonhonghh.png" width="50" style="border-radius:50%" /><br /><sub>Jasonhonghh</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/crashchen"><img src="https://github.com/crashchen.png" width="50" style="border-radius:50%" /><br /><sub>crashchen</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/hongbigtou"><img src="https://github.com/hongbigtou.png" width="50" style="border-radius:50%" /><br /><sub>hongbigtou</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/InTimmyDate"><img src="https://github.com/InTimmyDate.png" width="50" style="border-radius:50%" /><br /><sub>InTimmyDate</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/NeizhiTouhu"><img src="https://github.com/NeizhiTouhu.png" width="50" style="border-radius:50%" /><br /><sub>NeizhiTouhu</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/xu3stones-cmd"><img src="https://github.com/xu3stones-cmd.png" width="50" style="border-radius:50%" /><br /><sub>xu3stones-cmd</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/androidZzT"><img src="https://github.com/androidZzT.png" width="50" style="border-radius:50%" /><br /><sub>androidZzT</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Ye-0413"><img src="https://github.com/Ye-0413.png" width="50" style="border-radius:50%" /><br /><sub>Ye-0413</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/WanfengzzZ"><img src="https://github.com/WanfengzzZ.png" width="50" style="border-radius:50%" /><br /><sub>WanfengzzZ</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/TaoXieSZ"><img src="https://github.com/TaoXieSZ.png" width="50" style="border-radius:50%" /><br /><sub>TaoXieSZ</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/ssly"><img src="https://github.com/ssly.png" width="50" style="border-radius:50%" /><br /><sub>ssly</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/stickycandy"><img src="https://github.com/stickycandy.png" width="50" style="border-radius:50%" /><br /><sub>stickycandy</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Rladmsrl"><img src="https://github.com/Rladmsrl.png" width="50" style="border-radius:50%" /><br /><sub>Rladmsrl</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/YOIMIYA66"><img src="https://github.com/YOIMIYA66.png" width="50" style="border-radius:50%" /><br /><sub>YOIMIYA66</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Kevin7Qi"><img src="https://github.com/Kevin7Qi.png" width="50" style="border-radius:50%" /><br /><sub>Kevin7Qi</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/sefuzhou770801-hub"><img src="https://github.com/sefuzhou770801-hub.png" width="50" style="border-radius:50%" /><br /><sub>sefuzhou770801-hub</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Tonic-Jin"><img src="https://github.com/Tonic-Jin.png" width="50" style="border-radius:50%" /><br /><sub>Tonic-Jin</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/seoki180"><img src="https://github.com/seoki180.png" width="50" style="border-radius:50%" /><br /><sub>seoki180</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/sophie-haynes"><img src="https://github.com/sophie-haynes.png" width="50" style="border-radius:50%" /><br /><sub>sophie-haynes</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/PeterShanxin"><img src="https://github.com/PeterShanxin.png" width="50" style="border-radius:50%" /><br /><sub>PeterShanxin</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/CHIANGANGSTER"><img src="https://github.com/CHIANGANGSTER.png" width="50" style="border-radius:50%" /><br /><sub>CHIANGANGSTER</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/JaeHyeon-KAIST"><img src="https://github.com/JaeHyeon-KAIST.png" width="50" style="border-radius:50%" /><br /><sub>JaeHyeon-KAIST</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/hhhzxyhhh"><img src="https://github.com/hhhzxyhhh.png" width="50" style="border-radius:50%" /><br /><sub>hhhzxyhhh</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/TVpoet"><img src="https://github.com/TVpoet.png" width="50" style="border-radius:50%" /><br /><sub>TVpoet</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/zeus6768"><img src="https://github.com/zeus6768.png" width="50" style="border-radius:50%" /><br /><sub>zeus6768</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/anhtrinh919"><img src="https://github.com/anhtrinh919.png" width="50" style="border-radius:50%" /><br /><sub>anhtrinh919</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/tomaioo"><img src="https://github.com/tomaioo.png" width="50" style="border-radius:50%" /><br /><sub>tomaioo</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/v-avuso"><img src="https://github.com/v-avuso.png" width="50" style="border-radius:50%" /><br /><sub>v-avuso</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/livlign"><img src="https://github.com/livlign.png" width="50" style="border-radius:50%" /><br /><sub>livlign</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/tongguang2"><img src="https://github.com/tongguang2.png" width="50" style="border-radius:50%" /><br /><sub>tongguang2</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Ziy1-Tan"><img src="https://github.com/Ziy1-Tan.png" width="50" style="border-radius:50%" /><br /><sub>Ziy1-Tan</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/tatsuyanakanogaroinc"><img src="https://github.com/tatsuyanakanogaroinc.png" width="50" style="border-radius:50%" /><br /><sub>tatsuyanakanogaroinc</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/yeonhub"><img src="https://github.com/yeonhub.png" width="50" style="border-radius:50%" /><br /><sub>yeonhub</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/joshua-wu"><img src="https://github.com/joshua-wu.png" width="50" style="border-radius:50%" /><br /><sub>joshua-wu</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/nmsn"><img src="https://github.com/nmsn.png" width="50" style="border-radius:50%" /><br /><sub>nmsn</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/sunnysonx"><img src="https://github.com/sunnysonx.png" width="50" style="border-radius:50%" /><br /><sub>sunnysonx</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/YuChenYunn"><img src="https://github.com/YuChenYunn.png" width="50" style="border-radius:50%" /><br /><sub>YuChenYunn</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/jhseo-b"><img src="https://github.com/jhseo-b.png" width="50" style="border-radius:50%" /><br /><sub>jhseo-b</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Hwasowl"><img src="https://github.com/Hwasowl.png" width="50" style="border-radius:50%" /><br /><sub>Hwasowl</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/XiangZheng2002"><img src="https://github.com/XiangZheng2002.png" width="50" style="border-radius:50%" /><br /><sub>XiangZheng2002</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/keiyo118"><img src="https://github.com/keiyo118.png" width="50" style="border-radius:50%" /><br /><sub>keiyo118</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/pan93412"><img src="https://github.com/pan93412.png" width="50" style="border-radius:50%" /><br /><sub>pan93412</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/taehwanis"><img src="https://github.com/taehwanis.png" width="50" style="border-radius:50%" /><br /><sub>taehwanis</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/linnin233"><img src="https://github.com/linnin233.png" width="50" style="border-radius:50%" /><br /><sub>linnin233</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/xiyouMc"><img src="https://github.com/xiyouMc.png" width="50" style="border-radius:50%" /><br /><sub>xiyouMc</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Bynlk"><img src="https://github.com/Bynlk.png" width="50" style="border-radius:50%" /><br /><sub>Bynlk</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/zxypro1"><img src="https://github.com/zxypro1.png" width="50" style="border-radius:50%" /><br /><sub>zxypro1</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/NeroAyase"><img src="https://github.com/NeroAyase.png" width="50" style="border-radius:50%" /><br /><sub>NeroAyase</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/divergentD"><img src="https://github.com/divergentD.png" width="50" style="border-radius:50%" /><br /><sub>divergentD</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Ne9roni"><img src="https://github.com/Ne9roni.png" width="50" style="border-radius:50%" /><br /><sub>Ne9roni</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/QingXB"><img src="https://github.com/QingXB.png" width="50" style="border-radius:50%" /><br /><sub>QingXB</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/29206394"><img src="https://github.com/29206394.png" width="50" style="border-radius:50%" /><br /><sub>藤知</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Tsdsj"><img src="https://github.com/Tsdsj.png" width="50" style="border-radius:50%" /><br /><sub>Tsdsj</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/godlockin"><img src="https://github.com/godlockin.png" width="50" style="border-radius:50%" /><br /><sub>godlockin</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/sLingli"><img src="https://github.com/sLingli.png" width="50" style="border-radius:50%" /><br /><sub>sLingli</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/ustin-star"><img src="https://github.com/ustin-star.png" width="50" style="border-radius:50%" /><br /><sub>ustin-star</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/cod3hulk"><img src="https://github.com/cod3hulk.png" width="50" style="border-radius:50%" /><br /><sub>cod3hulk</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/lxgxhsy"><img src="https://github.com/lxgxhsy.png" width="50" style="border-radius:50%" /><br /><sub>lxgxhsy</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/rebootcrab-blip"><img src="https://github.com/rebootcrab-blip.png" width="50" style="border-radius:50%" /><br /><sub>rebootcrab-blip</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/zhaoxv210"><img src="https://github.com/zhaoxv210.png" width="50" style="border-radius:50%" /><br /><sub>zhaoxv210</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/serenNan"><img src="https://github.com/serenNan.png" width="50" style="border-radius:50%" /><br /><sub>serenNan</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/IatomicreactorI"><img src="https://github.com/IatomicreactorI.png" width="50" style="border-radius:50%" /><br /><sub>IatomicreactorI</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/quantai1314"><img src="https://github.com/quantai1314.png" width="50" style="border-radius:50%" /><br /><sub>quantai1314</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Git-creat7"><img src="https://github.com/Git-creat7.png" width="50" style="border-radius:50%" /><br /><sub>Git-creat7</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/undownding"><img src="https://github.com/undownding.png" width="50" style="border-radius:50%" /><br /><sub>undownding</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/chrono-meta"><img src="https://github.com/chrono-meta.png" width="50" style="border-radius:50%" /><br /><sub>chrono-meta</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Yike-Ye"><img src="https://github.com/Yike-Ye.png" width="50" style="border-radius:50%" /><br /><sub>Yike-Ye</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/xiaoshidefeng"><img src="https://github.com/xiaoshidefeng.png" width="50" style="border-radius:50%" /><br /><sub>xiaoshidefeng</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/yanguibao1997"><img src="https://github.com/yanguibao1997.png" width="50" style="border-radius:50%" /><br /><sub>yanguibao1997</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/JasonZH6600"><img src="https://github.com/JasonZH6600.png" width="50" style="border-radius:50%" /><br /><sub>JasonZH6600</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/V1staz"><img src="https://github.com/V1staz.png" width="50" style="border-radius:50%" /><br /><sub>V1staz</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/royhuang91"><img src="https://github.com/royhuang91.png" width="50" style="border-radius:50%" /><br /><sub>royhuang91</sub></a></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="110"><a href="https://github.com/Schlaflied"><img src="https://github.com/Schlaflied.png" width="50" style="border-radius:50%" /><br /><sub>Schlaflied</sub></a></td>
+    <td align="center" valign="top" width="110"><a href="https://github.com/KaiC5504"><img src="https://github.com/KaiC5504.png" width="50" style="border-radius:50%" /><br /><sub>KaiC5504</sub></a></td>
+  </tr>
+</table>
+
 ## 项目渊源 & 致谢
 
 Clawd Insights 是构建在 [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) 之上的**洞察分析层**——上游是一只把 coding agent 状态变成像素画的可爱桌面宠物,所有让它讨喜的部分(动画、权限气泡、多 Agent 状态追踪、极简模式等等)都被原封不动地保留了下来。这个 fork 多问了一件事:**如果你和 Agent 的每一次对话,都能被搜索、被总结、汇集到同一块面板上,会怎样?**
@@ -281,7 +429,7 @@ Clawd Insights 是构建在 [`rullerzhou-afk/clawd-on-desk`](https://github.com/
 
 从上游继承的多 Agent 状态追踪,并且本仓库现在与上游完整代码保持同步(WSL 与远程 SSH 支持、扩充的 Agent 阵容、图形化设置面板、主题系统、Telegram 审批、Doctor 诊断等)。桌面宠物本身的完整功能请见上方 [桌宠能力(与上游同步)](#桌宠能力与上游同步)。
 
-特别感谢 [@rullerzhou-afk](https://github.com/rullerzhou-afk) 和所有共同塑造原版 Clawd 的贡献者——没有这份基础,就没有这个项目。
+特别感谢 [@rullerzhou-afk](https://github.com/rullerzhou-afk) 和所有共同塑造原版 Clawd 的贡献者——没有这份基础,就没有这个项目。完整的致谢名单(fork 与上游并列)见上方[参与贡献](#参与贡献)。
 
 ## 许可证
 

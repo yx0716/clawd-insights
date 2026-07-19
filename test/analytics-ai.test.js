@@ -232,6 +232,51 @@ describe("analytics AI registry provider resolution", () => {
     }
   });
 
+  it("getSessionOneLiners batches several sessions into one provider call", async () => {
+    const provider = providerFixture("openai", "batch-brief-provider");
+    const calls = installProviderFetchStub({ content: '{"1":"第一段概括","2":"第二段概括"}' });
+    const analytics = makeAnalytics({
+      providers: [provider],
+      defaultProviders: { brief: provider.id },
+    });
+
+    const lines = await analytics.getSessionOneLiners([makeDetail("batch-1"), makeDetail("batch-2")]);
+
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(lines["batch-1"], "第一段概括");
+    assert.strictEqual(lines["batch-2"], "第二段概括");
+    const prompt = calls[0].body.messages[0].content;
+    assert.match(prompt, /### 对话 1/);
+    assert.match(prompt, /### 对话 2/);
+  });
+
+  it("getSessionOneLiners serves cached sessions without another provider call", async () => {
+    const provider = providerFixture("openai", "batch-cache-provider");
+    const calls = installProviderFetchStub({ content: '{"1":"缓存概括"}' });
+    const analytics = makeAnalytics({
+      providers: [provider],
+      defaultProviders: { brief: provider.id },
+    });
+
+    await analytics.getSessionOneLiners([makeDetail("cache-a")]);
+    assert.strictEqual(calls.length, 1);
+
+    const lines = await analytics.getSessionOneLiners([makeDetail("cache-a")]);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(lines["cache-a"], "缓存概括");
+  });
+
+  it("getSessionOneLiners returns nulls without throwing when no backend is configured", async () => {
+    const calls = installProviderFetchStub();
+    const analytics = makeAnalytics({ providers: [], defaultProviders: {} });
+
+    const lines = await analytics.getSessionOneLiners([makeDetail("none-1"), makeDetail("none-2")]);
+
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual(lines["none-1"], null);
+    assert.strictEqual(lines["none-2"], null);
+  });
+
   it("analyzeKnowledgeCompound uses Route 3 registry provider metadata", async () => {
     const provider = providerFixture("openai", "knowledge-provider");
     const calls = installProviderFetchStub({
