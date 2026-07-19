@@ -6,6 +6,10 @@
 //   ~/.claude/projects/<project>/<uuid>.jsonl   — Claude Code conversations
 //   ~/.codex/sessions/<YYYY>/<MM>/<DD>/*.jsonl  — Codex CLI sessions
 //   ~/.cursor/projects/<project>/agent-transcripts/<uuid>/<uuid>.jsonl — Cursor Agent
+//   ~/.openclaw/agents/<agent>/sessions/<uuid>.jsonl — OpenClaw sessions
+//   ~/.local/share/opencode/storage/{session,message,part} — opencode sessions
+//   ~/.gemini/tmp/<project>/chats/session-*.json — Gemini CLI chats
+//   ~/.qwen/tmp/<project>/chats/session-*.json   — Qwen Code chats (gemini-cli fork)
 
 const fs = require("fs");
 const path = require("path");
@@ -48,6 +52,15 @@ module.exports = function initAnalyticsScan(ctx) {
     path.join(home, ".cursor", "projects"),
     xdgConfig ? path.join(xdgConfig, "cursor", "projects") : null
   );
+  const OPENCLAW_AGENTS = firstExistingDir(
+    path.join(home, ".openclaw", "agents")
+  );
+  const OPENCODE_STORAGE = firstExistingDir(
+    path.join(home, ".local", "share", "opencode", "storage"),
+    xdgData ? path.join(xdgData, "opencode", "storage") : null
+  );
+  const GEMINI_ROOT = firstExistingDir(path.join(home, ".gemini"));
+  const QWEN_ROOT = firstExistingDir(path.join(home, ".qwen"));
 
   // Cache scan results (expensive I/O)
   let cache = null;
@@ -581,6 +594,339 @@ module.exports = function initAnalyticsScan(ctx) {
     return sessions;
   }
 
+  // ── OpenClaw Scanner ──
+  // ~/.openclaw/agents/<agent>/sessions/<uuid>.jsonl — line types: session
+  // (header with cwd), message ({role, content:[{type:text|toolCall,…}]}),
+  // plus model_change/custom records we skip. toolResult is a role, not speech.
+
+  function scanOpenclaw(startTs, endTs) {
+    const sessions = [];
+    let agentDirs;
+    try { agentDirs = fs.readdirSync(OPENCLAW_AGENTS); } catch { return sessions; }
+
+    for (const agentDir of agentDirs) {
+      const sessDir = path.join(OPENCLAW_AGENTS, agentDir, "sessions");
+      let files;
+      try { files = fs.readdirSync(sessDir); } catch { continue; }
+
+      for (const file of files) {
+        if (!file.endsWith(".jsonl")) continue;
+        const filePath = path.join(sessDir, file);
+        let stat;
+        try { stat = fs.statSync(filePath); } catch { continue; }
+        if (stat.mtimeMs < startTs - 86400000) continue;
+
+        const sess = {
+          id: file.replace(".jsonl", ""), agent: "openclaw", project: null,
+          fullPath: null, title: null, cwd: null,
+          messages: 0, toolCalls: {}, firstTs: null, lastTs: null, turns: 0, blocks: [], firstUserMsg: null,
+        };
+        const allTimestamps = [];
+
+        try {
+          const content = fs.readFileSync(filePath, "utf8");
+          const lines = content.split(/\r?\n/).filter(Boolean);
+          for (const line of lines) {
+            let rec;
+            try { rec = JSON.parse(line); } catch { continue; }
+
+            if (rec.type === "session") {
+              sess.cwd = rec.cwd || null;
+              sess.fullPath = rec.cwd || null;
+              if (rec.cwd) {
+                const parts = rec.cwd.replace(/\\/g, "/").split("/").filter(Boolean);
+                sess.project = parts[parts.length - 1] || "openclaw";
+              }
+              const ts = rec.timestamp ? new Date(rec.timestamp).getTime() : null;
+              if (ts) sess.firstTs = ts;
+              continue;
+            }
+            if (rec.type !== "message") continue;
+            const msg = rec.message || {};
+            const ts = rec.timestamp ? new Date(rec.timestamp).getTime() : null;
+            if (ts) {
+              allTimestamps.push(ts);
+              if (!sess.firstTs || ts < sess.firstTs) sess.firstTs = ts;
+              if (!sess.lastTs || ts > sess.lastTs) sess.lastTs = ts;
+            }
+            if (msg.role === "user") {
+              sess.messages++; sess.turns++;
+              if (!sess.firstUserMsg) {
+                let text = "";
+                if (typeof msg.content === "string") text = msg.content;
+                else if (Array.isArray(msg.content)) {
+                  for (const c of msg.content) { if (c && c.type === "text" && c.text) { text = c.text; break; } }
+                }
+                if (containsInternalAnalyticsSummaryMarker(text)) {
+                  sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+                  continue;
+                }
+                const meaningful = extractMeaningfulText(text);
+                if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
+              }
+            }
+            if (msg.role === "assistant") {
+              sess.messages++;
+              if (Array.isArray(msg.content)) {
+                for (const c of msg.content) {
+                  if (c && c.type === "toolCall" && c.name) {
+                    sess.toolCalls[c.name] = (sess.toolCalls[c.name] || 0) + 1;
+                  }
+                }
+              }
+            }
+          }
+        } catch { continue; }
+
+        if (!sess.lastTs) sess.lastTs = stat.mtimeMs;
+        sess.blocks = splitIntoBlocks(allTimestamps);
+
+        if (sess.messages < 6) continue;
+        if (sess.lastTs && sess.lastTs < startTs) continue;
+        if (sess.firstTs && sess.firstTs > endTs) continue;
+
+        sessions.push(sess);
+      }
+    }
+    return sessions;
+  }
+
+  // ── opencode Scanner ──
+  // ~/.local/share/opencode/storage/: session/<projectID>/ses_*.json holds
+  // meta (directory, title, time), message/<sessionID>/msg_*.json holds role
+  // + timing, part/<messageID>/prt_*.json holds text/tool/reasoning parts.
+
+  function readOpencodeMessages(sessionId) {
+    const msgDir = path.join(OPENCODE_STORAGE, "message", sessionId);
+    let files;
+    try { files = fs.readdirSync(msgDir); } catch { return []; }
+    const msgs = [];
+    for (const file of files) {
+      if (!file.startsWith("msg_") || !file.endsWith(".json")) continue;
+      try {
+        const m = JSON.parse(fs.readFileSync(path.join(msgDir, file), "utf8"));
+        if (m && (m.role === "user" || m.role === "assistant")) msgs.push(m);
+      } catch { /* skip corrupt message */ }
+    }
+    msgs.sort((a, b) => ((a.time && a.time.created) || 0) - ((b.time && b.time.created) || 0));
+    return msgs;
+  }
+
+  function readOpencodeParts(messageId) {
+    const partDir = path.join(OPENCODE_STORAGE, "part", messageId);
+    let files;
+    try { files = fs.readdirSync(partDir); } catch { return []; }
+    const parts = [];
+    for (const file of files) {
+      if (!file.startsWith("prt_") || !file.endsWith(".json")) continue;
+      try { parts.push(JSON.parse(fs.readFileSync(path.join(partDir, file), "utf8"))); } catch { /* skip */ }
+    }
+    // Part ids are lexically ordered by creation (prt_<sortable>)
+    parts.sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+    return parts;
+  }
+
+  function opencodeTextOf(parts) {
+    let text = "";
+    for (const p of parts) {
+      if (p && p.type === "text" && p.text) text += p.text + " ";
+    }
+    return text;
+  }
+
+  function scanOpencode(startTs, endTs) {
+    const sessions = [];
+    const sessRoot = path.join(OPENCODE_STORAGE, "session");
+    let projDirs;
+    try { projDirs = fs.readdirSync(sessRoot); } catch { return sessions; }
+
+    for (const projDir of projDirs) {
+      let files;
+      try { files = fs.readdirSync(path.join(sessRoot, projDir)); } catch { continue; }
+      for (const file of files) {
+        if (!file.startsWith("ses_") || !file.endsWith(".json")) continue;
+        let meta;
+        try { meta = JSON.parse(fs.readFileSync(path.join(sessRoot, projDir, file), "utf8")); } catch { continue; }
+        if (!meta || !meta.id) continue;
+        const created = (meta.time && meta.time.created) || null;
+        const updated = (meta.time && meta.time.updated) || created;
+        // Range pre-filter on meta so out-of-range sessions cost one read
+        if (updated && updated < startTs) continue;
+        if (created && created > endTs) continue;
+
+        const sess = {
+          id: meta.id, agent: "opencode", project: null,
+          fullPath: meta.directory || null, title: meta.title || null, cwd: meta.directory || null,
+          messages: 0, toolCalls: {}, firstTs: created, lastTs: updated, turns: 0, blocks: [], firstUserMsg: null,
+        };
+        if (meta.directory) {
+          const parts = meta.directory.replace(/\\/g, "/").split("/").filter(Boolean);
+          sess.project = parts[parts.length - 1] || "unknown";
+        }
+
+        const allTimestamps = [];
+        for (const m of readOpencodeMessages(meta.id)) {
+          const ts = (m.time && m.time.created) || null;
+          if (ts) {
+            allTimestamps.push(ts);
+            if (!sess.firstTs || ts < sess.firstTs) sess.firstTs = ts;
+            if (!sess.lastTs || ts > sess.lastTs) sess.lastTs = ts;
+          }
+          if (m.role === "user") {
+            sess.messages++; sess.turns++;
+            if (!sess.firstUserMsg) {
+              const text = opencodeTextOf(readOpencodeParts(m.id));
+              if (containsInternalAnalyticsSummaryMarker(text)) {
+                sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+              } else {
+                const meaningful = extractMeaningfulText(text);
+                if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
+              }
+            }
+          }
+          if (m.role === "assistant") {
+            sess.messages++;
+            for (const p of readOpencodeParts(m.id)) {
+              if (p && p.type === "tool" && p.tool) {
+                sess.toolCalls[p.tool] = (sess.toolCalls[p.tool] || 0) + 1;
+              }
+            }
+          }
+        }
+
+        sess.blocks = splitIntoBlocks(allTimestamps);
+        if (sess.messages < 6) continue;
+        if (sess.lastTs && sess.lastTs < startTs) continue;
+        if (sess.firstTs && sess.firstTs > endTs) continue;
+        sessions.push(sess);
+      }
+    }
+    return sessions;
+  }
+
+  // ── Gemini-family Scanner (gemini-cli and its qwen-code fork) ──
+  // <root>/tmp/<projectDirName>/chats/session-*.json — one JSON per session:
+  // {sessionId, messages:[{type:"user"|"gemini", content, toolCalls?}]}.
+  // <root>/projects.json maps physical cwd → projectDirName (see
+  // agents/gemini-log-monitor.js, the legacy monitor this format came from).
+
+  function geminiLoadCwdMap(root) {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(root, "projects.json"), "utf8"));
+      const map = {};
+      if (data && data.projects) {
+        for (const [physPath, dirName] of Object.entries(data.projects)) map[dirName] = physPath;
+      }
+      return map;
+    } catch { return {}; }
+  }
+
+  function geminiMessageText(msg) {
+    if (!msg) return "";
+    if (typeof msg.content === "string") return msg.content;
+    if (typeof msg.text === "string") return msg.text;
+    if (Array.isArray(msg.content)) {
+      let text = "";
+      for (const c of msg.content) {
+        if (typeof c === "string") text += c + " ";
+        else if (c && typeof c.text === "string") text += c.text + " ";
+      }
+      return text;
+    }
+    return "";
+  }
+
+  function geminiMessageTs(msg) {
+    if (!msg) return null;
+    const raw = msg.timestamp || msg.ts || null;
+    if (raw == null) return null;
+    const ts = typeof raw === "number" ? raw : new Date(raw).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  function scanGeminiFamily(root, agentId, startTs, endTs) {
+    const sessions = [];
+    const tmpRoot = path.join(root, "tmp");
+    let projectDirs;
+    try { projectDirs = fs.readdirSync(tmpRoot); } catch { return sessions; }
+    const cwdMap = geminiLoadCwdMap(root);
+
+    for (const projectDir of projectDirs) {
+      const chatsDir = path.join(tmpRoot, projectDir, "chats");
+      let files;
+      try { files = fs.readdirSync(chatsDir); } catch { continue; }
+
+      for (const file of files) {
+        if (!file.startsWith("session-") || !file.endsWith(".json")) continue;
+        const filePath = path.join(chatsDir, file);
+        let stat;
+        try { stat = fs.statSync(filePath); } catch { continue; }
+        if (stat.mtimeMs < startTs - 86400000) continue;
+
+        let data;
+        try { data = JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { continue; }
+        const msgs = Array.isArray(data && data.messages) ? data.messages : [];
+
+        const cwd = cwdMap[projectDir] || null;
+        const sess = {
+          id: file.replace(/\.json$/, ""), agent: agentId, project: null,
+          fullPath: cwd, title: null, cwd,
+          messages: 0, toolCalls: {}, firstTs: null, lastTs: null, turns: 0, blocks: [], firstUserMsg: null,
+        };
+        if (cwd) {
+          const parts = cwd.replace(/\\/g, "/").split("/").filter(Boolean);
+          sess.project = parts[parts.length - 1] || "unknown";
+        }
+
+        const allTimestamps = [];
+        for (const msg of msgs) {
+          if (!msg || (msg.type !== "user" && msg.type !== "gemini")) continue;
+          const ts = geminiMessageTs(msg);
+          if (ts) {
+            allTimestamps.push(ts);
+            if (!sess.firstTs || ts < sess.firstTs) sess.firstTs = ts;
+            if (!sess.lastTs || ts > sess.lastTs) sess.lastTs = ts;
+          }
+          if (msg.type === "user") {
+            sess.messages++; sess.turns++;
+            if (!sess.firstUserMsg) {
+              const text = geminiMessageText(msg);
+              if (containsInternalAnalyticsSummaryMarker(text)) {
+                sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
+              } else {
+                const meaningful = extractMeaningfulText(text);
+                if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
+              }
+            }
+          } else {
+            sess.messages++;
+            if (Array.isArray(msg.toolCalls)) {
+              for (const tc of msg.toolCalls) {
+                if (tc && tc.name) sess.toolCalls[tc.name] = (sess.toolCalls[tc.name] || 0) + 1;
+              }
+            }
+          }
+        }
+
+        // Gemini messages may carry no timestamps — fall back to file times
+        if (!sess.firstTs) sess.firstTs = stat.birthtimeMs || stat.mtimeMs;
+        if (!sess.lastTs) sess.lastTs = stat.mtimeMs;
+        sess.blocks = allTimestamps.length
+          ? splitIntoBlocks(allTimestamps)
+          : [{ start: sess.firstTs, end: sess.lastTs, msgs: sess.messages }];
+
+        if (sess.messages < 6) continue;
+        if (sess.lastTs && sess.lastTs < startTs) continue;
+        if (sess.firstTs && sess.firstTs > endTs) continue;
+        sessions.push(sess);
+      }
+    }
+    return sessions;
+  }
+
+  function scanGemini(startTs, endTs) { return scanGeminiFamily(GEMINI_ROOT, "gemini-cli", startTs, endTs); }
+  function scanQwen(startTs, endTs) { return scanGeminiFamily(QWEN_ROOT, "qwen-code", startTs, endTs); }
+
   // ── Main API ──
 
   function scanRange(startTs, endTs) {
@@ -594,6 +940,10 @@ module.exports = function initAnalyticsScan(ctx) {
       ...scanAllTclaude(startTs, endTs),
       ...scanCodex(startTs, endTs),
       ...scanCursor(startTs, endTs),
+      ...scanOpenclaw(startTs, endTs),
+      ...scanOpencode(startTs, endTs),
+      ...scanGemini(startTs, endTs),
+      ...scanQwen(startTs, endTs),
     ];
     const visibleSessions = allSessions.filter(session => !shouldHideSession(session));
 
@@ -762,6 +1112,29 @@ module.exports = function initAnalyticsScan(ctx) {
         const filePath = path.join(CURSOR_PROJECTS, dir, "agent-transcripts", sessionId, sessionId + ".jsonl");
         try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
       }
+    } else if (agent === "openclaw") {
+      let dirs;
+      try { dirs = fs.readdirSync(OPENCLAW_AGENTS); } catch { return null; }
+      for (const dir of dirs) {
+        const filePath = path.join(OPENCLAW_AGENTS, dir, "sessions", sessionId + ".jsonl");
+        try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
+      }
+    } else if (agent === "opencode") {
+      const sessRoot = path.join(OPENCODE_STORAGE, "session");
+      let dirs;
+      try { dirs = fs.readdirSync(sessRoot); } catch { return null; }
+      for (const dir of dirs) {
+        const filePath = path.join(sessRoot, dir, sessionId + ".json");
+        try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
+      }
+    } else if (agent === "gemini-cli" || agent === "qwen-code") {
+      const tmpRoot = path.join(agent === "qwen-code" ? QWEN_ROOT : GEMINI_ROOT, "tmp");
+      let dirs;
+      try { dirs = fs.readdirSync(tmpRoot); } catch { return null; }
+      for (const dir of dirs) {
+        const filePath = path.join(tmpRoot, dir, "chats", sessionId + ".json");
+        try { fs.accessSync(filePath); return filePath; } catch { /* next */ }
+      }
     }
     return null;
   }
@@ -841,7 +1214,101 @@ module.exports = function initAnalyticsScan(ctx) {
     return scoped;
   }
 
+  // opencode sessions aren't line-oriented — meta/message/part live in
+  // separate JSON files, so detail extraction gets its own reader.
+  function getOpencodeSessionDetail(sessionId) {
+    const metaPath = findSessionFile(sessionId, "opencode");
+    if (!metaPath) return null;
+    const detail = {
+      sessionId, agent: "opencode",
+      conversation: [], userMessages: [], toolCalls: [], timestamps: [],
+      title: null, cwd: null,
+    };
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      detail.title = (meta && meta.title) || null;
+      detail.cwd = (meta && meta.directory) || null;
+    } catch { return null; }
+
+    for (const m of readOpencodeMessages(sessionId)) {
+      const ts = (m.time && m.time.created) || null;
+      if (ts) detail.timestamps.push(ts);
+      const parts = readOpencodeParts(m.id);
+      if (m.role === "user") {
+        const cleaned = cleanUserMessageForAnalysis(opencodeTextOf(parts));
+        if (cleaned) {
+          detail.userMessages.push({ ts, text: cleaned });
+          detail.conversation.push({ ts, role: "user", text: cleaned });
+        }
+      } else if (m.role === "assistant") {
+        for (const p of parts) {
+          if (p && p.type === "tool" && p.tool) {
+            let inputSnippet = "";
+            const input = p.state && p.state.input;
+            if (input) inputSnippet = JSON.stringify(input).slice(0, 100);
+            detail.toolCalls.push({ ts, name: p.tool, inputSnippet });
+          }
+        }
+        const cleaned = cleanAssistantMessageForAnalysis(opencodeTextOf(parts));
+        if (cleaned) detail.conversation.push({ ts, role: "assistant", text: cleaned });
+      }
+    }
+    return detail;
+  }
+
+  // Shared by gemini-cli and qwen-code (single-JSON chat files).
+  function getGeminiFamilySessionDetail(sessionId, agent) {
+    const filePath = findSessionFile(sessionId, agent);
+    if (!filePath) return null;
+    const detail = {
+      sessionId, agent,
+      conversation: [], userMessages: [], toolCalls: [], timestamps: [],
+      title: null, cwd: null,
+    };
+    let data;
+    try { data = JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { return null; }
+    // chats/session-x.json sits two levels under the project dir name
+    const projectDir = path.basename(path.dirname(path.dirname(filePath)));
+    const root = agent === "qwen-code" ? QWEN_ROOT : GEMINI_ROOT;
+    detail.cwd = geminiLoadCwdMap(root)[projectDir] || null;
+
+    const msgs = Array.isArray(data && data.messages) ? data.messages : [];
+    for (const msg of msgs) {
+      if (!msg || (msg.type !== "user" && msg.type !== "gemini")) continue;
+      const ts = geminiMessageTs(msg);
+      if (ts) detail.timestamps.push(ts);
+      if (msg.type === "user") {
+        const cleaned = cleanUserMessageForAnalysis(geminiMessageText(msg));
+        if (cleaned) {
+          detail.userMessages.push({ ts, text: cleaned });
+          detail.conversation.push({ ts, role: "user", text: cleaned });
+        }
+      } else {
+        if (Array.isArray(msg.toolCalls)) {
+          for (const tc of msg.toolCalls) {
+            if (tc && tc.name) {
+              let inputSnippet = "";
+              if (tc.args) inputSnippet = JSON.stringify(tc.args).slice(0, 100);
+              detail.toolCalls.push({ ts, name: tc.name, inputSnippet });
+            }
+          }
+        }
+        const cleaned = cleanAssistantMessageForAnalysis(geminiMessageText(msg));
+        if (cleaned) detail.conversation.push({ ts, role: "assistant", text: cleaned });
+      }
+    }
+    return detail;
+  }
+
   function getSessionDetail(sessionId, agent, scope) {
+    if (agent === "opencode") {
+      const detail = getOpencodeSessionDetail(sessionId);
+      return detail ? applyDetailScope(detail, scope) : null;
+    }
+    if (agent === "gemini-cli" || agent === "qwen-code") {
+      const detail = getGeminiFamilySessionDetail(sessionId, agent);
+      return detail ? applyDetailScope(detail, scope) : null;
+    }
     const filePath = findSessionFile(sessionId, agent);
     if (!filePath) return null;
 
@@ -945,6 +1412,41 @@ module.exports = function initAnalyticsScan(ctx) {
             if (p.type === "function_call" && p.name) {
               detail.toolCalls.push({ ts, name: p.name, inputSnippet: (p.arguments || "").slice(0, 100) });
             }
+          }
+        } else if (agent === "openclaw") {
+          if (d.type === "session" && d.cwd && !detail.cwd) detail.cwd = d.cwd;
+          if (d.type !== "message") continue;
+          const ts = d.timestamp ? new Date(d.timestamp).getTime() : null;
+          if (ts) detail.timestamps.push(ts);
+          const msg = d.message || {};
+          if (msg.role === "user") {
+            let text = "";
+            if (typeof msg.content === "string") text = msg.content;
+            else if (Array.isArray(msg.content)) {
+              for (const c of msg.content) {
+                if (c && c.type === "text" && c.text) text += c.text + " ";
+              }
+            }
+            const cleaned = cleanUserMessageForAnalysis(text);
+            if (cleaned) {
+              detail.userMessages.push({ ts, text: cleaned });
+              detail.conversation.push({ ts, role: "user", text: cleaned });
+            }
+          }
+          if (msg.role === "assistant") {
+            let assistantText = "";
+            if (Array.isArray(msg.content)) {
+              for (const c of msg.content) {
+                if (c && c.type === "text" && c.text) assistantText += c.text + " ";
+                if (c && c.type === "toolCall" && c.name) {
+                  let inputSnippet = "";
+                  if (c.arguments) inputSnippet = JSON.stringify(c.arguments).slice(0, 100);
+                  detail.toolCalls.push({ ts, name: c.name, inputSnippet });
+                }
+              }
+            }
+            const cleaned = cleanAssistantMessageForAnalysis(assistantText);
+            if (cleaned) detail.conversation.push({ ts, role: "assistant", text: cleaned });
           }
         } else if (agent === "cursor-agent") {
           if (d.role === "user") {

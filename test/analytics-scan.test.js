@@ -266,4 +266,189 @@ describe("analytics scan", () => {
     assert.deepStrictEqual(detail.userMessages.map(entry => entry.text), ["second prompt"]);
     assert.deepStrictEqual(detail.timestamps, [start, end]);
   });
+
+  // ── New source readers: openclaw / opencode / gemini-family ──
+
+  function writeOpenclawSession(homeDir, sessionId, cwd) {
+    const sessDir = path.join(homeDir, ".openclaw", "agents", "main", "sessions");
+    fs.mkdirSync(sessDir, { recursive: true });
+    const ts = (i) => `2026-04-06T11:44:0${i}.000Z`;
+    const userMsg = (i, text) => ({
+      type: "message", id: `u${i}`, timestamp: ts(i),
+      message: { role: "user", content: [{ type: "text", text }] },
+    });
+    const assistantMsg = (i, text, tool) => ({
+      type: "message", id: `a${i}`, timestamp: ts(i),
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text },
+          ...(tool ? [{ type: "toolCall", id: `t${i}`, name: tool, arguments: { file_path: "/x" } }] : []),
+        ],
+      },
+    });
+    const lines = [
+      { type: "session", version: 3, id: sessionId, timestamp: ts(0), cwd },
+      { type: "custom", customType: "model-snapshot", id: "c1", timestamp: ts(0), data: {} },
+      userMsg(1, "openclaw first prompt"),
+      assistantMsg(2, "openclaw first reply", "read"),
+      { type: "message", id: "tr1", timestamp: ts(2), message: { role: "toolResult", content: [{ type: "text", text: "tool output noise" }] } },
+      userMsg(3, "openclaw second prompt"),
+      assistantMsg(4, "openclaw second reply"),
+      userMsg(5, "openclaw third prompt"),
+      assistantMsg(6, "openclaw third reply"),
+    ];
+    fs.writeFileSync(path.join(sessDir, `${sessionId}.jsonl`), lines.map(l => JSON.stringify(l)).join("\n") + "\n");
+  }
+
+  it("scans openclaw sessions and reads their detail", () => {
+    const sessionId = "0798157f-aaaa-bbbb-cccc-000000000001";
+    writeOpenclawSession(tempHome, sessionId, "/Users/jyx/.openclaw/workspace");
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const startTs = new Date("2026-04-06T00:00:00+08:00").getTime();
+    const endTs = new Date("2026-04-07T00:00:00+08:00").getTime();
+    const data = analyticsScan.scanRange(startTs, endTs);
+
+    assert.strictEqual(data.sessionCount, 1);
+    const sess = data.sessions[0];
+    assert.strictEqual(sess.agent, "openclaw");
+    assert.strictEqual(sess.project, "workspace");
+    assert.strictEqual(sess.messages, 6); // 3 user + 3 assistant; toolResult not counted
+    assert.strictEqual(sess.turns, 3);
+    assert.strictEqual(sess.toolCalls.read, 1);
+    assert.strictEqual(sess.firstUserMsg, "openclaw first prompt");
+
+    const detail = analyticsScan.getSessionDetail(sessionId, "openclaw", null);
+    assert.ok(detail);
+    assert.strictEqual(detail.cwd, "/Users/jyx/.openclaw/workspace");
+    assert.deepStrictEqual(
+      detail.conversation.slice(0, 2).map(e => [e.role, e.text]),
+      [["user", "openclaw first prompt"], ["assistant", "openclaw first reply"]]
+    );
+    // toolResult text must not leak into the conversation
+    assert.ok(!detail.conversation.some(e => e.text.includes("tool output noise")));
+    assert.strictEqual(detail.toolCalls.length, 1);
+    assert.strictEqual(detail.toolCalls[0].name, "read");
+  });
+
+  function writeOpencodeSession(homeDir, sessionId, directory, title) {
+    const storage = path.join(homeDir, ".local", "share", "opencode", "storage");
+    const base = new Date("2026-04-06T11:44:00.000Z").getTime();
+    fs.mkdirSync(path.join(storage, "session", "proj1"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage, "session", "proj1", `${sessionId}.json`),
+      JSON.stringify({ id: sessionId, projectID: "proj1", directory, title, time: { created: base, updated: base + 6000 } })
+    );
+    const msgDir = path.join(storage, "message", sessionId);
+    fs.mkdirSync(msgDir, { recursive: true });
+    const writeMsg = (msgId, role, offsetMs) => {
+      fs.writeFileSync(path.join(msgDir, `${msgId}.json`), JSON.stringify({
+        id: msgId, sessionID: sessionId, role, time: { created: base + offsetMs },
+      }));
+    };
+    const writePart = (msgId, partId, part) => {
+      const partDir = path.join(storage, "part", msgId);
+      fs.mkdirSync(partDir, { recursive: true });
+      fs.writeFileSync(path.join(partDir, `${partId}.json`), JSON.stringify({
+        id: partId, sessionID: sessionId, messageID: msgId, ...part,
+      }));
+    };
+    for (let i = 0; i < 3; i++) {
+      const u = `msg_u${i}`, a = `msg_a${i}`;
+      writeMsg(u, "user", i * 2000);
+      writePart(u, `prt_u${i}`, { type: "text", text: `opencode prompt ${i}` });
+      writeMsg(a, "assistant", i * 2000 + 1000);
+      writePart(a, `prt_a${i}0`, { type: "reasoning", text: "hidden reasoning" });
+      writePart(a, `prt_a${i}1`, { type: "text", text: `opencode reply ${i}` });
+      if (i === 0) writePart(a, `prt_a${i}2`, { type: "tool", callID: "c1", tool: "bash", state: { status: "completed", input: { command: "ls" } } });
+    }
+  }
+
+  it("scans opencode sessions and reads their detail", () => {
+    const sessionId = "ses_test0000000000000000000001";
+    writeOpencodeSession(tempHome, sessionId, "/Users/jyx/repos/proj-beta", "Beta setup");
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const startTs = new Date("2026-04-06T00:00:00+08:00").getTime();
+    const endTs = new Date("2026-04-07T00:00:00+08:00").getTime();
+    const data = analyticsScan.scanRange(startTs, endTs);
+
+    assert.strictEqual(data.sessionCount, 1);
+    const sess = data.sessions[0];
+    assert.strictEqual(sess.agent, "opencode");
+    assert.strictEqual(sess.project, "proj-beta");
+    assert.strictEqual(sess.title, "Beta setup");
+    assert.strictEqual(sess.messages, 6);
+    assert.strictEqual(sess.turns, 3);
+    assert.strictEqual(sess.toolCalls.bash, 1);
+    assert.strictEqual(sess.firstUserMsg, "opencode prompt 0");
+
+    const detail = analyticsScan.getSessionDetail(sessionId, "opencode", null);
+    assert.ok(detail);
+    assert.strictEqual(detail.title, "Beta setup");
+    assert.strictEqual(detail.cwd, "/Users/jyx/repos/proj-beta");
+    assert.deepStrictEqual(
+      detail.conversation.slice(0, 2).map(e => [e.role, e.text]),
+      [["user", "opencode prompt 0"], ["assistant", "opencode reply 0"]]
+    );
+    // reasoning parts stay out of the conversation
+    assert.ok(!detail.conversation.some(e => e.text.includes("hidden reasoning")));
+    assert.strictEqual(detail.toolCalls.length, 1);
+    assert.strictEqual(detail.toolCalls[0].name, "bash");
+  });
+
+  function writeGeminiFamilySession(homeDir, rootName, cwd) {
+    const root = path.join(homeDir, rootName);
+    const chatsDir = path.join(root, "tmp", "hash1234", "chats");
+    fs.mkdirSync(chatsDir, { recursive: true });
+    fs.writeFileSync(path.join(root, "projects.json"), JSON.stringify({ projects: { [cwd]: "hash1234" } }));
+    const ts = (i) => `2026-04-06T11:44:0${i}.000Z`;
+    const messages = [];
+    for (let i = 0; i < 3; i++) {
+      messages.push({ id: `u${i}`, type: "user", content: `gemini prompt ${i}`, timestamp: ts(i * 2) });
+      messages.push({
+        id: `g${i}`, type: "gemini", content: `gemini reply ${i}`, timestamp: ts(i * 2 + 1),
+        ...(i === 0 ? { toolCalls: [{ name: "run_shell_command", status: "success", args: { command: "ls" } }] } : {}),
+      });
+    }
+    fs.writeFileSync(
+      path.join(chatsDir, "session-2026-04-06-abc.json"),
+      JSON.stringify({ sessionId: "abc", startTime: ts(0), lastUpdated: ts(5), messages })
+    );
+  }
+
+  it("scans gemini and qwen sessions with shared reader", () => {
+    writeGeminiFamilySession(tempHome, ".gemini", "/Users/jyx/repos/proj-gamma");
+    writeGeminiFamilySession(tempHome, ".qwen", "/Users/jyx/repos/proj-delta");
+
+    const initAnalyticsScan = require("../src/analytics-scan");
+    const analyticsScan = initAnalyticsScan({});
+    const startTs = new Date("2026-04-06T00:00:00+08:00").getTime();
+    const endTs = new Date("2026-04-07T00:00:00+08:00").getTime();
+    const data = analyticsScan.scanRange(startTs, endTs);
+
+    assert.strictEqual(data.sessionCount, 2);
+    const gem = data.sessions.find(s => s.agent === "gemini-cli");
+    const qwen = data.sessions.find(s => s.agent === "qwen-code");
+    assert.ok(gem && qwen);
+    assert.strictEqual(gem.project, "proj-gamma");
+    assert.strictEqual(qwen.project, "proj-delta");
+    assert.strictEqual(gem.messages, 6);
+    assert.strictEqual(gem.turns, 3);
+    assert.strictEqual(gem.toolCalls.run_shell_command, 1);
+    assert.strictEqual(gem.firstUserMsg, "gemini prompt 0");
+
+    const detail = analyticsScan.getSessionDetail("session-2026-04-06-abc", "gemini-cli", null);
+    assert.ok(detail);
+    assert.strictEqual(detail.cwd, "/Users/jyx/repos/proj-gamma");
+    assert.deepStrictEqual(
+      detail.conversation.slice(0, 2).map(e => [e.role, e.text]),
+      [["user", "gemini prompt 0"], ["assistant", "gemini reply 0"]]
+    );
+    assert.strictEqual(detail.toolCalls.length, 1);
+    assert.strictEqual(detail.toolCalls[0].name, "run_shell_command");
+  });
 });
