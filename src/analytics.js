@@ -319,7 +319,7 @@ module.exports = function initAnalytics(ctx) {
     return ctx.analyticsScan.getWeeklyBuckets(weeksBack);
   });
 
-  ipcMain.handle("analytics-analyze-ranges", async (_event, ranges, preferredProvider) => {
+  ipcMain.handle("analytics-analyze-ranges", async (_event, ranges, preferredProvider, rangeKind) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return null;
     if (!Array.isArray(ranges) || !ranges.length) return null;
     const refs = ctx.analyticsScan.getSessionRefsForRanges(ranges);
@@ -332,7 +332,7 @@ module.exports = function initAnalytics(ctx) {
       } catch { /* skip */ }
     }
     if (!details.length) return { text: null, error: "未能加载所选范围的会话详情。" };
-    const result = await ctx.analyticsAI.analyzeMultipleSessions(details, preferredProvider);
+    const result = await ctx.analyticsAI.analyzeMultipleSessions(details, preferredProvider, rangeKind);
     try { return result ? JSON.parse(JSON.stringify(result)) : result; }
     catch { return result; }
   });

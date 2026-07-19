@@ -1860,7 +1860,10 @@ module.exports = function initAnalyticsAI(ctx) {
   // situation/actions, not the summary
   // 2026-07: static-first prompt reorder (rules before context) for prompt-
   // cache prefix reuse — output contract unchanged, so no version bump.
-  const ANALYSIS_CACHE_VERSION = 6;
+  // v7: brief mode rewrite — subject is the work itself (no '对话确认了…'
+  // meta-narration), no vague filler verbs (梳理/沉淀), headlines read like
+  // speech instead of stacked-nominal report style (工期风险重新校准)
+  const ANALYSIS_CACHE_VERSION = 7;
   const sessionAnalysisCache = new Map(); // `${sessionId}:${provider}` → result
 
   function analysisCacheKey(sessionId, provider) {
@@ -1963,18 +1966,19 @@ module.exports = function initAnalyticsAI(ctx) {
   // the common prefix ended after two lines.
   function buildSessionBriefPrompt(detail) {
     let p = "你是用户的编程搭档。下面会给出用户与 AI agent 的对话摘要。\n";
-    p += "请用简短、平实的中文总结这段对话的核心收获。\n\n";
+    p += "请用平实的中文总结这段对话：用户做了什么，结果如何。\n\n";
     p += "请返回 JSON（不要 markdown code block），格式：\n";
-    p += '{"summary":"1 句话概括核心收获"';
+    p += '{"summary":"1 句话：做了什么+结果如何"';
     p += ',"keyTopics":["话题1","话题2"]';
     p += ',"outcomes":[{"headline":"成果短语","detail":"一句话具体说明"}]}\n';
     p += "要求：\n";
-    p += "- summary：≤ 40 字，像同事在工作群里同步进展：先把事实说准，再求简短。做了多件事时只说主线，次要的放 outcomes。\n";
-    p += "- summary 必须是通顺的完整句子：每个分句有明确主语，保留'把、到、的、了'这类虚词；不要生造缩略动词（'补同步''漏跑'这类），字数不够就少讲一件事。\n";
-    p += "- summary 禁止：感叹号；'搞定了''漂亮''辛苦了''加油'这类寒暄；比喻、拟人、俏皮话。宁可平淡，不要俏皮。\n";
+    p += "- summary：≤ 40 字，写给没看过这段对话的同事：点名具体对象（哪个项目/脚本/问题），说清它最后的状态。先说准，再求短；多件事只说主线，次要的放 outcomes，不要塞成一句。\n";
+    p += "- 主语写事情本身，不要写'对话''本次会话'：写'确认了中继应在远端启动'，不要写'对话确认了中继应在远端启动'。\n";
+    p += "- 句子要通顺：分句有主语、保留'把、到、的、了'这类虚词；不生造缩略动词（'补同步'）；不用'梳理''沉淀''完善'这类空泛动词——说不出具体干了什么，就删掉这半句。\n";
+    p += "- 禁止：感叹号；'搞定了''辛苦了'这类寒暄；比喻和俏皮话。宁可平淡，不要俏皮。\n";
     p += "  例：写'每日 review 自动同步到 GitHub，不再因电脑重启中断'，不要写'搞定了！合盖也不怕断更了'。\n";
     p += "- keyTopics：2-3 个，每个 ≤ 8 字。\n";
-    p += "- outcomes：最多 2 条。headline 是 ≤ 10 字的自然短语（如'定时同步上线'），不加标点，不要硬压成三字动宾词；detail 要具体。\n";
+    p += "- outcomes：最多 2 条。headline ≤ 10 字，像平常说话（'权重传完了''排期重排了'），不要报告腔的名词堆叠（'工期风险重新校准''方法沉淀复用'），不加标点；detail 一句话，带上具体名称或数字。\n";
     p += "- 所有字段用中文。不要返回 suggestions 和 timeBreakdown。\n";
     p += "- **重要**：JSON 字符串值里不要出现未转义的双引号。引用名称请用「」或『』代替双引号。\n\n";
     p += "## 对话摘要\n\n";
@@ -2884,7 +2888,7 @@ module.exports = function initAnalyticsAI(ctx) {
   // Feeding briefs (not raw conversations) to the AI keeps tokens low and lets
   // the model focus on cross-session synthesis instead of re-reading walls of
   // dialogue.
-  function buildMultiSessionPromptFromBriefs(items) {
+  function buildMultiSessionPromptFromBriefs(items, rangeKind) {
     let p = "你是用户的编程搭档。以下是用户在这段时间里跨多个 AI 编程会话的**已生成简报**（每个会话独立做过 AI 分析）。\n";
     p += "请基于这些简报，提炼这段时间用户**整体在做什么**，归纳主题、识别重点、概括成果。\n\n";
     for (let i = 0; i < items.length; i++) {
@@ -2915,7 +2919,11 @@ module.exports = function initAnalyticsAI(ctx) {
       p += "\n";
     }
     p += "请用 markdown 直接返回总结（不要 JSON，不要代码块），结构如下：\n\n";
-    p += "# 这段时间做了什么\n\n";
+    if (rangeKind === "week") {
+      p += "# 这周都做了啥 <emoji>\n\n";
+    } else {
+      p += "# 这段时间做了什么\n\n";
+    }
     p += "**TL;DR：** 一句话概括整段时间的主线（≤ 40 字）\n\n";
     p += "## 主要工作\n";
     p += "按项目或主题归类，3-6 条要点。用「项目/主题名」开头，后跟「做了 X，达成 Y」。\n\n";
@@ -2924,6 +2932,9 @@ module.exports = function initAnalyticsAI(ctx) {
     p += "## 时间分布\n";
     p += "粗略估算各项目/主题占的时间比例（百分比即可）。\n\n";
     p += "要求：全程中文，口吻像同事复盘，语言平实，不用感叹号、寒暄语和比喻，不要套话；只用上面提供的简报内容，不要编造未提及的内容。";
+    if (rangeKind === "week") {
+      p += "标题里的 <emoji> 换成一个贴合本周主线的 emoji；整篇只用这一个 emoji，正文里不要再出现。";
+    }
     return p;
   }
 
@@ -2935,7 +2946,7 @@ module.exports = function initAnalyticsAI(ctx) {
     return analysisCacheKey(id, preferredProvider || "claude-code") + ":brief";
   }
 
-  async function analyzeMultipleSessions(details, preferredProvider) {
+  async function analyzeMultipleSessions(details, preferredProvider, rangeKind) {
     if (!Array.isArray(details) || details.length === 0) return null;
 
     const tTotalStart = Date.now();
@@ -3052,7 +3063,7 @@ module.exports = function initAnalyticsAI(ctx) {
 
     if (!items.length) return { text: null, error: "未能加载任一会话的简报。", _timing: { stage1Ms, stage2Ms: 0, totalMs: Date.now() - tTotalStart, sessions: 0, cacheHits, cacheMisses, stubs } };
 
-    const prompt = buildMultiSessionPromptFromBriefs(items);
+    const prompt = buildMultiSessionPromptFromBriefs(items, rangeKind);
 
     // Stage 2: cross-session aggregation. Time the AI call separately so we
     // can tell whether the long wall-clock comes from cache misses or the

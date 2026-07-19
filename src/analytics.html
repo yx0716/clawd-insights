@@ -6778,7 +6778,7 @@
       const tStart = Date.now();
       try {
         if (mode === "ranges") {
-          const result = await window.analyticsAPI.analyzeRanges(pickedRanges, selectedAnalysisAgent || "claude-code");
+          const result = await window.analyticsAPI.analyzeRanges(pickedRanges, selectedAnalysisAgent || "claude-code", scope);
           const wall = Date.now() - tStart;
           titleEl.textContent = scope === "day" ? t("reportPickedDay") : t("reportPickedWeek");
           if (result && result.text) {

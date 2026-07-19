@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld("analyticsAPI", {
   analyzeSelected: (sessionRefs, provider, scope) => ipcRenderer.invoke("analytics-analyze-selected", sessionRefs, provider, scope),
   getDailyBuckets: (daysBack) => ipcRenderer.invoke("analytics-get-daily-buckets", daysBack),
   getWeeklyBuckets: (weeksBack) => ipcRenderer.invoke("analytics-get-weekly-buckets", weeksBack),
-  analyzeRanges: (ranges, provider) => ipcRenderer.invoke("analytics-analyze-ranges", ranges, provider),
+  analyzeRanges: (ranges, provider, rangeKind) => ipcRenderer.invoke("analytics-analyze-ranges", ranges, provider, rangeKind),
   getAnalysisProvider: () => ipcRenderer.invoke("analytics-get-analysis-provider"),
   getAnalysisOptions: () => ipcRenderer.invoke("analytics-get-analysis-options"),
   getOneLiners: (sessionIds) => ipcRenderer.invoke("analytics-get-oneliners", sessionIds),
