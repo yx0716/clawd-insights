@@ -4858,9 +4858,9 @@
     });
 
     function renderTimeline(data) {
-      if (currentView === "calendar") return renderCalendar(data);
+      if (currentView === "calendar") { renderCalendar(data); refreshTipAfterRender(); return; }
       const c = document.getElementById("timelineContainer"); const ss = data.sessions || [];
-      if (!ss.length) { c.innerHTML = `<div class="empty-state">${escapeHtml(t("noSessions"))}</div>`; return; }
+      if (!ss.length) { c.innerHTML = `<div class="empty-state">${escapeHtml(t("noSessions"))}</div>`; refreshTipAfterRender(); return; }
 
       // Auto-range (unless user overrode)
       const rangeStartTs = data.startTs, rangeEndTs = data.endTs;
@@ -4918,6 +4918,7 @@
         el.addEventListener("wheel", handleTimelineWheel, { passive: false });
         el.addEventListener("pointerdown", handleTimelinePointerDown);
       });
+      refreshTipAfterRender();
     }
 
     // ── Calendar (vertical week-grid) view ──
@@ -5363,17 +5364,38 @@
     }
 
     // ── Tooltip ──
-    function showTip(e) {
-      const t = document.getElementById("tooltip"), el = e.currentTarget;
+    // Blocks own their tooltip via mouseenter/mouseleave, but timeline
+    // re-renders (watcher refresh, analysis backfill, zoom) replace hovered
+    // nodes wholesale, so their mouseleave never fires. Two safety nets:
+    // the global mousemove hides the tip whenever the pointer isn't over a
+    // tip-bearing element, and refreshTipAfterRender re-resolves the tip
+    // against the rebuilt DOM right after each timeline render.
+    let lastMouseX = -1, lastMouseY = -1;
+    function showTipForEl(el, x, y) {
+      const t = document.getElementById("tooltip");
       const path = el.dataset.tipPath || "";
       const pathLine = path ? `<div class="tip-path">${path}</div>` : "";
       t.innerHTML = `<div class="tip-title">${el.dataset.tipTitle || ""}</div><div class="tip-detail">${el.dataset.tipDetail || ""}</div>${pathLine}`;
       t.style.display = "block";
-      posTip(e);
+      posTipAt(x, y);
     }
-    function posTip(e) { const t = document.getElementById("tooltip"); t.style.left = (e.clientX + 12) + "px"; t.style.top = (e.clientY - 10) + "px"; }
+    function showTip(e) { showTipForEl(e.currentTarget, e.clientX, e.clientY); }
+    function posTipAt(x, y) { const t = document.getElementById("tooltip"); t.style.left = (x + 12) + "px"; t.style.top = (y - 10) + "px"; }
     function hideTip() { document.getElementById("tooltip").style.display = "none"; }
-    document.addEventListener("mousemove", e => { const t = document.getElementById("tooltip"); if (t.style.display === "block") posTip(e); });
+    function refreshTipAfterRender() {
+      const t = document.getElementById("tooltip");
+      if (t.style.display !== "block") return;
+      const under = lastMouseX >= 0 ? document.elementFromPoint(lastMouseX, lastMouseY) : null;
+      const block = under ? under.closest("[data-tip-title]") : null;
+      if (block) showTipForEl(block, lastMouseX, lastMouseY); else hideTip();
+    }
+    document.addEventListener("mousemove", e => {
+      lastMouseX = e.clientX; lastMouseY = e.clientY;
+      const t = document.getElementById("tooltip");
+      if (t.style.display !== "block") return;
+      if (e.target instanceof Element && e.target.closest("[data-tip-title]")) posTipAt(e.clientX, e.clientY);
+      else hideTip();
+    });
 
     // ── Click → Analysis ──
     function onBlockClick(e) {
