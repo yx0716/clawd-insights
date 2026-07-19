@@ -47,6 +47,7 @@ docs/**
 !docs/releases/
 !docs/releases/release-v0.3.0.md
 !docs/releases/release-v0.4.0.md
+!docs/releases/release-v0.5.0.md
 !docs/releases/release-v0.5.5.md
 !docs/releases/release-v0.6.0.md
 !docs/releases/release-v0.6.1.md
