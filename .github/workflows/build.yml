@@ -37,9 +37,17 @@ jobs:
       - run: npm run fetch:sidecars -- --target darwin-x64,darwin-arm64
       - run: node scripts/verify-sidecar-binaries.js prebuild:mac
       # Signing + notarization activate automatically once the five repo
-      # secrets exist (docs/guides/release-signing.md); with them absent the
-      # empty env vars are ignored and the build stays unsigned, as today.
-      - run: npx electron-builder --mac --publish never
+      # secrets exist (docs/guides/release-signing.md). The two steps are
+      # mutually exclusive: a missing secret renders as an EMPTY env var, and
+      # electron-builder treats a defined-but-empty CSC_LINK as a certificate
+      # path ("not a file" hard error) — so the signing env must only be
+      # injected when the secret actually exists.
+      - name: Build (unsigned)
+        if: ${{ secrets.MAC_CSC_LINK == '' }}
+        run: npx electron-builder --mac --publish never
+      - name: Build (signed + notarized)
+        if: ${{ secrets.MAC_CSC_LINK != '' }}
+        run: npx electron-builder --mac --publish never
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
