@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 # clawd-insights
@@ -44,7 +46,7 @@ Every conversation leaves an **imprint**. No idea you tried, no bug you wrestled
 
 All data stays on your machine. AI analysis runs through your own local `claude` / `codex` CLI (or an API / Ollama backend you configure). Your conversations never touch a third party.
 
-> Currently focused on macOS. Windows/Linux may work, but they are not the primary supported environments yet. Requires Node.js.
+> Currently focused on macOS. Windows/Linux may work, but they are not the primary supported environments yet. Requires Node.js v18 or later.
 
 ## Quick Install
 
