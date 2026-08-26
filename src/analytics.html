@@ -452,15 +452,15 @@
 
     /* A mark carries its slot as a class rather than as inline colours, so the
        treatment repaints everything without re-rendering. */
-    .s1 { --block-bg: var(--s1-block); --block-wash: var(--s1-fill); --block-edge: var(--s1); --block-label: var(--s1-ink); }
-    .s2 { --block-bg: var(--s2-block); --block-wash: var(--s2-fill); --block-edge: var(--s2); --block-label: var(--s2-ink); }
-    .s3 { --block-bg: var(--s3-block); --block-wash: var(--s3-fill); --block-edge: var(--s3); --block-label: var(--s3-ink); }
-    .s4 { --block-bg: var(--s4-block); --block-wash: var(--s4-fill); --block-edge: var(--s4); --block-label: var(--s4-ink); }
-    .s5 { --block-bg: var(--s5-block); --block-wash: var(--s5-fill); --block-edge: var(--s5); --block-label: var(--s5-ink); }
-    .s6 { --block-bg: var(--s6-block); --block-wash: var(--s6-fill); --block-edge: var(--s6); --block-label: var(--s6-ink); }
-    .s7 { --block-bg: var(--s7-block); --block-wash: var(--s7-fill); --block-edge: var(--s7); --block-label: var(--s7-ink); }
-    .s8 { --block-bg: var(--s8-block); --block-wash: var(--s8-fill); --block-edge: var(--s8); --block-label: var(--s8-ink); }
-    .sother { --block-bg: var(--s-other-block); --block-wash: var(--s-other-fill); --block-edge: var(--s-other); --block-label: var(--s-other-ink); }
+    .s1 { --block-bg: var(--s1-block); --block-edge: var(--s1); --block-label: var(--s1-ink); }
+    .s2 { --block-bg: var(--s2-block); --block-edge: var(--s2); --block-label: var(--s2-ink); }
+    .s3 { --block-bg: var(--s3-block); --block-edge: var(--s3); --block-label: var(--s3-ink); }
+    .s4 { --block-bg: var(--s4-block); --block-edge: var(--s4); --block-label: var(--s4-ink); }
+    .s5 { --block-bg: var(--s5-block); --block-edge: var(--s5); --block-label: var(--s5-ink); }
+    .s6 { --block-bg: var(--s6-block); --block-edge: var(--s6); --block-label: var(--s6-ink); }
+    .s7 { --block-bg: var(--s7-block); --block-edge: var(--s7); --block-label: var(--s7-ink); }
+    .s8 { --block-bg: var(--s8-block); --block-edge: var(--s8); --block-label: var(--s8-ink); }
+    .sother { --block-bg: var(--s-other-block); --block-edge: var(--s-other); --block-label: var(--s-other-ink); }
 
 
     * {
@@ -1683,12 +1683,13 @@
       border-color: var(--accent);
     }
 
-    /* A card is the same session as a block on the timeline, so it wears that
-       session's project colour rather than the generic accent — the stripe on a
-       card and the bar above it are the same hue. */
+    /* Selection is a state, not an identity: which card you are looking at has
+       to look the same whatever project it belongs to, so it takes the chrome
+       accent. The project's own colour is already on the dot beside the title —
+       that is the mark that pairs a card with its bar on the timeline. */
     .evt-card.selected {
-      border-color: var(--block-edge);
-      background: var(--block-wash);
+      border-color: var(--accent);
+      background: var(--accent-light);
     }
 
     .evt-card.multi-selected {
@@ -1697,7 +1698,7 @@
     }
 
     .evt-card.analyzed {
-      border-left: 3px solid var(--block-edge);
+      border-left: 3px solid var(--accent);
       padding-left: 9px;
     }
 
@@ -2292,12 +2293,22 @@
       margin-bottom: 4px;
     }
 
+    /* The section rule and its icon are structure, not data. Giving them slot
+       colours put a second meaning on --s1..--s4: teal meant "project one" on
+       the timeline and "Context" here, two unrelated things that looked
+       related. They wear the chrome accent instead, the same one colour for
+       every section — the icon glyph and the heading do the distinguishing. */
     .analysis-section {
       background: var(--bg);
       border: 1px solid var(--border-light);
+      border-left: 3px solid var(--accent);
       border-radius: var(--radius-sm);
       padding: 10px 12px;
       margin-bottom: 8px;
+    }
+
+    .analysis-section-header .section-icon {
+      color: var(--accent);
     }
 
     .analysis-section-header {
@@ -5768,7 +5779,7 @@
                 : t("renameHintProject");
           const isChecked = selectedExportSessionIds.has(s.id);
           const scopeSelect = renderEventScopeSelect(s);
-          html += `<div class="evt-card ${projSlotClass(s.project || s.title || "unknown")}${selectedSessionId === s.id ? " selected" : ""}${isChecked ? " multi-selected" : ""}${isAnalyzed ? " analyzed" : ""}${isAnalyzing ? " analyzing" : ""}" data-sid="${s.id}" data-agent="${s.agent}">
+          html += `<div class="evt-card${selectedSessionId === s.id ? " selected" : ""}${isChecked ? " multi-selected" : ""}${isAnalyzed ? " analyzed" : ""}${isAnalyzing ? " analyzing" : ""}" data-sid="${s.id}" data-agent="${s.agent}">
         <div class="evt-check">
           <input type="checkbox" data-select-sid="${s.id}" ${isChecked ? "checked" : ""} aria-label="Select session">
         </div>
@@ -6914,8 +6925,8 @@
 
       // STAR: Situation + Task section (detail mode; brief results skip it)
       if (r.situation || r.task) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s1)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s1)">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
+        h += '<div class="analysis-section">';
+        h += `<div class="analysis-section-header"><span class="section-icon">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
         h += '<ul class="analysis-insights">';
         if (r.situation) h += `<li><strong>${escapeHtml(t("starSituation"))}</strong>${escapeHtml("：")}${escapeHtml(r.situation)}</li>`;
         if (r.task) h += `<li><strong>${escapeHtml(t("starTask"))}</strong>${escapeHtml("：")}${escapeHtml(r.task)}</li>`;
@@ -6924,8 +6935,8 @@
 
       // STAR: Actions section
       if (Array.isArray(r.actions) && r.actions.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s2)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s2)">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
+        h += '<div class="analysis-section">';
+        h += `<div class="analysis-section-header"><span class="section-icon">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.actions.forEach(a => { h += `<li>${escapeHtml(String(a))}</li>`; });
         h += '</ul></div>';
@@ -6933,8 +6944,8 @@
 
       // Outcomes section (STAR: Result)
       if (r.outcomes && r.outcomes.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s3)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s3)">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
+        h += '<div class="analysis-section">';
+        h += `<div class="analysis-section-header"><span class="section-icon">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.outcomes.forEach(o => { h += `<li>${renderOutcomeItem(o)}</li>`; });
         h += '</ul></div>';
@@ -6942,8 +6953,8 @@
 
       // Time Breakdown section
       if (r.timeBreakdown && r.timeBreakdown.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s4)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s4)">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
+        h += '<div class="analysis-section">';
+        h += `<div class="analysis-section-header"><span class="section-icon">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
         h += '<div class="analysis-breakdown">';
         // Same slot classes as a timeline block, so this bar carries the same
         // weight of colour as the timeline above it instead of a solid one.
