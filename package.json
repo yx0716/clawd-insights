@@ -22,6 +22,7 @@
     "prebuild:linux": "node scripts/verify-sidecar-binaries.js",
     "prebuild:all": "node scripts/verify-sidecar-binaries.js",
     "test": "node test/run-tests.js",
+    "readme-shots": "node scripts/readme-shots/build.js && electron scripts/readme-shots/capture.js && node scripts/readme-shots/assemble.js",
     "create-theme": "node scripts/create-theme.js",
     "export-agent-icons": "node scripts/export-agent-icons.js",
     "install:claude-hooks": "node hooks/install.js",
