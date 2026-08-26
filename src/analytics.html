@@ -419,19 +419,48 @@
       --gemini-color: var(--s5);
     }
 
-    /* ── Slot → block roles ──────────────────────────────────────────────────
-       A block carries its slot as a class rather than as inline colours, so the
-       treatments above can repaint every block without re-rendering. The same
-       classes dress the time-breakdown bar in the analysis panel. */
-    .s1 { --block-fill: var(--s1-fill); --block-tint: var(--s1-tint); --block-edge: var(--s1); --block-label: var(--s1-ink); }
-    .s2 { --block-fill: var(--s2-fill); --block-tint: var(--s2-tint); --block-edge: var(--s2); --block-label: var(--s2-ink); }
-    .s3 { --block-fill: var(--s3-fill); --block-tint: var(--s3-tint); --block-edge: var(--s3); --block-label: var(--s3-ink); }
-    .s4 { --block-fill: var(--s4-fill); --block-tint: var(--s4-tint); --block-edge: var(--s4); --block-label: var(--s4-ink); }
-    .s5 { --block-fill: var(--s5-fill); --block-tint: var(--s5-tint); --block-edge: var(--s5); --block-label: var(--s5-ink); }
-    .s6 { --block-fill: var(--s6-fill); --block-tint: var(--s6-tint); --block-edge: var(--s6); --block-label: var(--s6-ink); }
-    .s7 { --block-fill: var(--s7-fill); --block-tint: var(--s7-tint); --block-edge: var(--s7); --block-label: var(--s7-ink); }
-    .s8 { --block-fill: var(--s8-fill); --block-tint: var(--s8-tint); --block-edge: var(--s8); --block-label: var(--s8-ink); }
-    .sother { --block-fill: var(--s-other-fill); --block-tint: var(--s-other-tint); --block-edge: var(--s-other); --block-label: var(--s-other-ink); }
+    /* ── One fill for every large mark ───────────────────────────────────────
+       --sN-block is the fill a large area is painted with: timeline block,
+       calendar block, pie wedge, breakdown segment, trend bar. Defining it once
+       per treatment is what keeps the panel to a single colour system — change
+       the treatment and every one of them moves together. Small marks (legend
+       dots, project and agent dots) deliberately stay at full identity
+       strength: a 6px dot needs the saturation a full-width fill does not. */
+    :root {
+      --s1-block: var(--s1-tint);
+      --s2-block: var(--s2-tint);
+      --s3-block: var(--s3-tint);
+      --s4-block: var(--s4-tint);
+      --s5-block: var(--s5-tint);
+      --s6-block: var(--s6-tint);
+      --s7-block: var(--s7-tint);
+      --s8-block: var(--s8-tint);
+      --s-other-block: var(--s-other-tint);
+    }
+
+    [data-blocks="cap"] {
+      --s1-block: var(--s1-fill);
+      --s2-block: var(--s2-fill);
+      --s3-block: var(--s3-fill);
+      --s4-block: var(--s4-fill);
+      --s5-block: var(--s5-fill);
+      --s6-block: var(--s6-fill);
+      --s7-block: var(--s7-fill);
+      --s8-block: var(--s8-fill);
+      --s-other-block: var(--s-other-fill);
+    }
+
+    /* A mark carries its slot as a class rather than as inline colours, so the
+       treatment repaints everything without re-rendering. */
+    .s1 { --block-bg: var(--s1-block); --block-wash: var(--s1-fill); --block-edge: var(--s1); --block-label: var(--s1-ink); }
+    .s2 { --block-bg: var(--s2-block); --block-wash: var(--s2-fill); --block-edge: var(--s2); --block-label: var(--s2-ink); }
+    .s3 { --block-bg: var(--s3-block); --block-wash: var(--s3-fill); --block-edge: var(--s3); --block-label: var(--s3-ink); }
+    .s4 { --block-bg: var(--s4-block); --block-wash: var(--s4-fill); --block-edge: var(--s4); --block-label: var(--s4-ink); }
+    .s5 { --block-bg: var(--s5-block); --block-wash: var(--s5-fill); --block-edge: var(--s5); --block-label: var(--s5-ink); }
+    .s6 { --block-bg: var(--s6-block); --block-wash: var(--s6-fill); --block-edge: var(--s6); --block-label: var(--s6-ink); }
+    .s7 { --block-bg: var(--s7-block); --block-wash: var(--s7-fill); --block-edge: var(--s7); --block-label: var(--s7-ink); }
+    .s8 { --block-bg: var(--s8-block); --block-wash: var(--s8-fill); --block-edge: var(--s8); --block-label: var(--s8-ink); }
+    .sother { --block-bg: var(--s-other-block); --block-wash: var(--s-other-fill); --block-edge: var(--s-other); --block-label: var(--s-other-ink); }
 
 
     * {
@@ -1052,7 +1081,7 @@
          is to show how long something took, and length reads best off a filled
          extent; an outlined pale box reads as a container instead. The
          surface-coloured ring keeps touching sessions apart. */
-      background: var(--block-tint);
+      background: var(--block-bg);
       color: var(--block-label);
       border: 1px solid transparent;
       box-shadow: 0 0 0 1.5px var(--bg-inset);
@@ -1068,7 +1097,6 @@
        row of tick marks once a lane is busy. */
     [data-blocks="cap"] .time-block,
     [data-blocks="cap"] .calendar-block {
-      background: var(--block-fill);
       border-left: 3px solid var(--block-edge);
     }
 
@@ -1244,7 +1272,7 @@
       font-weight: 500;
       overflow: hidden;
       cursor: pointer;
-      background: var(--block-tint);
+      background: var(--block-bg);
       color: var(--block-label);
       border: 1px solid transparent;
       box-shadow: 0 0 0 1.5px var(--bg-inset);
@@ -1459,7 +1487,9 @@
     .bar {
       width: 100%;
       border-radius: 4px 4px 0 0;
-      background: var(--s1);
+      /* One series, and a large fill — so it takes the same weight as a block
+         rather than the full-strength slot colour. */
+      background: var(--s1-block);
       min-height: 0;
       transition: height .3s;
     }
@@ -1653,9 +1683,12 @@
       border-color: var(--accent);
     }
 
+    /* A card is the same session as a block on the timeline, so it wears that
+       session's project colour rather than the generic accent — the stripe on a
+       card and the bar above it are the same hue. */
     .evt-card.selected {
-      border-color: var(--accent);
-      background: var(--accent-light);
+      border-color: var(--block-edge);
+      background: var(--block-wash);
     }
 
     .evt-card.multi-selected {
@@ -1664,7 +1697,7 @@
     }
 
     .evt-card.analyzed {
-      border-left: 3px solid var(--accent);
+      border-left: 3px solid var(--block-edge);
       padding-left: 9px;
     }
 
@@ -2213,9 +2246,9 @@
     }
 
     .analysis-breakdown .seg {
-      /* Matches a timeline block: a tint fill with the slot's own dark ink. A
+      /* Matches a timeline block: the same fill and the slot's own dark ink. A
          solid fill here read as a different colour system from the timeline. */
-      background: var(--block-tint);
+      background: var(--block-bg);
       color: var(--block-label);
       display: flex;
       align-items: center;
@@ -4771,6 +4804,9 @@
     function sessDur(s) { return s.blocks && s.blocks.length ? s.blocks.reduce((a, b) => a + (b.end - b.start), 0) : s.firstTs && s.lastTs ? s.lastTs - s.firstTs : 0; }
     function projSlot(name) { return projectSlotMap[name] || "-other"; }
     function projColor(name) { return `var(--s${projSlot(name)})`; }
+    // The fill a large mark is painted with — follows the current block
+    // treatment, so a pie wedge always carries the same weight as the timeline.
+    function projBlockFill(name) { return `var(--s${projSlot(name)}-block)`; }
     // The class carries every block role at once (fill, tint, edge, both inks),
     // so the treatment can be swapped in CSS without re-rendering the timeline.
     function projSlotClass(name) { const s = projSlot(name); return s === "-other" ? "sother" : `s${s}`; }
@@ -5618,8 +5654,19 @@
       document.getElementById("distCenter").textContent = fmtDur(total);
       if (!total) { document.getElementById("distPie").style.background = "var(--border)"; document.getElementById("distLegend").innerHTML = ""; return; }
       const entries = Object.entries(projDur).sort((a, b) => b[1] - a[1]);
+      // A 0.6% surface-coloured gap between wedges — roughly 2px at this radius.
+      // Tinted fills sit close enough together that touching wedges would merge;
+      // the gap does the separating that a heavier fill used to do.
+      const GAP = entries.length > 1 ? 0.6 : 0;
       let grad = [], cum = 0;
-      for (const [p, dur] of entries) { const pct = (dur / total) * 100; grad.push(`${projColor(p)} ${cum}% ${cum + pct}%`); cum += pct; }
+      for (const [p, dur] of entries) {
+        const pct = (dur / total) * 100;
+        const end = cum + pct;
+        const fillEnd = Math.max(cum, end - GAP);
+        grad.push(`${projBlockFill(p)} ${cum}% ${fillEnd}%`);
+        if (fillEnd < end) grad.push(`var(--bg-card) ${fillEnd}% ${end}%`);
+        cum = end;
+      }
       document.getElementById("distPie").style.background = `conic-gradient(${grad.join(",")})`;
       const MAX_VISIBLE = 5;
       let legendHtml = entries.slice(0, MAX_VISIBLE).map(([p, dur]) => {
@@ -5721,7 +5768,7 @@
                 : t("renameHintProject");
           const isChecked = selectedExportSessionIds.has(s.id);
           const scopeSelect = renderEventScopeSelect(s);
-          html += `<div class="evt-card${selectedSessionId === s.id ? " selected" : ""}${isChecked ? " multi-selected" : ""}${isAnalyzed ? " analyzed" : ""}${isAnalyzing ? " analyzing" : ""}" data-sid="${s.id}" data-agent="${s.agent}">
+          html += `<div class="evt-card ${projSlotClass(s.project || s.title || "unknown")}${selectedSessionId === s.id ? " selected" : ""}${isChecked ? " multi-selected" : ""}${isAnalyzed ? " analyzed" : ""}${isAnalyzing ? " analyzing" : ""}" data-sid="${s.id}" data-agent="${s.agent}">
         <div class="evt-check">
           <input type="checkbox" data-select-sid="${s.id}" ${isChecked ? "checked" : ""} aria-label="Select session">
         </div>
