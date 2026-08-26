@@ -1,11 +1,8 @@
-
-
 <div align="center">
 
 # clawd-insights
-## Your agents do the work. You keep the knowledge.
 
-**A local-first dashboard that records and replays your AI coding sessions**
+**A local-first session analysis & review dashboard for your AI agents**
 
 > "Hello Clawd, it's time for your weekly report"
 
@@ -40,33 +37,51 @@
 </table>
 
 
-**Clawd Insights automatically scans the conversations you've already had with Claude Code, Claude Internal, tclaude, Codex CLI, Cursor and other agents, and turns them into a timeline plus AI-generated session summaries.** No more scrolling through endless chat history — it builds the knowledge cards for you.
+**Clawd Insights is a session recording & review dashboard for your agents.** It automatically scans the work your local agents — **Claude Code, Codex, OpenClaw, tclaude, Cursor** and more — have already done, and turns it into a timeline with an AI-generated summary per session. Got tokens to spare? It can also digest every local agent conversation into your weekly work report.
 
-Every conversation leaves an **imprint**. No idea you tried, no bug you wrestled with, no decision you made together with the Agent is ever wasted — they all come back into view in the **Analytics Dashboard**. Trace back what happened, review how it went, keep what you learned — instead of leaving it buried in a dozen closed terminal tabs.
+Analysis data always stays on your machine. Session analysis runs through your own local `claude` / `codex` CLI (or another API backend you configure) — no third party ever sees it.
 
-All data stays on your machine. AI analysis runs through your own local `claude` / `codex` CLI (or an API / Ollama backend you configure). Your conversations never touch a third party.
-
-> Currently focused on macOS. Windows/Linux may work, but they are not the primary supported environments yet. Requires Node.js v18 or later.
+> Currently macOS-first. Windows/Linux support is preliminary — issue reports are welcome. Requires Node.js v18 or later.
 
 ## Quick Install
 
+**Option 1: command line**
+
 ```bash
-git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
+git clone https://github.com/yx0716/clawd-insights.git  # grab the source
+cd clawd-insights && npm install # install from source
+npm start # run it
 ```
 
-A small crab appears on your desktop — on macOS, right-click it to open the **Analytics Dashboard**. For provider setup and analysis workflows, see [Getting Started](#getting-started) below.
+**Option 2: feed the prompt to your local agent, and let it do the install**
+
+Don't feel like wiring up the environment by hand? Paste this whole block into your local agent:
+
+```text
+Install clawd-insights for me (a local agent session recording & review dashboard, repo: https://github.com/yx0716/clawd-insights):
+1. First confirm git, node and npm are all available. If anything is missing, stop and tell me how to install it — don't improvise.
+2. In a suitable directory (default ~/clawd-insights; if it already exists, ask me first), run:
+   git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install
+3. Run npm start. Note it is a long-running desktop app — start it in the background; don't block in the foreground waiting for it to exit.
+4. Once it starts, a pixel crab should appear on the desktop — seeing it means the install succeeded.
+5. If any step fails, send me the exact error output and propose a fix — apply it only after I confirm.
+6. Finally, tell me which directory it's installed in and how to start it next time.
+```
+
+Once it starts, a little crab appears on your desktop — right-click it and open the **📊 Session Review Dashboard** to get going.
+
 
 ## Features
 
 | Capability | What you get |
 |---|---|
-| **Timeline view** | Visualize every session by date / project / agent / duration — at a glance, see when you worked, on what, and for how long |
-| **Local history scan** | Reads `~/.claude/projects/`, `~/.claude-internal/projects/`, `~/.tclaude/projects/`, `~/.codex/sessions/`, `~/.cursor/projects/` directly. No upload, no telemetry |
-| **AI session review** | Per-session summary from the *user's* point of view: what you were trying to do, what you walked away with, key topics, time breakdown |
-| **Flexible backends** | Local `claude` CLI, local `codex` CLI, or fall back to a configured API provider / Ollama — your choice, your keys. Add any number of **custom OpenAI-compatible endpoints** (Zhipu AI, DeepSeek, OpenRouter…) for cheap session analysis |
-| **Batch pre-analysis** | Pre-compute summaries for recent sessions and reuse provider-aware cached results |
-| **Cost tracking** | See token usage and cost per analysis run |
-| **Quick access** | Open from the tray menu, the right-click menu on the desktop pet, or a global shortcut |
+| **Timeline view** | Visualize every session by date / project / agent — a clear, global picture of what you've been doing |
+| **Calendar view** | A calendar layout alongside the timeline, one click to switch |
+| **Local history scan** | Reads local session records (Claude Code / Claude Internal / tclaude / Codex / Cursor / OpenClaw / opencode / Gemini CLI / Qwen Code) — nothing uploaded, no privacy risk |
+| **AI session review** | Summarizes each conversation from **your point of view**: what you wanted solved, what the AI delivered, which tricks are worth reusing. Two depths — a quick digest, or a deep dive structured by the **STAR** method (Situation–Task–Action–Result) |
+| **Daily / weekly reports** | One click at the top of the dashboard generates a daily or weekly report for the selected time range |
+| **Batch pre-analysis** | Pre-generate summaries for recent sessions in bulk; provider-scoped caching makes them reusable |
+| **Cost tracking** | Shows token usage and cost for every AI analysis |
 
 ### Usage examples
 
@@ -96,108 +111,50 @@ A small crab appears on your desktop — on macOS, right-click it to open the **
 ### 1. Install and run
 
 ```bash
-git clone https://github.com/yx0716/clawd-insights.git && cd clawd-insights && npm install && npm start
+git clone https://github.com/yx0716/clawd-insights.git
+cd clawd-insights && npm install
+npm start
 ```
 
-Once it launches, a small crab (the default theme) appears on your desktop — that's the Clawd pet, and **every entry point to the dashboard goes through it**.
+Once it launches, a small crab appears at the bottom-right of your desktop — it's the main entry point for session review.
 
-### 2. Open the Analytics Dashboard
+### 2. Open the Session Review Dashboard
 
 There are three ways to open it — pick whichever feels natural:
 
-- **Right-click the desktop pet** → choose **Analytics Dashboard** from the context menu
-- **Click the tray icon** (menu bar on macOS) → **Analytics Dashboard**
+- **Right-click the desktop pet** → choose **📊 Session Review Dashboard** from the context menu
+- **Click the tray icon** (menu bar on macOS) → **📊 Session Review Dashboard**
 - **Keyboard shortcut**: macOS `⌘ + Shift + Option + A`
 
 <p align="center">
-  <img src="assets/screenshot-dashboard-menu.gif" width="720" alt="Right-click menu showing Analytics Dashboard">
+  <img src="assets/screenshot-dashboard-menu.gif" width="720" alt="Right-click menu showing the Session Review Dashboard">
 </p>
 
-The first time you open it, you'll see your timeline immediately — it just reads the session logs already on your disk. **No setup required for that part.**
 
-### 3. Configure an AI Provider for session summaries
+### 3. Configure an analysis model to enable smart session review
 
-The timeline works out of the box. But to make the dashboard automatically **generate a recap summary for each session**, you need to point it at something that can call a large language model — an **AI Provider** (the analysis backend). There are three options:
+The session timeline works out of the box — nothing to configure. Smart session summaries, though, need a model behind them. There are three ways to provide one:
 
 | Provider type | What it is | Setup | Best for |
 |---|---|---|---|
-| **Local CLI** *(recommended)* | Reuses the `claude` (Claude Code) or `codex` CLI you already have installed. Uses your existing subscription, no extra API charges. | **Nothing — auto-detected** | Anyone already using Claude Code or Codex — zero overhead |
-| **API key** | An API key from Anthropic, OpenAI, or another provider. Pay-per-token. | Paste your key into the dashboard settings | Users without a local CLI who don't mind a small token cost |
-| **Ollama** | A locally-hosted open model server (e.g. Ollama). | Point the dashboard at your Ollama endpoint | Fully offline, never sends data to the cloud |
+| **Local CLI** *(recommended)* | Reuses the `claude` (Claude Code) or `codex` CLI already installed on your machine | **None — auto-detected** | Anyone with a Claude Code / Codex / Cursor subscription — runs on the quota you already pay for, no extra cost |
+| **API key** | An API key from Anthropic, OpenAI, etc. — pay-per-token | Paste the key into the dashboard settings | No local CLI installed, and happy to pay a little for analysis |
+| **Ollama** | A locally-hosted open-model server (e.g. Ollama) | Point it at your local endpoint | Fully offline — never sends anything to the cloud |
 
-> **💡 Strong recommendation**: if you already have Claude Code or Codex CLI installed, **do nothing** — the dashboard auto-detects them and reuses your existing subscription quota. Cheapest and easiest path.
+> **💡 Strongly recommended**: if Claude Code or Codex CLI is already on your machine, the dashboard auto-detects it and reuses your existing subscription quota — the simplest, most cost-effective option.
 
-If you don't want to configure a provider right now, click **Skip** on the startup screen. You can always set it up later in the settings.
-
+You can switch the analysis provider at any time in settings.
 <p align="center">
   <img src="assets/screen-shot-select-AI-provider.gif" width="720" alt="Selecting and configuring an AI Provider in action">
 </p>
 
-### 4. Where to configure / change the provider later
+Once configured, you can analyze any session you want to review — or a specific time slice of one (useful when a session stretches over a long period with many breaks). Analysis comes in two depths: the quick version gives a digest overview, while the deep version breaks the work down with the **STAR** method (Situation–Task–Action–Result), ready to feed a project retrospective.
 
-If you skipped step 3, or you want to switch providers later, you can adjust it via **AI Provider Settings** at any time:
-
-Open the Analytics Dashboard → click the **gear icon ⚙** in the top-right → **AI Provider Settings** dialog appears.
-
-<p align="center">
-  <img src="assets/screenshot-ai-provider-settings.gif" width="720" alt="AI Provider Settings dialog">
-</p>
-
-The dialog has two sections:
-
-- **LOCAL CLI DETECTION** — shows whether the dashboard found `claude` and `codex` on your machine. Green dot = found (with version + path); red dot = missing. **If you see green dots, everything is working — proceed to the next step.**
-- **API PROVIDER (FALLBACK)** — if no local CLI is installed, you can use an API key for AI session analysis (Claude / OpenAI / Ollama / …) — just paste the key and you're set.
-- **CUSTOM ANALYSIS PROVIDERS** — add any number of OpenAI-compatible endpoints (Zhipu AI, DeepSeek, OpenRouter, university APIs, etc.) as dedicated analysis backends. See below.
-
-> **Tip**: if your `claude` or `codex` was installed via **NVM, fnm, or Volta**, auto-detection may miss it. Run `which claude` or `which codex` in your terminal and paste the output into the **Claude binary path** / **Codex binary path** override field.
-
-### Custom Analysis Providers
-
-You can add cheap, dedicated API endpoints specifically for session analysis — keeping your expensive coding models for actual work.
-
-**Why this matters**: your coding sessions use Claude Code or Codex (subscription or pay-per-token). Session *analysis* is a much simpler task — a `glm-4-flash` call costs ~$0.0001 vs ~$0.01 for a Sonnet call. Adding a cheap custom provider lets you analyze hundreds of sessions for pennies.
-
-#### Adding a custom provider
-
-1. Open the Analytics Dashboard → click the **gear icon ⚙** → **AI Provider Settings**
-2. Scroll to **Custom Analysis Providers** → click **+ Add Provider**
-3. Fill in the form:
-   - **Provider Name** — a friendly label (e.g. `Zhipu AI GLM-4-Flash`)
-   - **Type** — `OpenAI-Compatible` for most providers; `Claude` for Anthropic-format; `Ollama` for local
-   - **API Endpoint** — your provider's base URL (the `/v1/chat/completions` path is appended automatically for OpenAI-compatible)
-   - **API Key** — your key (stored locally in your prefs file, never uploaded)
-   - **Model** — the model identifier
-4. Click **Test Connection** to verify, then **Save**
-
-The provider immediately appears in the **provider pill** dropdown on every session card — click it to switch which backend analyzes that session.
-
-#### Popular cheap providers
-
-| Provider | Type | Endpoint | Recommended model |
-|---|---|---|---|
-| **Zhipu AI (智谱)** | OpenAI-Compatible | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
-| **DeepSeek** | OpenAI-Compatible | `https://api.deepseek.com` | `deepseek-chat` |
-| **OpenRouter** | OpenAI-Compatible | `https://openrouter.ai/api/v1` | `google/gemini-flash-1.5` |
-| **Ollama (local)** | Ollama | `http://localhost:11434` | `qwen2.5:7b` |
-| **University API** | OpenAI-Compatible | your institution's endpoint | `gpt-4o-mini` |
-
-### Quick self-check
-
-1. You have used `Claude Code`, `Codex`, or `Cursor Agent` locally, and it is still available now
-2. Local session history exists
-
-**Quick check**
-
-- Open Settings and look at `Local CLI Detection`
-- Switch to `Week` or `Month` and check whether the timeline shows any sessions
-
-### 5. Start AI session analysis
+### 4. Start AI session analysis
 
 #### Method A: Batch pre-analysis (auto-prompted on dashboard open)
 
-Every time you open the Analytics Dashboard, if there are unanalyzed sessions, the dashboard **automatically pops up a dialog** — `Pre-analyze Sessions` — letting you analyze a whole time range in one go.
-
-> **Note**: the dashboard's own internal AI summary jobs are automatically excluded from the timeline and session stats. Even if you launch `npm start` from some other directory, those internal analysis runs will not be counted as work sessions.
+Every time you open the dashboard, if there are unanalyzed sessions, it **automatically pops up a dialog** — `Pre-analyze Sessions` — letting you analyze every session in a time range in one go.
 
 Available scopes:
 
@@ -206,17 +163,15 @@ Available scopes:
 - **Week** — the last 7 days
 - **Custom** — your last N sessions
 
-Pick a scope, hit confirm, and the dashboard runs through them in the background, showing an `Analyzing 1/N`, `2/N`, ... progress bar. **Already-analyzed sessions are auto-skipped** (per-provider cache), so re-clicking never wastes tokens.
+Pick a scope, hit confirm, and the dashboard shows an `Analyzing 1/N`, `2/N`, ... progress bar while working through them in the background. **Already-analyzed sessions are auto-skipped** (per-provider cache), so re-clicking never wastes tokens.
 
 <p align="center">
   <img src="assets/screen-shot-select-AI-provider.gif" width="720" alt="Batch pre-analysis and per-session analysis in action">
 </p>
 
-> **Best for**: first-time users, monthly retrospectives, catching up on a backlog.
-
 #### Method B: Click a single session (from the timeline or the sessions list)
 
-If you **only want to review one specific session**, no batch needed, just click it:
+If you **only want to review one specific session**, no batch needed — just click it:
 
 - **From the timeline** — in Timeline view, click any colored block (each block is a session) and the detail card slides out on the right
 - **From the Sessions list** — click any session card in the right-side list
@@ -230,15 +185,33 @@ Either way, the dashboard will:
   <img src="assets/screenshot-ai-analysis.gif" width="720" alt="Triggering single-session analysis from the timeline">
 </p>
 
-> **Best for**: you already know which session you want to revisit, ad-hoc lookups, day-to-day "scrolling through" history.
-
-**In summary:**
-
-- **First time using it** → run **Method A on Week** once, or pick a custom range/count for the sessions you want analyzed. Takes a few minutes and costs more tokens upfront, but every record opens instantly afterwards.
-- **Daily use** → after that initial batch, switch to **Method B — pick specific sessions** as needed. Only fresh ones require a manual trigger.
-- **Token-sensitive** → use **Method B on demand**. Only analyze the sessions you actually want to read — zero wasted tokens.
-
 > **About cost**: Local CLI (Claude Code / Codex subscription) analysis **uses your existing subscription quota** — typically no extra charges. In API key mode, the dashboard shows **token usage and cost** in the top status bar after each analysis completes, so you always know what you're spending.
+
+### 5. Change the analysis model settings
+
+If you skipped step 3, or want to switch providers later, adjust it via **AI Provider Settings**:
+
+Open the dashboard → click the **gear icon ⚙** in the top-right → the **AI Provider Settings** dialog appears.
+
+<p align="center">
+  <img src="assets/screenshot-ai-provider-settings.gif" width="720" alt="AI Provider Settings dialog">
+</p>
+
+
+- **LOCAL CLI DETECTION** — shows whether the dashboard found `claude` and `codex` on your machine. Green dot = found (with version + path); red dot = missing. **Green dots mean everything is working — carry on.**
+- **API PROVIDER (FALLBACK)** — if no local CLI is installed, you can run AI session analysis with an API key (Claude / OpenAI / Ollama / …) — just paste the key.
+
+> **Tip**: if your `claude` or `codex` was installed via **NVM, fnm, or Volta**, auto-detection may miss it. Run `which claude` or `which codex` in your terminal and paste the output into the **Claude binary path** / **Codex binary path** field.
+
+### Pre-flight checklist
+
+1. You have used `Claude Code`, `Codex`, or `Cursor Agent` locally, and it still works
+2. Local session history exists (it does by default)
+
+**Quick check**
+
+- Open Settings and look at `Local CLI Detection`
+- Switch to `Week` or `Month` and check whether the timeline shows any sessions
 
 ## How it works
 
@@ -249,7 +222,7 @@ Your Agent                              Clawd
   │                                      │
   ├── live events ──→ hook / poll / plugin ──→ 🦀 pet animation
   │                                      │
-  └── chat history ──→ local JSONL files ────→ 📊 insights dashboard
+  └── chat history ──→ local JSONL files ────→ 📊 session review dashboard
 ```
 
 ### Path ①: Live awareness → pet animation
