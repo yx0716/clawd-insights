@@ -72,7 +72,7 @@
       --s7: #aa6f05;
       --s8: #a95299;
 
-      /* pale fills — the edge above carries the identity */
+      /* wash fill — nearly the surface; the edge carries the identity */
       --s1-fill: #c1f2ed;
       --s2-fill: #eae0ff;
       --s3-fill: #ffded3;
@@ -82,7 +82,17 @@
       --s7-fill: #fce2c2;
       --s8-fill: #fcdaf4;
 
-      /* label ink — a dark step of the slot's own hue */
+      /* tint fill — dense enough to read as a filled bar with no edge */
+      --s1-tint: #8ce9e2;
+      --s2-tint: #ddccff;
+      --s3-tint: #ffc7b4;
+      --s4-tint: #95e3ff;
+      --s5-tint: #ffc4ca;
+      --s6-tint: #c0d7ff;
+      --s7-tint: #fbcd94;
+      --s8-tint: #fcc0ee;
+
+      /* label ink on a wash or tint fill — a far step of the slot's own hue */
       --s1-ink: #005450;
       --s2-ink: #503b70;
       --s3-ink: #6f341f;
@@ -91,10 +101,21 @@
       --s6-ink: #2c4678;
       --s7-ink: #643e00;
       --s8-ink: #64335b;
+
+      /* label ink when the block is painted the identity colour itself */
+      --s1-on: #15100D;
+      --s2-on: #FFFFFF;
+      --s3-on: #FFFFFF;
+      --s4-on: #15100D;
+      --s5-on: #FFFFFF;
+      --s6-on: #15100D;
+      --s7-on: #15100D;
+      --s8-on: #FFFFFF;
       --s-other: #8E8A82;
       --s-other-fill: #e8e6e2;
+      --s-other-tint: #d8d5d0;
       --s-other-ink: #494744;
-      --block-ink: var(--s1-ink);
+      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -104,7 +125,7 @@
       --gemini-color: var(--s5);
     }
 
-    /* Every other scheme, one block each. A block sets the same token roles at
+    /* The other schemes, one block each. A block sets the same token roles at
        different values — nothing outside this range knows a scheme exists. The
        attribute goes on <html>; these match :root's specificity and come after
        it, so the last one wins. */
@@ -167,7 +188,7 @@
       --s7: #aa6f05;
       --s8: #a95299;
 
-      /* pale fills — the edge above carries the identity */
+      /* wash fill — nearly the surface; the edge carries the identity */
       --s1-fill: #c1f2ed;
       --s2-fill: #eae0ff;
       --s3-fill: #ffded3;
@@ -177,7 +198,17 @@
       --s7-fill: #fce2c2;
       --s8-fill: #fcdaf4;
 
-      /* label ink — a dark step of the slot's own hue */
+      /* tint fill — dense enough to read as a filled bar with no edge */
+      --s1-tint: #8ce9e2;
+      --s2-tint: #ddccff;
+      --s3-tint: #ffc7b4;
+      --s4-tint: #95e3ff;
+      --s5-tint: #ffc4ca;
+      --s6-tint: #c0d7ff;
+      --s7-tint: #fbcd94;
+      --s8-tint: #fcc0ee;
+
+      /* label ink on a wash or tint fill — a far step of the slot's own hue */
       --s1-ink: #005450;
       --s2-ink: #503b70;
       --s3-ink: #6f341f;
@@ -186,10 +217,21 @@
       --s6-ink: #2c4678;
       --s7-ink: #643e00;
       --s8-ink: #64335b;
+
+      /* label ink when the block is painted the identity colour itself */
+      --s1-on: #15100D;
+      --s2-on: #FFFFFF;
+      --s3-on: #FFFFFF;
+      --s4-on: #15100D;
+      --s5-on: #FFFFFF;
+      --s6-on: #15100D;
+      --s7-on: #15100D;
+      --s8-on: #FFFFFF;
       --s-other: #8E8A82;
       --s-other-fill: #e8e6e2;
+      --s-other-tint: #d8d5d0;
       --s-other-ink: #494744;
-      --block-ink: var(--s1-ink);
+      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -257,7 +299,7 @@
       --s7: #4f8c41;
       --s8: #497ac3;
 
-      /* pale fills — the edge above carries the identity */
+      /* wash fill — nearly the surface; the edge carries the identity */
       --s1-fill: #c0f1f3;
       --s2-fill: #ffddd6;
       --s3-fill: #c7edff;
@@ -267,7 +309,17 @@
       --s7-fill: #d5efd0;
       --s8-fill: #d8e8ff;
 
-      /* label ink — a dark step of the slot's own hue */
+      /* tint fill — dense enough to read as a filled bar with no edge */
+      --s1-tint: #8ae8ed;
+      --s2-tint: #ffc6ba;
+      --s3-tint: #9fe1ff;
+      --s4-tint: #efc4fd;
+      --s5-tint: #9ae9ca;
+      --s6-tint: #d3d0ff;
+      --s7-tint: #b7e5ad;
+      --s8-tint: #bdd8ff;
+
+      /* label ink on a wash or tint fill — a far step of the slot's own hue */
       --s1-ink: #005356;
       --s2-ink: #703327;
       --s3-ink: #004f69;
@@ -276,190 +328,21 @@
       --s6-ink: #463e75;
       --s7-ink: #2b5322;
       --s8-ink: #274777;
+
+      /* label ink when the block is painted the identity colour itself */
+      --s1-on: #15100D;
+      --s2-on: #FFFFFF;
+      --s3-on: #15100D;
+      --s4-on: #FFFFFF;
+      --s5-on: #15100D;
+      --s6-on: #FFFFFF;
+      --s7-on: #15100D;
+      --s8-on: #15100D;
       --s-other: #8A929B;
       --s-other-fill: #e3e6ea;
+      --s-other-tint: #d2d6db;
       --s-other-ink: #45484b;
-      --block-ink: var(--s1-ink);
-
-      /* agent identity — same slots */
-      --claude-color: var(--s1);
-      --codex-color: var(--s2);
-      --cursor-color: var(--s3);
-      --copilot-color: var(--s4);
-      --gemini-color: var(--s5);
-    }
-
-    /* ── Kiln 窑 · solid · chalk ── */
-    [data-scheme="kiln"] {
-      color-scheme: light;
-
-      /* surfaces */
-      --bg: #fcf7f6;
-      --bg-card: #fefdfd;
-      --bg-inset: #f9efee;
-
-      /* ink */
-      --text: #241F1A;
-      --text-secondary: #665D53;
-      --text-muted: #8E8478;
-
-      /* lines */
-      --border: #f1dfdc;
-      --border-light: #f7efee;
-
-      /* brand accent */
-      --accent: #A8452A;
-      --accent-light: #fdece8;
-      --accent-dark: #7F3320;
-      --on-accent: #FFFFFF;
-      --accent-ring: rgba(168, 69, 42, 0.26);
-      --accent-wash: rgba(168, 69, 42, 0.08);
-
-      /* status — reserved, never a data slot */
-      --ok: #3F7A46;
-      --ok-bg: #EDF5EB;
-      --ok-border: #D5E6D2;
-      --danger: #A83A2C;
-      --danger-bg: #FBEBE7;
-      --danger-border: #F0D2CB;
-      --danger-strong: #7E2A1F;
-      --warn: #8A6410;
-
-      /* tooltip */
-      --tip-bg: #241F1A;
-      --tip-text: #FFFDFB;
-      --tip-detail: #C6BBAE;
-      --tip-muted: #9C9084;
-
-      /* elevation & shape */
-      --shadow: 0 1px 2px rgba(40,30,20,.04);
-      --shadow-md: 0 6px 20px rgba(40,30,20,.08);
-      --radius: 10px;
-      --radius-sm: 7px;
-
-      /* categorical data slots — fixed order, never cycled */
-      --s1: #c9583f;
-      --s2: #1086d3;
-      --s3: #ba7900;
-      --s4: #01948a;
-      --s5: #8f68cb;
-      --s6: #4b943b;
-      --s7: #b05baa;
-      --s8: #868604;
-
-      /* fill == edge: a block is a solid slot colour */
-      --s1-fill: var(--s1);
-      --s2-fill: var(--s2);
-      --s3-fill: var(--s3);
-      --s4-fill: var(--s4);
-      --s5-fill: var(--s5);
-      --s6-fill: var(--s6);
-      --s7-fill: var(--s7);
-      --s8-fill: var(--s8);
-
-      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
-      --s1-ink: #15100D;
-      --s2-ink: #15100D;
-      --s3-ink: #15100D;
-      --s4-ink: #15100D;
-      --s5-ink: #15100D;
-      --s6-ink: #15100D;
-      --s7-ink: #15100D;
-      --s8-ink: #15100D;
-      --s-other: #A79C8E;
-      --s-other-fill: var(--s-other);
-      --s-other-ink: #15100D;
-      --block-ink: var(--s1-ink);
-
-      /* agent identity — same slots */
-      --claude-color: var(--s1);
-      --codex-color: var(--s2);
-      --cursor-color: var(--s3);
-      --copilot-color: var(--s4);
-      --gemini-color: var(--s5);
-    }
-
-    /* ── Graphite 墨 · solid · mist ── */
-    [data-scheme="graphite"] {
-      color-scheme: light;
-
-      /* surfaces */
-      --bg: #f6f9fc;
-      --bg-card: #fdfdfe;
-      --bg-inset: #edf3f9;
-
-      /* ink */
-      --text: #0F1216;
-      --text-secondary: #545D6A;
-      --text-muted: #858E9B;
-
-      /* lines */
-      --border: #dae5f1;
-      --border-light: #edf2f7;
-
-      /* brand accent */
-      --accent: #1B3B6F;
-      --accent-light: #e8f1fe;
-      --accent-dark: #12294D;
-      --on-accent: #FFFFFF;
-      --accent-ring: rgba(27, 59, 111, 0.26);
-      --accent-wash: rgba(27, 59, 111, 0.07);
-
-      /* status — reserved, never a data slot */
-      --ok: #136B3F;
-      --ok-bg: #E9F4EE;
-      --ok-border: #CBE6D8;
-      --danger: #A32B2B;
-      --danger-bg: #FCEDED;
-      --danger-border: #F2D2D2;
-      --danger-strong: #7C1F1F;
-      --warn: #8A5A00;
-
-      /* tooltip */
-      --tip-bg: #0F1216;
-      --tip-text: #FFFFFF;
-      --tip-detail: #B9C0CA;
-      --tip-muted: #8D96A2;
-
-      /* elevation & shape */
-      --shadow: 0 1px 2px rgba(15,18,22,.05);
-      --shadow-md: 0 8px 24px rgba(15,18,22,.09);
-      --radius: 8px;
-      --radius-sm: 5px;
-
-      /* categorical data slots — fixed order, never cycled */
-      --s1: #c9583f;
-      --s2: #0096af;
-      --s3: #9e7b0b;
-      --s4: #896ace;
-      --s5: #06976d;
-      --s6: #0884ea;
-      --s7: #b05baa;
-      --s8: #61911c;
-
-      /* fill == edge: a block is a solid slot colour */
-      --s1-fill: var(--s1);
-      --s2-fill: var(--s2);
-      --s3-fill: var(--s3);
-      --s4-fill: var(--s4);
-      --s5-fill: var(--s5);
-      --s6-fill: var(--s6);
-      --s7-fill: var(--s7);
-      --s8-fill: var(--s8);
-
-      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
-      --s1-ink: #15100D;
-      --s2-ink: #15100D;
-      --s3-ink: #15100D;
-      --s4-ink: #15100D;
-      --s5-ink: #15100D;
-      --s6-ink: #15100D;
-      --s7-ink: #15100D;
-      --s8-ink: #15100D;
-      --s-other: #98A1AE;
-      --s-other-fill: var(--s-other);
-      --s-other-ink: #15100D;
-      --block-ink: var(--s1-ink);
+      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -527,29 +410,50 @@
       --s7: #0081e7;
       --s8: #15ab83;
 
-      /* fill == edge: a block is a solid slot colour */
-      --s1-fill: var(--s1);
-      --s2-fill: var(--s2);
-      --s3-fill: var(--s3);
-      --s4-fill: var(--s4);
-      --s5-fill: var(--s5);
-      --s6-fill: var(--s6);
-      --s7-fill: var(--s7);
-      --s8-fill: var(--s8);
+      /* wash fill — nearly the surface; the edge carries the identity */
+      --s1-fill: #3e1f18;
+      --s2-fill: #003033;
+      --s3-fill: #2b233f;
+      --s4-fill: #1c2f16;
+      --s5-fill: #381f32;
+      --s6-fill: #322807;
+      --s7-fill: #152a41;
+      --s8-fill: #083124;
 
-      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
-      --s1-ink: #100D0B;
-      --s2-ink: #100D0B;
-      --s3-ink: #100D0B;
-      --s4-ink: #100D0B;
-      --s5-ink: #100D0B;
-      --s6-ink: #100D0B;
-      --s7-ink: #100D0B;
-      --s8-ink: #100D0B;
+      /* tint fill — dense enough to read as a filled bar with no edge */
+      --s1-tint: #5f2a1e;
+      --s2-tint: #004549;
+      --s3-tint: #403260;
+      --s4-tint: #254519;
+      --s5-tint: #552a4b;
+      --s6-tint: #4a3a00;
+      --s7-tint: #183d64;
+      --s8-tint: #004834;
+
+      /* label ink on a wash or tint fill — a far step of the slot's own hue */
+      --s1-ink: #ffbfb0;
+      --s2-ink: #85e3e8;
+      --s3-ink: #d5c7ff;
+      --s4-ink: #b4e0a6;
+      --s5-ink: #f7bbe8;
+      --s6-ink: #e6d08c;
+      --s7-ink: #b0d5ff;
+      --s8-ink: #94e4c6;
+
+      /* label ink when the block is painted the identity colour itself */
+      --s1-on: #100D0B;
+      --s2-on: #100D0B;
+      --s3-on: #100D0B;
+      --s4-on: #100D0B;
+      --s5-on: #100D0B;
+      --s6-on: #100D0B;
+      --s7-on: #100D0B;
+      --s8-on: #100D0B;
       --s-other: #7A8494;
-      --s-other-fill: var(--s-other);
-      --s-other-ink: #100D0B;
-      --block-ink: var(--s1-ink);
+      --s-other-fill: #27292c;
+      --s-other-tint: #393c40;
+      --s-other-ink: #cfd1d5;
+      --s-other-on: #100D0B;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -559,95 +463,20 @@
       --gemini-color: var(--s5);
     }
 
-    /* ── Ember 烬 · solid ── */
-    [data-scheme="ember"] {
-      color-scheme: dark;
+    /* ── Slot → block roles ──────────────────────────────────────────────────
+       A timeline block carries its slot as a class rather than five inline
+       custom properties, so the treatments below can repaint every block by
+       swapping which role they read. */
+    .s1 { --block-fill: var(--s1-fill); --block-tint: var(--s1-tint); --block-edge: var(--s1); --block-label: var(--s1-ink); --block-on: var(--s1-on); }
+    .s2 { --block-fill: var(--s2-fill); --block-tint: var(--s2-tint); --block-edge: var(--s2); --block-label: var(--s2-ink); --block-on: var(--s2-on); }
+    .s3 { --block-fill: var(--s3-fill); --block-tint: var(--s3-tint); --block-edge: var(--s3); --block-label: var(--s3-ink); --block-on: var(--s3-on); }
+    .s4 { --block-fill: var(--s4-fill); --block-tint: var(--s4-tint); --block-edge: var(--s4); --block-label: var(--s4-ink); --block-on: var(--s4-on); }
+    .s5 { --block-fill: var(--s5-fill); --block-tint: var(--s5-tint); --block-edge: var(--s5); --block-label: var(--s5-ink); --block-on: var(--s5-on); }
+    .s6 { --block-fill: var(--s6-fill); --block-tint: var(--s6-tint); --block-edge: var(--s6); --block-label: var(--s6-ink); --block-on: var(--s6-on); }
+    .s7 { --block-fill: var(--s7-fill); --block-tint: var(--s7-tint); --block-edge: var(--s7); --block-label: var(--s7-ink); --block-on: var(--s7-on); }
+    .s8 { --block-fill: var(--s8-fill); --block-tint: var(--s8-tint); --block-edge: var(--s8); --block-label: var(--s8-ink); --block-on: var(--s8-on); }
+    .sother { --block-fill: var(--s-other-fill); --block-tint: var(--s-other-tint); --block-edge: var(--s-other); --block-label: var(--s-other-ink); --block-on: var(--s-other-on); }
 
-      /* surfaces */
-      --bg: #171310;
-      --bg-card: #221D1A;
-      --bg-inset: #2A2320;
-
-      /* ink */
-      --text: #F0E9E3;
-      --text-secondary: #AFA298;
-      --text-muted: #7D7269;
-
-      /* lines */
-      --border: #352C27;
-      --border-light: #2A2320;
-
-      /* brand accent */
-      --accent: #E58057;
-      --accent-light: #3A241B;
-      --accent-dark: #F0A183;
-      --on-accent: #1A0F09;
-      --accent-ring: rgba(229, 128, 87, 0.32);
-      --accent-wash: rgba(229, 128, 87, 0.10);
-
-      /* status — reserved, never a data slot */
-      --ok: #6FBF7C;
-      --ok-bg: #1C2E1D;
-      --ok-border: #2E482F;
-      --danger: #EC7C6A;
-      --danger-bg: #38211C;
-      --danger-border: #54332B;
-      --danger-strong: #F2A192;
-      --warn: #D8A23F;
-
-      /* tooltip */
-      --tip-bg: #352C27;
-      --tip-text: #F6F0EA;
-      --tip-detail: #BFB2A7;
-      --tip-muted: #8E8378;
-
-      /* elevation & shape */
-      --shadow: 0 1px 2px rgba(0,0,0,.45);
-      --shadow-md: 0 10px 28px rgba(0,0,0,.55);
-      --radius: 12px;
-      --radius-sm: 8px;
-
-      /* categorical data slots — fixed order, never cycled */
-      --s1: #c55c44;
-      --s2: #1fa89c;
-      --s3: #8e6ac7;
-      --s4: #488e38;
-      --s5: #d06b9e;
-      --s6: #868604;
-      --s7: #2386ce;
-      --s8: #b6770b;
-
-      /* fill == edge: a block is a solid slot colour */
-      --s1-fill: var(--s1);
-      --s2-fill: var(--s2);
-      --s3-fill: var(--s3);
-      --s4-fill: var(--s4);
-      --s5-fill: var(--s5);
-      --s6-fill: var(--s6);
-      --s7-fill: var(--s7);
-      --s8-fill: var(--s8);
-
-      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
-      --s1-ink: #100D0B;
-      --s2-ink: #100D0B;
-      --s3-ink: #100D0B;
-      --s4-ink: #100D0B;
-      --s5-ink: #100D0B;
-      --s6-ink: #100D0B;
-      --s7-ink: #100D0B;
-      --s8-ink: #100D0B;
-      --s-other: #8B8078;
-      --s-other-fill: var(--s-other);
-      --s-other-ink: #100D0B;
-      --block-ink: var(--s1-ink);
-
-      /* agent identity — same slots */
-      --claude-color: var(--s1);
-      --codex-color: var(--s2);
-      --cursor-color: var(--s3);
-      --copilot-color: var(--s4);
-      --gemini-color: var(--s5);
-    }
 
     * {
       margin: 0;
@@ -1258,18 +1087,45 @@
       padding: 0 4px;
       font-size: 9px;
       font-weight: 500;
-      color: var(--block-ink);
       cursor: pointer;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
       min-width: 4px;
-      /* Two separations, doing different jobs: the 1px border is the block's own
-         edge (and the only thing that reads when a scheme uses pale fills), the
-         surface-coloured ring outside it keeps touching sessions apart. */
+      /* Default treatment — "tint": the fill carries the bar. A Gantt bar's job
+         is to show how long something took, and length reads best off a filled
+         extent; an outlined pale box reads as a container instead. The
+         surface-coloured ring keeps touching sessions apart. */
+      background: var(--block-tint);
+      color: var(--block-label);
       border: 1px solid transparent;
       box-shadow: 0 0 0 1.5px var(--bg-inset);
       transition: filter .15s, transform .15s;
+    }
+
+    /* ── Block treatments ────────────────────────────────────────────────────
+       Same slot colours, four ways of spending them on a bar. */
+
+    /* wash — nearly the surface, bounded by a 1px edge in the identity colour */
+    [data-blocks="wash"] .time-block,
+    [data-blocks="wash"] .calendar-block {
+      background: var(--block-fill);
+      border-color: var(--block-edge);
+    }
+
+    /* solid — the identity colour itself, label flipped to sit on it */
+    [data-blocks="solid"] .time-block,
+    [data-blocks="solid"] .calendar-block {
+      background: var(--block-edge);
+      color: var(--block-on);
+    }
+
+    /* cap — a wash bar with the identity colour only at the start edge, so the
+       moment a session began stays readable while the bar itself stays quiet */
+    [data-blocks="cap"] .time-block,
+    [data-blocks="cap"] .calendar-block {
+      background: var(--block-fill);
+      border-left: 3px solid var(--block-edge);
     }
 
     .time-block:hover {
@@ -1442,9 +1298,10 @@
       padding: 2px 5px;
       font-size: 9px;
       font-weight: 500;
-      color: var(--block-ink);
       overflow: hidden;
       cursor: pointer;
+      background: var(--block-tint);
+      color: var(--block-label);
       border: 1px solid transparent;
       box-shadow: 0 0 0 1.5px var(--bg-inset);
       transition: transform .15s, filter .15s;
@@ -3323,6 +3180,10 @@
       var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
       document.documentElement.dataset.scheme =
         (!v || v === "system") ? (prefersDark ? "nightshift" : "linen") : v;
+      var b = null;
+      try { b = localStorage.getItem("clawd-analytics-blocks"); } catch (e) { /* private mode */ }
+      document.documentElement.dataset.blocks =
+        ["tint", "wash", "solid", "cap"].indexOf(b) >= 0 ? b : "tint";
     })();
   </script>
 </head>
@@ -3553,12 +3414,19 @@
             <option value="system" id="schemeOptSystem">Follow system</option>
             <option value="linen">Linen 素</option>
             <option value="frost">Frost 霜</option>
-            <option value="kiln">Kiln 窑</option>
-            <option value="graphite">Graphite 墨</option>
             <option value="nightshift">Nightshift 夜</option>
-            <option value="ember">Ember 烬</option>
           </select>
           <div class="field-hint" id="schemeHint">Applies as soon as you pick it, and is remembered on this machine.</div>
+        </div>
+        <div class="settings-field">
+          <label for="settingsBlocks" id="blocksLabel">Timeline blocks</label>
+          <select id="settingsBlocks">
+            <option value="tint" id="blocksOptTint">Tint — filled bar</option>
+            <option value="wash" id="blocksOptWash">Wash — pale bar with an outline</option>
+            <option value="solid" id="blocksOptSolid">Solid — full-strength bar</option>
+            <option value="cap" id="blocksOptCap">Cap — pale bar, coloured start edge</option>
+          </select>
+          <div class="field-hint" id="blocksHint">How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.</div>
         </div>
       </div>
 
@@ -3700,7 +3568,9 @@
     // used as-is. Keep in sync with the [data-scheme] blocks in the stylesheet.
     const SCHEME_SYSTEM_LIGHT = "linen";
     const SCHEME_SYSTEM_DARK = "nightshift";
-    const SCHEME_IDS = ["linen", "frost", "kiln", "graphite", "nightshift", "ember"];
+    const SCHEME_IDS = ["linen", "frost", "nightshift"];
+    const BLOCKS_STORAGE_KEY = "clawd-analytics-blocks";
+    const BLOCK_TREATMENTS = ["tint", "wash", "solid", "cap"];
     const ONBOARDING_HINT_STORAGE_KEY = "clawd-analytics-onboarding-dismissed-v2";
     const PANEL_WIDTH_STORAGE_KEY = "clawd-analytics-sessions-panel-width-v1";
     const CHARTS_HEIGHT_STORAGE_KEY = "clawd-analytics-charts-row-height-v1";
@@ -3829,6 +3699,12 @@
         schemeLabel: "配色方案",
         schemeSystem: "跟随系统",
         schemeHint: "选中即生效，记在本机。深浅色都在这里切。",
+        blocksLabel: "时间轴色块",
+        blocksHint: "一次会话在时间轴上怎么画。颜色不变，变的是色块被填满多少。",
+        blocksTint: "淡填 — 有色实条",
+        blocksWash: "描边 — 极淡底 + 一圈描边",
+        blocksSolid: "实心 — 满色实条",
+        blocksCap: "左标 — 极淡底 + 起始端上色",
         localCliTitle: "本地 CLI 检测",
         loading: "加载中…",
         defaultAnalysisProviderLabel: "默认分析器",
@@ -4042,6 +3918,12 @@
         schemeLabel: "Colour scheme",
         schemeSystem: "Follow system",
         schemeHint: "Applies as soon as you pick it, and is remembered on this machine. Light and dark both live here.",
+        blocksLabel: "Timeline blocks",
+        blocksHint: "How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.",
+        blocksTint: "Tint — filled bar",
+        blocksWash: "Wash — pale bar with an outline",
+        blocksSolid: "Solid — full-strength bar",
+        blocksCap: "Cap — pale bar, coloured start edge",
         localCliTitle: "Local CLI Detection",
         loading: "Loading…",
         defaultAnalysisProviderLabel: "Default Analysis Provider",
@@ -4168,6 +4050,19 @@
       applyScheme(pref);
     }
 
+    function readBlocksPref() {
+      let v = null;
+      try { v = localStorage.getItem(BLOCKS_STORAGE_KEY); } catch (e) { /* private mode */ }
+      return BLOCK_TREATMENTS.includes(v) ? v : "tint";
+    }
+    function applyBlocks(pref) {
+      document.documentElement.dataset.blocks = pref;
+    }
+    function setBlocksPref(pref) {
+      try { localStorage.setItem(BLOCKS_STORAGE_KEY, pref); } catch (e) { /* private mode */ }
+      applyBlocks(pref);
+    }
+
     function weekdayLabel(date) {
       return currentLang === "zh" ? WEEKDAYS_ZH[date.getDay()] : WEEKDAYS_EN[date.getDay()];
     }
@@ -4233,6 +4128,12 @@
       document.getElementById("schemeLabel").textContent = t("schemeLabel");
       document.getElementById("schemeOptSystem").textContent = t("schemeSystem");
       document.getElementById("schemeHint").textContent = t("schemeHint");
+      document.getElementById("blocksLabel").textContent = t("blocksLabel");
+      document.getElementById("blocksHint").textContent = t("blocksHint");
+      document.getElementById("blocksOptTint").textContent = t("blocksTint");
+      document.getElementById("blocksOptWash").textContent = t("blocksWash");
+      document.getElementById("blocksOptSolid").textContent = t("blocksSolid");
+      document.getElementById("blocksOptCap").textContent = t("blocksCap");
       document.getElementById("settingsBtn").title = t("settingsTitle");
       document.getElementById("settingsBtn").setAttribute("aria-label", t("settingsTitle"));
       document.getElementById("tabToday").textContent = t("tabToday");
@@ -4926,11 +4827,9 @@
     function sessDur(s) { return s.blocks && s.blocks.length ? s.blocks.reduce((a, b) => a + (b.end - b.start), 0) : s.firstTs && s.lastTs ? s.lastTs - s.firstTs : 0; }
     function projSlot(name) { return projectSlotMap[name] || "-other"; }
     function projColor(name) { return `var(--s${projSlot(name)})`; }
-    function projFill(name) { return `var(--s${projSlot(name)}-fill)`; }
-    // Label ink is picked per slot at design time — white or near-black, whichever
-    // clears 4.4:1 on that fill — instead of assuming white on every block.
-    function projInk(name) { return `var(--s${projSlot(name)}-ink)`; }
-
+    // The class carries every block role at once (fill, tint, edge, both inks),
+    // so the treatment can be swapped in CSS without re-rendering the timeline.
+    function projSlotClass(name) { const s = projSlot(name); return s === "-other" ? "sother" : `s${s}`; }
     // A block wears its project's slot, unmodified. An earlier version jittered
     // lightness ±12 and saturation ±8 per session to break up a "wall of one
     // colour"; that moved each block off its slot, so one project read as several
@@ -4938,8 +4837,7 @@
     // separation the slots are chosen for no longer held. Touching sessions are
     // now told apart by the surface ring on .time-block instead.
     function blockColor(session) { return projColor(session.project || session.title || "unknown"); }
-    function blockFill(session) { return projFill(session.project || session.title || "unknown"); }
-    function blockInk(session) { return projInk(session.project || session.title || "unknown"); }
+    function blockSlotClass(session) { return projSlotClass(session.project || session.title || "unknown"); }
 
     // Compact filesystem path for inline display in blocks and tooltips.
     // Replaces home dir with ~ and trims middle segments when path is long
@@ -5589,7 +5487,7 @@
             const lbl = wp > 10 ? `${safeProj} · ${escapeHtml(dur)}` : safeProj;
             const blockScopeKey = scopeKey(b);
             const isSelectedBlock = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
-            bhtml += `<div class="time-block${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%;background:${blockFill(s)};border-color:${blockColor(s)};color:${blockInk(s)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
+            bhtml += `<div class="time-block ${blockSlotClass(s)}${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
           }
           return `<div class="timeline-lane">${bhtml}</div>`;
         }).join("");
@@ -5750,7 +5648,7 @@
           if (showPath) inner += `<span class="cb-path">${escapeHtml(shortPath)}</span>`;
           if (showMeta) inner += `<span class="cb-meta">${escapeHtml(dur)}</span>`;
 
-          blocksHtml += `<div class="calendar-block${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px);background:${blockFill(s)};border-color:${blockColor(s)};color:${blockInk(s)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${inner}</div>`;
+          blocksHtml += `<div class="calendar-block ${blockSlotClass(s)}${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px)" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${inner}</div>`;
         }
 
         cols += `<div class="calendar-day-col"><div class="calendar-day-header"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div></div><div class="calendar-day-track">${blocksHtml}</div></div>`;
@@ -7977,6 +7875,7 @@
       } catch (e) { console.warn("populate default-provider dropdown failed", e); }
 
       document.getElementById("settingsScheme").value = readSchemePref();
+      document.getElementById("settingsBlocks").value = readBlocksPref();
 
       document.getElementById("settingsOverlay").style.display = "flex";
       // Kick off the diagnostic load (non-blocking — UI shows "Loading…" until done)
@@ -8186,6 +8085,7 @@
     // The scheme applies on change rather than on Save: it is a view preference,
     // not part of the provider config the Save button writes.
     document.getElementById("settingsScheme").addEventListener("change", e => setSchemePref(e.target.value));
+    document.getElementById("settingsBlocks").addEventListener("change", e => setBlocksPref(e.target.value));
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)")
         .addEventListener("change", () => { if (readSchemePref() === "system") applyScheme("system"); });
