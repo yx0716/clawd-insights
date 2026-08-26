@@ -101,21 +101,10 @@
       --s6-ink: #2c4678;
       --s7-ink: #643e00;
       --s8-ink: #64335b;
-
-      /* label ink when the block is painted the identity colour itself */
-      --s1-on: #15100D;
-      --s2-on: #FFFFFF;
-      --s3-on: #FFFFFF;
-      --s4-on: #15100D;
-      --s5-on: #FFFFFF;
-      --s6-on: #15100D;
-      --s7-on: #15100D;
-      --s8-on: #FFFFFF;
       --s-other: #8E8A82;
       --s-other-fill: #e8e6e2;
       --s-other-tint: #d8d5d0;
       --s-other-ink: #494744;
-      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -217,21 +206,10 @@
       --s6-ink: #2c4678;
       --s7-ink: #643e00;
       --s8-ink: #64335b;
-
-      /* label ink when the block is painted the identity colour itself */
-      --s1-on: #15100D;
-      --s2-on: #FFFFFF;
-      --s3-on: #FFFFFF;
-      --s4-on: #15100D;
-      --s5-on: #FFFFFF;
-      --s6-on: #15100D;
-      --s7-on: #15100D;
-      --s8-on: #FFFFFF;
       --s-other: #8E8A82;
       --s-other-fill: #e8e6e2;
       --s-other-tint: #d8d5d0;
       --s-other-ink: #494744;
-      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -328,21 +306,10 @@
       --s6-ink: #463e75;
       --s7-ink: #2b5322;
       --s8-ink: #274777;
-
-      /* label ink when the block is painted the identity colour itself */
-      --s1-on: #15100D;
-      --s2-on: #FFFFFF;
-      --s3-on: #15100D;
-      --s4-on: #FFFFFF;
-      --s5-on: #15100D;
-      --s6-on: #FFFFFF;
-      --s7-on: #15100D;
-      --s8-on: #15100D;
       --s-other: #8A929B;
       --s-other-fill: #e3e6ea;
       --s-other-tint: #d2d6db;
       --s-other-ink: #45484b;
-      --s-other-on: #15100D;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -439,21 +406,10 @@
       --s6-ink: #e6d08c;
       --s7-ink: #b0d5ff;
       --s8-ink: #94e4c6;
-
-      /* label ink when the block is painted the identity colour itself */
-      --s1-on: #100D0B;
-      --s2-on: #100D0B;
-      --s3-on: #100D0B;
-      --s4-on: #100D0B;
-      --s5-on: #100D0B;
-      --s6-on: #100D0B;
-      --s7-on: #100D0B;
-      --s8-on: #100D0B;
       --s-other: #7A8494;
       --s-other-fill: #27292c;
       --s-other-tint: #393c40;
       --s-other-ink: #cfd1d5;
-      --s-other-on: #100D0B;
 
       /* agent identity — same slots */
       --claude-color: var(--s1);
@@ -464,18 +420,18 @@
     }
 
     /* ── Slot → block roles ──────────────────────────────────────────────────
-       A timeline block carries its slot as a class rather than five inline
-       custom properties, so the treatments below can repaint every block by
-       swapping which role they read. */
-    .s1 { --block-fill: var(--s1-fill); --block-tint: var(--s1-tint); --block-edge: var(--s1); --block-label: var(--s1-ink); --block-on: var(--s1-on); }
-    .s2 { --block-fill: var(--s2-fill); --block-tint: var(--s2-tint); --block-edge: var(--s2); --block-label: var(--s2-ink); --block-on: var(--s2-on); }
-    .s3 { --block-fill: var(--s3-fill); --block-tint: var(--s3-tint); --block-edge: var(--s3); --block-label: var(--s3-ink); --block-on: var(--s3-on); }
-    .s4 { --block-fill: var(--s4-fill); --block-tint: var(--s4-tint); --block-edge: var(--s4); --block-label: var(--s4-ink); --block-on: var(--s4-on); }
-    .s5 { --block-fill: var(--s5-fill); --block-tint: var(--s5-tint); --block-edge: var(--s5); --block-label: var(--s5-ink); --block-on: var(--s5-on); }
-    .s6 { --block-fill: var(--s6-fill); --block-tint: var(--s6-tint); --block-edge: var(--s6); --block-label: var(--s6-ink); --block-on: var(--s6-on); }
-    .s7 { --block-fill: var(--s7-fill); --block-tint: var(--s7-tint); --block-edge: var(--s7); --block-label: var(--s7-ink); --block-on: var(--s7-on); }
-    .s8 { --block-fill: var(--s8-fill); --block-tint: var(--s8-tint); --block-edge: var(--s8); --block-label: var(--s8-ink); --block-on: var(--s8-on); }
-    .sother { --block-fill: var(--s-other-fill); --block-tint: var(--s-other-tint); --block-edge: var(--s-other); --block-label: var(--s-other-ink); --block-on: var(--s-other-on); }
+       A block carries its slot as a class rather than as inline colours, so the
+       treatments above can repaint every block without re-rendering. The same
+       classes dress the time-breakdown bar in the analysis panel. */
+    .s1 { --block-fill: var(--s1-fill); --block-tint: var(--s1-tint); --block-edge: var(--s1); --block-label: var(--s1-ink); }
+    .s2 { --block-fill: var(--s2-fill); --block-tint: var(--s2-tint); --block-edge: var(--s2); --block-label: var(--s2-ink); }
+    .s3 { --block-fill: var(--s3-fill); --block-tint: var(--s3-tint); --block-edge: var(--s3); --block-label: var(--s3-ink); }
+    .s4 { --block-fill: var(--s4-fill); --block-tint: var(--s4-tint); --block-edge: var(--s4); --block-label: var(--s4-ink); }
+    .s5 { --block-fill: var(--s5-fill); --block-tint: var(--s5-tint); --block-edge: var(--s5); --block-label: var(--s5-ink); }
+    .s6 { --block-fill: var(--s6-fill); --block-tint: var(--s6-tint); --block-edge: var(--s6); --block-label: var(--s6-ink); }
+    .s7 { --block-fill: var(--s7-fill); --block-tint: var(--s7-tint); --block-edge: var(--s7); --block-label: var(--s7-ink); }
+    .s8 { --block-fill: var(--s8-fill); --block-tint: var(--s8-tint); --block-edge: var(--s8); --block-label: var(--s8-ink); }
+    .sother { --block-fill: var(--s-other-fill); --block-tint: var(--s-other-tint); --block-edge: var(--s-other); --block-label: var(--s-other-ink); }
 
 
     * {
@@ -1106,46 +1062,14 @@
     /* ── Block treatments ────────────────────────────────────────────────────
        Same slot colours, four ways of spending them on a bar. */
 
-    /* wash — nearly the surface, bounded by a 1px edge in the identity colour */
-    [data-blocks="wash"] .time-block,
-    [data-blocks="wash"] .calendar-block {
-      background: var(--block-fill);
-      border-color: var(--block-edge);
-    }
-
-    /* solid — the identity colour itself, label flipped to sit on it */
-    [data-blocks="solid"] .time-block,
-    [data-blocks="solid"] .calendar-block {
-      background: var(--block-edge);
-      color: var(--block-on);
-    }
-
     /* cap — a wash bar with the identity colour only at the start edge, so the
        moment a session began stays readable while the bar itself stays quiet.
        The colour sits at one point rather than along the bar, which turns into a
-       row of tick marks once a lane is busy — see "rule" for the opposite. */
+       row of tick marks once a lane is busy. */
     [data-blocks="cap"] .time-block,
     [data-blocks="cap"] .calendar-block {
       background: var(--block-fill);
       border-left: 3px solid var(--block-edge);
-    }
-
-    /* rule — a wash bar underscored for its whole length. The colour spans the
-       duration instead of marking an end of it, so it stays legible when a lane
-       is packed with short sessions and never reads as a box. */
-    [data-blocks="rule"] .time-block,
-    [data-blocks="rule"] .calendar-block {
-      background: var(--block-fill);
-      border-bottom: 2px solid var(--block-edge);
-    }
-
-    /* muted — every bar the same neutral fill; identity lives in the label
-       alone. The quietest the timeline gets while still being readable: shape
-       and position carry the data, colour stops competing for attention. */
-    [data-blocks="muted"] .time-block,
-    [data-blocks="muted"] .calendar-block {
-      background: var(--s-other-tint);
-      color: var(--block-label);
     }
 
     .time-block:hover {
@@ -2289,6 +2213,10 @@
     }
 
     .analysis-breakdown .seg {
+      /* Matches a timeline block: a tint fill with the slot's own dark ink. A
+         solid fill here read as a different colour system from the timeline. */
+      background: var(--block-tint);
+      color: var(--block-label);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -3203,7 +3131,7 @@
       var b = null;
       try { b = localStorage.getItem("clawd-analytics-blocks"); } catch (e) { /* private mode */ }
       document.documentElement.dataset.blocks =
-        ["tint", "wash", "rule", "muted", "solid", "cap"].indexOf(b) >= 0 ? b : "tint";
+        ["tint", "cap"].indexOf(b) >= 0 ? b : "tint";
     })();
   </script>
 </head>
@@ -3442,10 +3370,6 @@
           <label for="settingsBlocks" id="blocksLabel">Timeline blocks</label>
           <select id="settingsBlocks">
             <option value="tint" id="blocksOptTint">Tint — filled bar</option>
-            <option value="rule" id="blocksOptRule">Rule — pale bar, underscored full length</option>
-            <option value="muted" id="blocksOptMuted">Muted — one neutral fill, colour in the label</option>
-            <option value="wash" id="blocksOptWash">Wash — pale bar with an outline</option>
-            <option value="solid" id="blocksOptSolid">Solid — full-strength bar</option>
             <option value="cap" id="blocksOptCap">Cap — pale bar, coloured start edge</option>
           </select>
           <div class="field-hint" id="blocksHint">How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.</div>
@@ -3584,6 +3508,10 @@
     const WEEKDAYS_ZH = ["日", "一", "二", "三", "四", "五", "六"];
     const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const BREAKDOWN_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)"];
+    // The stacked bar wears slot classes (fill + ink); the legend dot beside it
+    // stays at full identity strength — a 6px mark needs saturation a full-width
+    // fill does not.
+    const BREAKDOWN_SLOTS = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
     const LANG_STORAGE_KEY = "clawd-analytics-lang";
     const SCHEME_STORAGE_KEY = "clawd-analytics-scheme";
     // "system" resolves to one of these; every other value is a scheme id and is
@@ -3592,7 +3520,7 @@
     const SCHEME_SYSTEM_DARK = "nightshift";
     const SCHEME_IDS = ["linen", "frost", "nightshift"];
     const BLOCKS_STORAGE_KEY = "clawd-analytics-blocks";
-    const BLOCK_TREATMENTS = ["tint", "wash", "rule", "muted", "solid", "cap"];
+    const BLOCK_TREATMENTS = ["tint", "cap"];
     const ONBOARDING_HINT_STORAGE_KEY = "clawd-analytics-onboarding-dismissed-v2";
     const PANEL_WIDTH_STORAGE_KEY = "clawd-analytics-sessions-panel-width-v1";
     const CHARTS_HEIGHT_STORAGE_KEY = "clawd-analytics-charts-row-height-v1";
@@ -3724,11 +3652,7 @@
         blocksLabel: "时间轴色块",
         blocksHint: "一次会话在时间轴上怎么画。颜色不变，变的是色块被填满多少。",
         blocksTint: "淡填 — 有色实条",
-        blocksWash: "描边 — 极淡底 + 一圈描边",
-        blocksSolid: "实心 — 满色实条",
         blocksCap: "左标 — 极淡底 + 起始端上色",
-        blocksRule: "底线 — 极淡底 + 贯穿全长的底线",
-        blocksMuted: "素条 — 统一中性底，颜色只在文字上",
         localCliTitle: "本地 CLI 检测",
         loading: "加载中…",
         defaultAnalysisProviderLabel: "默认分析器",
@@ -3945,11 +3869,7 @@
         blocksLabel: "Timeline blocks",
         blocksHint: "How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.",
         blocksTint: "Tint — filled bar",
-        blocksWash: "Wash — pale bar with an outline",
-        blocksSolid: "Solid — full-strength bar",
         blocksCap: "Cap — pale bar, coloured start edge",
-        blocksRule: "Rule — pale bar, underscored full length",
-        blocksMuted: "Muted — one neutral fill, colour in the label",
         localCliTitle: "Local CLI Detection",
         loading: "Loading…",
         defaultAnalysisProviderLabel: "Default Analysis Provider",
@@ -4157,11 +4077,7 @@
       document.getElementById("blocksLabel").textContent = t("blocksLabel");
       document.getElementById("blocksHint").textContent = t("blocksHint");
       document.getElementById("blocksOptTint").textContent = t("blocksTint");
-      document.getElementById("blocksOptWash").textContent = t("blocksWash");
-      document.getElementById("blocksOptSolid").textContent = t("blocksSolid");
       document.getElementById("blocksOptCap").textContent = t("blocksCap");
-      document.getElementById("blocksOptRule").textContent = t("blocksRule");
-      document.getElementById("blocksOptMuted").textContent = t("blocksMuted");
       document.getElementById("settingsBtn").title = t("settingsTitle");
       document.getElementById("settingsBtn").setAttribute("aria-label", t("settingsTitle"));
       document.getElementById("tabToday").textContent = t("tabToday");
@@ -6951,8 +6867,8 @@
 
       // STAR: Situation + Task section (detail mode; brief results skip it)
       if (r.situation || r.task) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--warn)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--warn)">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s1)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s1)">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
         h += '<ul class="analysis-insights">';
         if (r.situation) h += `<li><strong>${escapeHtml(t("starSituation"))}</strong>${escapeHtml("：")}${escapeHtml(r.situation)}</li>`;
         if (r.task) h += `<li><strong>${escapeHtml(t("starTask"))}</strong>${escapeHtml("：")}${escapeHtml(r.task)}</li>`;
@@ -6961,8 +6877,8 @@
 
       // STAR: Actions section
       if (Array.isArray(r.actions) && r.actions.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s3)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s3)">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s2)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s2)">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.actions.forEach(a => { h += `<li>${escapeHtml(String(a))}</li>`; });
         h += '</ul></div>';
@@ -6970,8 +6886,8 @@
 
       // Outcomes section (STAR: Result)
       if (r.outcomes && r.outcomes.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--ok)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--ok)">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s3)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s3)">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.outcomes.forEach(o => { h += `<li>${renderOutcomeItem(o)}</li>`; });
         h += '</ul></div>';
@@ -6979,10 +6895,12 @@
 
       // Time Breakdown section
       if (r.timeBreakdown && r.timeBreakdown.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid var(--s2)">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s2)">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s4)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s4)">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
         h += '<div class="analysis-breakdown">';
-        r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i] || "var(--s-other)"; h += `<div class="seg" style="width:${item.percent}%;background:${c};color:${c.replace(")", "-ink)")}" title="${escapeHtml(`${item.activity}: ${item.percent}%`)}">${item.percent > 10 ? escapeHtml(item.activity) : ""}</div>`; });
+        // Same slot classes as a timeline block, so this bar carries the same
+        // weight of colour as the timeline above it instead of a solid one.
+        r.timeBreakdown.forEach((item, i) => { const s = BREAKDOWN_SLOTS[i] || "sother"; h += `<div class="seg ${s}" style="width:${item.percent}%" title="${escapeHtml(`${item.activity}: ${item.percent}%`)}">${item.percent > 10 ? escapeHtml(item.activity) : ""}</div>`; });
         h += '</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
         r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i] || "var(--s-other)"; h += `<span style="font-size:10px;color:var(--text-secondary);display:flex;align-items:center;gap:3px"><span style="width:6px;height:6px;border-radius:2px;background:${c};display:inline-block"></span>${escapeHtml(item.activity)} ${escapeHtml(String(item.percent))}%</span>`; });
         h += '</div></div>';
