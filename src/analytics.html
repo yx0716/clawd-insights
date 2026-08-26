@@ -1121,11 +1121,31 @@
     }
 
     /* cap — a wash bar with the identity colour only at the start edge, so the
-       moment a session began stays readable while the bar itself stays quiet */
+       moment a session began stays readable while the bar itself stays quiet.
+       The colour sits at one point rather than along the bar, which turns into a
+       row of tick marks once a lane is busy — see "rule" for the opposite. */
     [data-blocks="cap"] .time-block,
     [data-blocks="cap"] .calendar-block {
       background: var(--block-fill);
       border-left: 3px solid var(--block-edge);
+    }
+
+    /* rule — a wash bar underscored for its whole length. The colour spans the
+       duration instead of marking an end of it, so it stays legible when a lane
+       is packed with short sessions and never reads as a box. */
+    [data-blocks="rule"] .time-block,
+    [data-blocks="rule"] .calendar-block {
+      background: var(--block-fill);
+      border-bottom: 2px solid var(--block-edge);
+    }
+
+    /* muted — every bar the same neutral fill; identity lives in the label
+       alone. The quietest the timeline gets while still being readable: shape
+       and position carry the data, colour stops competing for attention. */
+    [data-blocks="muted"] .time-block,
+    [data-blocks="muted"] .calendar-block {
+      background: var(--s-other-tint);
+      color: var(--block-label);
     }
 
     .time-block:hover {
@@ -3183,7 +3203,7 @@
       var b = null;
       try { b = localStorage.getItem("clawd-analytics-blocks"); } catch (e) { /* private mode */ }
       document.documentElement.dataset.blocks =
-        ["tint", "wash", "solid", "cap"].indexOf(b) >= 0 ? b : "tint";
+        ["tint", "wash", "rule", "muted", "solid", "cap"].indexOf(b) >= 0 ? b : "tint";
     })();
   </script>
 </head>
@@ -3422,6 +3442,8 @@
           <label for="settingsBlocks" id="blocksLabel">Timeline blocks</label>
           <select id="settingsBlocks">
             <option value="tint" id="blocksOptTint">Tint — filled bar</option>
+            <option value="rule" id="blocksOptRule">Rule — pale bar, underscored full length</option>
+            <option value="muted" id="blocksOptMuted">Muted — one neutral fill, colour in the label</option>
             <option value="wash" id="blocksOptWash">Wash — pale bar with an outline</option>
             <option value="solid" id="blocksOptSolid">Solid — full-strength bar</option>
             <option value="cap" id="blocksOptCap">Cap — pale bar, coloured start edge</option>
@@ -3570,7 +3592,7 @@
     const SCHEME_SYSTEM_DARK = "nightshift";
     const SCHEME_IDS = ["linen", "frost", "nightshift"];
     const BLOCKS_STORAGE_KEY = "clawd-analytics-blocks";
-    const BLOCK_TREATMENTS = ["tint", "wash", "solid", "cap"];
+    const BLOCK_TREATMENTS = ["tint", "wash", "rule", "muted", "solid", "cap"];
     const ONBOARDING_HINT_STORAGE_KEY = "clawd-analytics-onboarding-dismissed-v2";
     const PANEL_WIDTH_STORAGE_KEY = "clawd-analytics-sessions-panel-width-v1";
     const CHARTS_HEIGHT_STORAGE_KEY = "clawd-analytics-charts-row-height-v1";
@@ -3705,6 +3727,8 @@
         blocksWash: "描边 — 极淡底 + 一圈描边",
         blocksSolid: "实心 — 满色实条",
         blocksCap: "左标 — 极淡底 + 起始端上色",
+        blocksRule: "底线 — 极淡底 + 贯穿全长的底线",
+        blocksMuted: "素条 — 统一中性底，颜色只在文字上",
         localCliTitle: "本地 CLI 检测",
         loading: "加载中…",
         defaultAnalysisProviderLabel: "默认分析器",
@@ -3924,6 +3948,8 @@
         blocksWash: "Wash — pale bar with an outline",
         blocksSolid: "Solid — full-strength bar",
         blocksCap: "Cap — pale bar, coloured start edge",
+        blocksRule: "Rule — pale bar, underscored full length",
+        blocksMuted: "Muted — one neutral fill, colour in the label",
         localCliTitle: "Local CLI Detection",
         loading: "Loading…",
         defaultAnalysisProviderLabel: "Default Analysis Provider",
@@ -4134,6 +4160,8 @@
       document.getElementById("blocksOptWash").textContent = t("blocksWash");
       document.getElementById("blocksOptSolid").textContent = t("blocksSolid");
       document.getElementById("blocksOptCap").textContent = t("blocksCap");
+      document.getElementById("blocksOptRule").textContent = t("blocksRule");
+      document.getElementById("blocksOptMuted").textContent = t("blocksMuted");
       document.getElementById("settingsBtn").title = t("settingsTitle");
       document.getElementById("settingsBtn").setAttribute("aria-label", t("settingsTitle"));
       document.getElementById("tabToday").textContent = t("tabToday");
