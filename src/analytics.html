@@ -1119,7 +1119,7 @@
     }
 
     .time-block.selected {
-      outline: 2px solid var(--text);
+      outline: 2px solid var(--accent);
       outline-offset: 1px;
     }
 
@@ -1205,8 +1205,11 @@
     .calendar-day-track {
       position: relative;
       height: var(--calendar-track-height, 480px);
-      background: var(--bg-inset);
-      border: 1px solid var(--border-light);
+      /* The page ground, not the recessed strip: at this size an inset fill sits
+         in the same tonal range as the blocks and an empty day reads as one
+         enormous session. The border is what says "column". */
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 6px;
       overflow: hidden;
       cursor: grab;
@@ -1275,7 +1278,7 @@
       background: var(--block-bg);
       color: var(--block-label);
       border: 1px solid transparent;
-      box-shadow: 0 0 0 1.5px var(--bg-inset);
+      box-shadow: 0 0 0 1.5px var(--bg);
       transition: transform .15s, filter .15s;
       display: flex;
       flex-direction: column;
@@ -1291,7 +1294,7 @@
     }
 
     .calendar-block.selected {
-      outline: 2px solid var(--text);
+      outline: 2px solid var(--accent);
       outline-offset: 1px;
       z-index: 9;
     }
@@ -1307,7 +1310,7 @@
       font-weight: 600;
       white-space: normal;
       display: -webkit-box;
-      -webkit-line-clamp: 3;
+      -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
       line-height: 1.25;
@@ -3404,17 +3407,17 @@
           <label for="settingsScheme" id="schemeLabel">Colour scheme</label>
           <select id="settingsScheme">
             <option value="system" id="schemeOptSystem">Follow system</option>
-            <option value="linen">Linen 素</option>
-            <option value="frost">Frost 霜</option>
-            <option value="nightshift">Nightshift 夜</option>
+            <option value="linen" id="schemeOptLinen">Linen — warm white</option>
+            <option value="frost" id="schemeOptFrost">Frost — cool white</option>
+            <option value="nightshift" id="schemeOptNight">Nightshift — dark</option>
           </select>
           <div class="field-hint" id="schemeHint">Applies as soon as you pick it, and is remembered on this machine.</div>
         </div>
         <div class="settings-field">
           <label for="settingsBlocks" id="blocksLabel">Timeline blocks</label>
           <select id="settingsBlocks">
-            <option value="tint" id="blocksOptTint">Tint — filled bar</option>
-            <option value="cap" id="blocksOptCap">Cap — pale bar, coloured start edge</option>
+            <option value="tint" id="blocksOptTint">Coloured — filled with the project's colour</option>
+            <option value="cap" id="blocksOptCap">Light — almost white, colour down the left edge</option>
           </select>
           <div class="field-hint" id="blocksHint">How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.</div>
         </div>
@@ -3694,9 +3697,12 @@
         schemeSystem: "跟随系统",
         schemeHint: "选中即生效，记在本机。深浅色都在这里切。",
         blocksLabel: "时间轴色块",
-        blocksHint: "一次会话在时间轴上怎么画。颜色不变，变的是色块被填满多少。",
-        blocksTint: "淡填 — 有色实条",
-        blocksCap: "左标 — 极淡底 + 起始端上色",
+        blocksHint: "时间轴上每段会话的样子。两种用的是同一组颜色，区别只在填得多满。",
+        blocksTint: "彩色块 — 用项目颜色填满",
+        blocksCap: "浅色块 — 接近白色，左边一道项目颜色",
+        schemeLinen: "Linen 素 — 暖白",
+        schemeFrost: "Frost 霜 — 冷白",
+        schemeNight: "Nightshift 夜 — 深色",
         localCliTitle: "本地 CLI 检测",
         loading: "加载中…",
         defaultAnalysisProviderLabel: "默认分析器",
@@ -3911,9 +3917,12 @@
         schemeSystem: "Follow system",
         schemeHint: "Applies as soon as you pick it, and is remembered on this machine. Light and dark both live here.",
         blocksLabel: "Timeline blocks",
-        blocksHint: "How a session is drawn on the timeline. Same colours either way — this only changes how much of the bar they fill.",
-        blocksTint: "Tint — filled bar",
-        blocksCap: "Cap — pale bar, coloured start edge",
+        blocksHint: "How each session looks on the timeline. Both use the same colours; only how much of the bar they fill changes.",
+        blocksTint: "Coloured — filled with the project's colour",
+        blocksCap: "Light — almost white, colour down the left edge",
+        schemeLinen: "Linen — warm white",
+        schemeFrost: "Frost — cool white",
+        schemeNight: "Nightshift — dark",
         localCliTitle: "Local CLI Detection",
         loading: "Loading…",
         defaultAnalysisProviderLabel: "Default Analysis Provider",
@@ -4117,6 +4126,9 @@
       document.getElementById("appearanceTitle").textContent = t("appearanceTitle");
       document.getElementById("schemeLabel").textContent = t("schemeLabel");
       document.getElementById("schemeOptSystem").textContent = t("schemeSystem");
+      document.getElementById("schemeOptLinen").textContent = t("schemeLinen");
+      document.getElementById("schemeOptFrost").textContent = t("schemeFrost");
+      document.getElementById("schemeOptNight").textContent = t("schemeNight");
       document.getElementById("schemeHint").textContent = t("schemeHint");
       document.getElementById("blocksLabel").textContent = t("blocksLabel");
       document.getElementById("blocksHint").textContent = t("blocksHint");
@@ -5502,6 +5514,13 @@
     function renderCalendar(data) {
       const c = document.getElementById("timelineContainer");
       const ss = data.sessions || [];
+      // A day column is ~1/7 of the container, and a block is a fraction of that
+      // again once sessions overlap. The old code decided what to print from the
+      // block's HEIGHT alone, so a 20px-wide sliver in a four-deep day still got
+      // a title, a path and a duration — three lines of ellipsis. Work out the
+      // real pixel width first and let that decide.
+      const CAL_GUTTER = 48;
+      const colWidthPx = Math.max(0, (c.clientWidth || 900) - CAL_GUTTER) / 7;
 
       // Always compute the fixed Mon-Sun grid matching scanWeek(weekOffset)
       const now = new Date();
@@ -5632,10 +5651,19 @@
           const tipPath = fullPath ? escapeHtml(fullPath) : "";
           const blockScopeKey = scopeKey(b);
           const isSelected = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
-          const showMeta = heightPct > 4;
-          const showPath = heightPct > 6 && shortPath;
-          const titleClass = summary ? "cb-title cb-summary" : "cb-title";
-          let inner = `<span class="${titleClass}">${safeTitle}</span>`;
+          // Width thresholds, in px of actual block: below ~52 nothing but the
+          // fill reads, and a truncated word is worse than no word — the tooltip
+          // still has all of it. The path is the first thing to go: it is the
+          // least useful line at a glance and the longest.
+          const blockPx = colWidthPx * (widthPct / 100);
+          const showTitle = blockPx >= 52;
+          const showMeta = blockPx >= 44 && heightPct > 4;
+          const showPath = blockPx >= 132 && heightPct > 8 && shortPath;
+          // The three-line summary needs room to be worth wrapping; anywhere
+          // else it falls back to one line with an ellipsis.
+          const wrapSummary = summary && blockPx >= 96 && heightPct > 7;
+          const titleClass = wrapSummary ? "cb-title cb-summary" : "cb-title";
+          let inner = showTitle ? `<span class="${titleClass}">${safeTitle}</span>` : "";
           if (showPath) inner += `<span class="cb-path">${escapeHtml(shortPath)}</span>`;
           if (showMeta) inner += `<span class="cb-meta">${escapeHtml(dur)}</span>`;
 
