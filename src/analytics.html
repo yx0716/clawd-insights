@@ -6,26 +6,647 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Agent Insights</title>
   <style>
+    /* ── Design tokens ──────────────────────────────────────────────────────
+       Every colour on this page comes from here. Chrome roles (surfaces, ink,
+       accent, status) are separate from the categorical data slots --s1…--s8,
+       which carry project and agent identity in the timeline, pie and legends.
+       Swapping a whole scheme means replacing this block — nothing else.
+
+       The --s slots are a fixed order, never cycled: past slot 8 a project
+       folds into "Other" rather than re-using slot 1's hue (see projColor).
+       ------------------------------------------------------------------------ */
     :root {
-      --bg: #FFF8F0;
-      --bg-card: #FFFFFF;
-      --text: #2D3748;
-      --text-secondary: #718096;
-      --text-muted: #A0AEC0;
-      --border: #F0E6D8;
-      --border-light: #FAF0E6;
-      --accent: #E8734A;
-      --accent-light: #FFF0EB;
-      --accent-dark: #C75A35;
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+      color-scheme: light;
+
+      /* surfaces */
+      --bg: #fcf7f6;
+      --bg-card: #fefdfd;
+      --bg-inset: #f9efee;
+
+      /* ink */
+      --text: #23211D;
+      --text-secondary: #625E57;
+      --text-muted: #928D84;
+
+      /* lines */
+      --border: #f1dfdc;
+      --border-light: #f7efee;
+
+      /* brand accent */
+      --accent: #3A352D;
+      --accent-light: #f8edeb;
+      --accent-dark: #1D1A15;
+      --on-accent: #FFFFFF;
+      --accent-ring: rgba(58, 53, 45, 0.22);
+      --accent-wash: rgba(58, 53, 45, 0.05);
+
+      /* status — reserved, never a data slot */
+      --ok: #3F7A46;
+      --ok-bg: #EFF5ED;
+      --ok-border: #D8E7D5;
+      --danger: #A83A2C;
+      --danger-bg: #FBEDE9;
+      --danger-border: #F0D5CE;
+      --danger-strong: #7E2A1F;
+      --warn: #8A6410;
+
+      /* tooltip */
+      --tip-bg: #23211D;
+      --tip-text: #FAF9F6;
+      --tip-detail: #C4BEB4;
+      --tip-muted: #9B958B;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(35,33,29,.04);
+      --shadow-md: 0 6px 20px rgba(35,33,29,.07);
+      --radius: 9px;
+      --radius-sm: 6px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #018d87;
+      --s2: #8b5ecc;
+      --s3: #b75d3d;
+      --s4: #0c87a7;
+      --s5: #bc5365;
+      --s6: #537bc7;
+      --s7: #aa6f05;
+      --s8: #a95299;
+
+      /* pale fills — the edge above carries the identity */
+      --s1-fill: #c1f2ed;
+      --s2-fill: #eae0ff;
+      --s3-fill: #ffded3;
+      --s4-fill: #c3eeff;
+      --s5-fill: #ffdcdf;
+      --s6-fill: #d9e7ff;
+      --s7-fill: #fce2c2;
+      --s8-fill: #fcdaf4;
+
+      /* label ink — a dark step of the slot's own hue */
+      --s1-ink: #005450;
+      --s2-ink: #503b70;
+      --s3-ink: #6f341f;
+      --s4-ink: #005065;
+      --s5-ink: #70303b;
+      --s6-ink: #2c4678;
+      --s7-ink: #643e00;
+      --s8-ink: #64335b;
+      --s-other: #8E8A82;
+      --s-other-fill: #e8e6e2;
+      --s-other-ink: #494744;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* Every other scheme, one block each. A block sets the same token roles at
+       different values — nothing outside this range knows a scheme exists. The
+       attribute goes on <html>; these match :root's specificity and come after
+       it, so the last one wins. */
+
+    /* ── Linen 素 · wash · chalk ── */
+    [data-scheme="linen"] {
+      color-scheme: light;
+
+      /* surfaces */
+      --bg: #fcf7f6;
+      --bg-card: #fefdfd;
+      --bg-inset: #f9efee;
+
+      /* ink */
+      --text: #23211D;
+      --text-secondary: #625E57;
+      --text-muted: #928D84;
+
+      /* lines */
+      --border: #f1dfdc;
+      --border-light: #f7efee;
+
+      /* brand accent */
+      --accent: #3A352D;
+      --accent-light: #f8edeb;
+      --accent-dark: #1D1A15;
+      --on-accent: #FFFFFF;
+      --accent-ring: rgba(58, 53, 45, 0.22);
+      --accent-wash: rgba(58, 53, 45, 0.05);
+
+      /* status — reserved, never a data slot */
+      --ok: #3F7A46;
+      --ok-bg: #EFF5ED;
+      --ok-border: #D8E7D5;
+      --danger: #A83A2C;
+      --danger-bg: #FBEDE9;
+      --danger-border: #F0D5CE;
+      --danger-strong: #7E2A1F;
+      --warn: #8A6410;
+
+      /* tooltip */
+      --tip-bg: #23211D;
+      --tip-text: #FAF9F6;
+      --tip-detail: #C4BEB4;
+      --tip-muted: #9B958B;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(35,33,29,.04);
+      --shadow-md: 0 6px 20px rgba(35,33,29,.07);
+      --radius: 9px;
+      --radius-sm: 6px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #018d87;
+      --s2: #8b5ecc;
+      --s3: #b75d3d;
+      --s4: #0c87a7;
+      --s5: #bc5365;
+      --s6: #537bc7;
+      --s7: #aa6f05;
+      --s8: #a95299;
+
+      /* pale fills — the edge above carries the identity */
+      --s1-fill: #c1f2ed;
+      --s2-fill: #eae0ff;
+      --s3-fill: #ffded3;
+      --s4-fill: #c3eeff;
+      --s5-fill: #ffdcdf;
+      --s6-fill: #d9e7ff;
+      --s7-fill: #fce2c2;
+      --s8-fill: #fcdaf4;
+
+      /* label ink — a dark step of the slot's own hue */
+      --s1-ink: #005450;
+      --s2-ink: #503b70;
+      --s3-ink: #6f341f;
+      --s4-ink: #005065;
+      --s5-ink: #70303b;
+      --s6-ink: #2c4678;
+      --s7-ink: #643e00;
+      --s8-ink: #64335b;
+      --s-other: #8E8A82;
+      --s-other-fill: #e8e6e2;
+      --s-other-ink: #494744;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* ── Frost 霜 · wash · mist ── */
+    [data-scheme="frost"] {
+      color-scheme: light;
+
+      /* surfaces */
+      --bg: #f6f9fc;
+      --bg-card: #fdfdfe;
+      --bg-inset: #edf3f9;
+
+      /* ink */
+      --text: #14181D;
+      --text-secondary: #58616C;
+      --text-muted: #8A929B;
+
+      /* lines */
+      --border: #dae5f1;
+      --border-light: #edf2f7;
+
+      /* brand accent */
+      --accent: #1E2630;
+      --accent-light: #eaf1f8;
+      --accent-dark: #0C1116;
+      --on-accent: #FFFFFF;
+      --accent-ring: rgba(30, 38, 48, 0.22);
+      --accent-wash: rgba(30, 38, 48, 0.05);
+
+      /* status — reserved, never a data slot */
+      --ok: #136B3F;
+      --ok-bg: #ECF5F0;
+      --ok-border: #CFE7DA;
+      --danger: #A32B2B;
+      --danger-bg: #FCEEEE;
+      --danger-border: #F3D5D5;
+      --danger-strong: #7C1F1F;
+      --warn: #8A5A00;
+
+      /* tooltip */
+      --tip-bg: #14181D;
+      --tip-text: #F9FAFB;
+      --tip-detail: #B4BCC5;
+      --tip-muted: #88909A;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(20,24,29,.05);
+      --shadow-md: 0 6px 20px rgba(20,24,29,.08);
+      --radius: 9px;
+      --radius-sm: 6px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #138b90;
+      --s2: #ba5947;
+      --s3: #0593bf;
+      --s4: #7f4b8f;
+      --s5: #089772;
+      --s6: #786dbd;
+      --s7: #4f8c41;
+      --s8: #497ac3;
+
+      /* pale fills — the edge above carries the identity */
+      --s1-fill: #c0f1f3;
+      --s2-fill: #ffddd6;
+      --s3-fill: #c7edff;
+      --s4-fill: #f5dcfc;
+      --s5-fill: #c7f2e0;
+      --s6-fill: #e4e3ff;
+      --s7-fill: #d5efd0;
+      --s8-fill: #d8e8ff;
+
+      /* label ink — a dark step of the slot's own hue */
+      --s1-ink: #005356;
+      --s2-ink: #703327;
+      --s3-ink: #004f69;
+      --s4-ink: #5b3667;
+      --s5-ink: #00553f;
+      --s6-ink: #463e75;
+      --s7-ink: #2b5322;
+      --s8-ink: #274777;
+      --s-other: #8A929B;
+      --s-other-fill: #e3e6ea;
+      --s-other-ink: #45484b;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* ── Kiln 窑 · solid · chalk ── */
+    [data-scheme="kiln"] {
+      color-scheme: light;
+
+      /* surfaces */
+      --bg: #fcf7f6;
+      --bg-card: #fefdfd;
+      --bg-inset: #f9efee;
+
+      /* ink */
+      --text: #241F1A;
+      --text-secondary: #665D53;
+      --text-muted: #8E8478;
+
+      /* lines */
+      --border: #f1dfdc;
+      --border-light: #f7efee;
+
+      /* brand accent */
+      --accent: #A8452A;
+      --accent-light: #fdece8;
+      --accent-dark: #7F3320;
+      --on-accent: #FFFFFF;
+      --accent-ring: rgba(168, 69, 42, 0.26);
+      --accent-wash: rgba(168, 69, 42, 0.08);
+
+      /* status — reserved, never a data slot */
+      --ok: #3F7A46;
+      --ok-bg: #EDF5EB;
+      --ok-border: #D5E6D2;
+      --danger: #A83A2C;
+      --danger-bg: #FBEBE7;
+      --danger-border: #F0D2CB;
+      --danger-strong: #7E2A1F;
+      --warn: #8A6410;
+
+      /* tooltip */
+      --tip-bg: #241F1A;
+      --tip-text: #FFFDFB;
+      --tip-detail: #C6BBAE;
+      --tip-muted: #9C9084;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(40,30,20,.04);
+      --shadow-md: 0 6px 20px rgba(40,30,20,.08);
+      --radius: 10px;
+      --radius-sm: 7px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #c9583f;
+      --s2: #1086d3;
+      --s3: #ba7900;
+      --s4: #01948a;
+      --s5: #8f68cb;
+      --s6: #4b943b;
+      --s7: #b05baa;
+      --s8: #868604;
+
+      /* fill == edge: a block is a solid slot colour */
+      --s1-fill: var(--s1);
+      --s2-fill: var(--s2);
+      --s3-fill: var(--s3);
+      --s4-fill: var(--s4);
+      --s5-fill: var(--s5);
+      --s6-fill: var(--s6);
+      --s7-fill: var(--s7);
+      --s8-fill: var(--s8);
+
+      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
+      --s1-ink: #15100D;
+      --s2-ink: #15100D;
+      --s3-ink: #15100D;
+      --s4-ink: #15100D;
+      --s5-ink: #15100D;
+      --s6-ink: #15100D;
+      --s7-ink: #15100D;
+      --s8-ink: #15100D;
+      --s-other: #A79C8E;
+      --s-other-fill: var(--s-other);
+      --s-other-ink: #15100D;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* ── Graphite 墨 · solid · mist ── */
+    [data-scheme="graphite"] {
+      color-scheme: light;
+
+      /* surfaces */
+      --bg: #f6f9fc;
+      --bg-card: #fdfdfe;
+      --bg-inset: #edf3f9;
+
+      /* ink */
+      --text: #0F1216;
+      --text-secondary: #545D6A;
+      --text-muted: #858E9B;
+
+      /* lines */
+      --border: #dae5f1;
+      --border-light: #edf2f7;
+
+      /* brand accent */
+      --accent: #1B3B6F;
+      --accent-light: #e8f1fe;
+      --accent-dark: #12294D;
+      --on-accent: #FFFFFF;
+      --accent-ring: rgba(27, 59, 111, 0.26);
+      --accent-wash: rgba(27, 59, 111, 0.07);
+
+      /* status — reserved, never a data slot */
+      --ok: #136B3F;
+      --ok-bg: #E9F4EE;
+      --ok-border: #CBE6D8;
+      --danger: #A32B2B;
+      --danger-bg: #FCEDED;
+      --danger-border: #F2D2D2;
+      --danger-strong: #7C1F1F;
+      --warn: #8A5A00;
+
+      /* tooltip */
+      --tip-bg: #0F1216;
+      --tip-text: #FFFFFF;
+      --tip-detail: #B9C0CA;
+      --tip-muted: #8D96A2;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(15,18,22,.05);
+      --shadow-md: 0 8px 24px rgba(15,18,22,.09);
+      --radius: 8px;
+      --radius-sm: 5px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #c9583f;
+      --s2: #0096af;
+      --s3: #9e7b0b;
+      --s4: #896ace;
+      --s5: #06976d;
+      --s6: #0884ea;
+      --s7: #b05baa;
+      --s8: #61911c;
+
+      /* fill == edge: a block is a solid slot colour */
+      --s1-fill: var(--s1);
+      --s2-fill: var(--s2);
+      --s3-fill: var(--s3);
+      --s4-fill: var(--s4);
+      --s5-fill: var(--s5);
+      --s6-fill: var(--s6);
+      --s7-fill: var(--s7);
+      --s8-fill: var(--s8);
+
+      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
+      --s1-ink: #15100D;
+      --s2-ink: #15100D;
+      --s3-ink: #15100D;
+      --s4-ink: #15100D;
+      --s5-ink: #15100D;
+      --s6-ink: #15100D;
+      --s7-ink: #15100D;
+      --s8-ink: #15100D;
+      --s-other: #98A1AE;
+      --s-other-fill: var(--s-other);
+      --s-other-ink: #15100D;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* ── Nightshift 夜 · solid ── */
+    [data-scheme="nightshift"] {
+      color-scheme: dark;
+
+      /* surfaces */
+      --bg: #0E121A;
+      --bg-card: #171B23;
+      --bg-inset: #1E232C;
+
+      /* ink */
+      --text: #E7ECF3;
+      --text-secondary: #9BA6B5;
+      --text-muted: #6C7686;
+
+      /* lines */
+      --border: #2A313C;
+      --border-light: #222833;
+
+      /* brand accent */
+      --accent: #58A6F5;
+      --accent-light: #16273A;
+      --accent-dark: #8CC4FA;
+      --on-accent: #0B1017;
+      --accent-ring: rgba(88, 166, 245, 0.32);
+      --accent-wash: rgba(88, 166, 245, 0.10);
+
+      /* status — reserved, never a data slot */
+      --ok: #5CC98A;
+      --ok-bg: #14301F;
+      --ok-border: #22492F;
+      --danger: #F08573;
+      --danger-bg: #38201C;
+      --danger-border: #54312A;
+      --danger-strong: #F5A798;
+      --warn: #D9A63C;
+
+      /* tooltip */
+      --tip-bg: #2A313C;
+      --tip-text: #F2F5F9;
+      --tip-detail: #A9B4C2;
+      --tip-muted: #7C8797;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(0,0,0,.45);
+      --shadow-md: 0 10px 28px rgba(0,0,0,.55);
+      --radius: 10px;
+      --radius-sm: 6px;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #c9583f;
+      --s2: #10a6ad;
+      --s3: #8b65d8;
+      --s4: #4a952a;
+      --s5: #b955a4;
+      --s6: #9a7d0b;
+      --s7: #0081e7;
+      --s8: #15ab83;
+
+      /* fill == edge: a block is a solid slot colour */
+      --s1-fill: var(--s1);
+      --s2-fill: var(--s2);
+      --s3-fill: var(--s3);
+      --s4-fill: var(--s4);
+      --s5-fill: var(--s5);
+      --s6-fill: var(--s6);
+      --s7-fill: var(--s7);
+      --s8-fill: var(--s8);
+
+      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
+      --s1-ink: #100D0B;
+      --s2-ink: #100D0B;
+      --s3-ink: #100D0B;
+      --s4-ink: #100D0B;
+      --s5-ink: #100D0B;
+      --s6-ink: #100D0B;
+      --s7-ink: #100D0B;
+      --s8-ink: #100D0B;
+      --s-other: #7A8494;
+      --s-other-fill: var(--s-other);
+      --s-other-ink: #100D0B;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
+    }
+
+    /* ── Ember 烬 · solid ── */
+    [data-scheme="ember"] {
+      color-scheme: dark;
+
+      /* surfaces */
+      --bg: #171310;
+      --bg-card: #221D1A;
+      --bg-inset: #2A2320;
+
+      /* ink */
+      --text: #F0E9E3;
+      --text-secondary: #AFA298;
+      --text-muted: #7D7269;
+
+      /* lines */
+      --border: #352C27;
+      --border-light: #2A2320;
+
+      /* brand accent */
+      --accent: #E58057;
+      --accent-light: #3A241B;
+      --accent-dark: #F0A183;
+      --on-accent: #1A0F09;
+      --accent-ring: rgba(229, 128, 87, 0.32);
+      --accent-wash: rgba(229, 128, 87, 0.10);
+
+      /* status — reserved, never a data slot */
+      --ok: #6FBF7C;
+      --ok-bg: #1C2E1D;
+      --ok-border: #2E482F;
+      --danger: #EC7C6A;
+      --danger-bg: #38211C;
+      --danger-border: #54332B;
+      --danger-strong: #F2A192;
+      --warn: #D8A23F;
+
+      /* tooltip */
+      --tip-bg: #352C27;
+      --tip-text: #F6F0EA;
+      --tip-detail: #BFB2A7;
+      --tip-muted: #8E8378;
+
+      /* elevation & shape */
+      --shadow: 0 1px 2px rgba(0,0,0,.45);
+      --shadow-md: 0 10px 28px rgba(0,0,0,.55);
       --radius: 12px;
       --radius-sm: 8px;
-      --claude-color: #E8734A;
-      --codex-color: #5B8DEF;
-      --cursor-color: #9F7AEA;
-      --copilot-color: #48BB78;
-      --gemini-color: #F56565;
+
+      /* categorical data slots — fixed order, never cycled */
+      --s1: #c55c44;
+      --s2: #1fa89c;
+      --s3: #8e6ac7;
+      --s4: #488e38;
+      --s5: #d06b9e;
+      --s6: #868604;
+      --s7: #2386ce;
+      --s8: #b6770b;
+
+      /* fill == edge: a block is a solid slot colour */
+      --s1-fill: var(--s1);
+      --s2-fill: var(--s2);
+      --s3-fill: var(--s3);
+      --s4-fill: var(--s4);
+      --s5-fill: var(--s5);
+      --s6-fill: var(--s6);
+      --s7-fill: var(--s7);
+      --s8-fill: var(--s8);
+
+      /* label ink — white or near-black, whichever clears 4.4:1 on the fill */
+      --s1-ink: #100D0B;
+      --s2-ink: #100D0B;
+      --s3-ink: #100D0B;
+      --s4-ink: #100D0B;
+      --s5-ink: #100D0B;
+      --s6-ink: #100D0B;
+      --s7-ink: #100D0B;
+      --s8-ink: #100D0B;
+      --s-other: #8B8078;
+      --s-other-fill: var(--s-other);
+      --s-other-ink: #100D0B;
+      --block-ink: var(--s1-ink);
+
+      /* agent identity — same slots */
+      --claude-color: var(--s1);
+      --codex-color: var(--s2);
+      --cursor-color: var(--s3);
+      --copilot-color: var(--s4);
+      --gemini-color: var(--s5);
     }
 
     * {
@@ -238,7 +859,7 @@
       border-radius: 6px;
       border: 1px solid var(--accent);
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       font-size: 12px;
       font-weight: 700;
       cursor: pointer;
@@ -288,7 +909,7 @@
     }
 
     .hstat {
-      background: var(--accent-light);
+      background: var(--bg-inset);
       border-radius: var(--radius-sm);
       padding: 8px 14px;
       min-width: 120px;
@@ -296,7 +917,7 @@
 
     .hstat .hl {
       font-size: 9px;
-      color: var(--accent);
+      color: var(--text-muted);
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -425,8 +1046,8 @@
       align-items: flex-start;
       justify-content: space-between;
       gap: 14px;
-      background: linear-gradient(135deg, #FFF3E8, #FFF9F3);
-      border: 1px solid #F3DCC7;
+      background: var(--accent-light);
+      border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 14px 16px;
       box-shadow: var(--shadow);
@@ -467,8 +1088,8 @@
       font-size: 10px;
       font-weight: 700;
       color: var(--accent-dark);
-      background: rgba(255, 255, 255, .78);
-      border: 1px solid #F3DCC7;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
       border-radius: 999px;
       padding: 4px 8px;
     }
@@ -623,7 +1244,7 @@
       height: 24px;
       border: 1px solid var(--border-light);
       border-radius: 6px;
-      background: linear-gradient(180deg, rgba(255, 248, 240, .9), rgba(255, 255, 255, .95));
+      background: var(--bg-inset);
       overflow: hidden;
     }
 
@@ -637,19 +1258,22 @@
       padding: 0 4px;
       font-size: 9px;
       font-weight: 500;
-      color: #fff;
+      color: var(--block-ink);
       cursor: pointer;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
       min-width: 4px;
-      opacity: .72;
-      transition: opacity .15s, transform .15s;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+      /* Two separations, doing different jobs: the 1px border is the block's own
+         edge (and the only thing that reads when a scheme uses pale fills), the
+         surface-coloured ring outside it keeps touching sessions apart. */
+      border: 1px solid transparent;
+      box-shadow: 0 0 0 1.5px var(--bg-inset);
+      transition: filter .15s, transform .15s;
     }
 
     .time-block:hover {
-      opacity: .85;
+      filter: brightness(1.12);
       transform: scaleY(1.1);
       z-index: 10;
     }
@@ -697,7 +1321,7 @@
 
     .timeline-view-toggle button.active {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
     }
 
     /* ── Calendar (vertical week-grid) view ── */
@@ -753,7 +1377,7 @@
     .calendar-day-track {
       position: relative;
       height: var(--calendar-track-height, 480px);
-      background: linear-gradient(180deg, rgba(255, 248, 240, .9), rgba(255, 255, 255, .95));
+      background: var(--bg-inset);
       border: 1px solid var(--border-light);
       border-radius: 6px;
       overflow: hidden;
@@ -818,12 +1442,12 @@
       padding: 2px 5px;
       font-size: 9px;
       font-weight: 500;
-      color: #fff;
+      color: var(--block-ink);
       overflow: hidden;
       cursor: pointer;
-      opacity: .72;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
-      transition: transform .15s, opacity .15s;
+      border: 1px solid transparent;
+      box-shadow: 0 0 0 1.5px var(--bg-inset);
+      transition: transform .15s, filter .15s;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
@@ -834,7 +1458,7 @@
     .calendar-block:hover {
       transform: scale(1.02);
       z-index: 10;
-      opacity: .9;
+      filter: brightness(1.12);
     }
 
     .calendar-block.selected {
@@ -1034,7 +1658,7 @@
     .bar {
       width: 100%;
       border-radius: 4px 4px 0 0;
-      background: linear-gradient(180deg, var(--accent), var(--accent-dark));
+      background: var(--s1);
       min-height: 0;
       transition: height .3s;
     }
@@ -1046,7 +1670,7 @@
 
     .bar-col .bar-value {
       font-size: 8px;
-      color: var(--accent);
+      color: var(--text-secondary);
       font-weight: 700;
     }
 
@@ -1070,7 +1694,7 @@
       position: relative;
       cursor: col-resize;
       border-radius: 999px;
-      background: linear-gradient(180deg, rgba(240, 230, 216, 0.2), rgba(240, 230, 216, 0.8), rgba(240, 230, 216, 0.2));
+      background: var(--border);
       min-height: 320px;
     }
 
@@ -1098,7 +1722,7 @@
       position: relative;
       cursor: ns-resize;
       border-radius: 999px;
-      background: linear-gradient(90deg, rgba(240, 230, 216, 0.2), rgba(240, 230, 216, 0.8), rgba(240, 230, 216, 0.2));
+      background: var(--border);
     }
 
     .row-splitter::before {
@@ -1159,13 +1783,13 @@
     .events-action-btn.primary {
       background: var(--accent);
       border-color: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
     }
 
     .events-action-btn.primary:hover:not(:disabled) {
       background: var(--accent-dark);
       border-color: var(--accent-dark);
-      color: #fff;
+      color: var(--on-accent);
     }
 
 /* Count pill doubles as the "clear selection" affordance: clicking it
@@ -1186,7 +1810,7 @@
 
     .evt-selection-count:hover {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
 
@@ -1202,7 +1826,7 @@
     }
 
     .events-status.error {
-      color: #C62828;
+      color: var(--danger);
     }
 
     .events-grid {
@@ -1234,8 +1858,8 @@
     }
 
     .evt-card.multi-selected {
-      border-color: #E9C2B1;
-      box-shadow: inset 0 0 0 1px rgba(232, 115, 74, 0.18);
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent-ring);
     }
 
     .evt-card.analyzed {
@@ -1257,7 +1881,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: linear-gradient(90deg, transparent, rgba(232, 115, 74, 0.08), transparent);
+      background: linear-gradient(90deg, transparent, var(--accent-wash), transparent);
       animation: shimmer 1.5s infinite;
     }
 
@@ -1522,7 +2146,7 @@
 
     .analysis-copy-btn:hover {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
 
@@ -1703,14 +2327,14 @@
     }
 
     .toast.success {
-      border-color: #CDEBD4;
-      background: #F2FBF5;
+      border-color: var(--ok-border);
+      background: var(--ok-bg);
     }
 
     .toast.error {
-      border-color: #F3C7C4;
-      background: #FFF5F4;
-      color: #9F2D24;
+      border-color: var(--danger-border);
+      background: var(--danger-bg);
+      color: var(--danger-strong);
     }
 
     /* ── Knowledge Compound ── */
@@ -1792,7 +2416,6 @@
       align-items: center;
       justify-content: center;
       font-size: 8px;
-      color: #fff;
       font-weight: 600;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1813,8 +2436,8 @@
       top: -24px;
       left: 50%;
       transform: translateX(-50%);
-      background: var(--text);
-      color: #fff;
+      background: var(--tip-bg);
+      color: var(--tip-text);
       padding: 2px 8px;
       border-radius: 4px;
       font-size: 9px;
@@ -1881,8 +2504,8 @@
     /* Tooltip */
     .tooltip {
       position: fixed;
-      background: var(--text);
-      color: #fff;
+      background: var(--tip-bg);
+      color: var(--tip-text);
       padding: 8px 12px;
       border-radius: 6px;
       font-size: 11px;
@@ -1900,12 +2523,12 @@
     }
 
     .tooltip .tip-detail {
-      color: #CBD5E0;
+      color: var(--tip-detail);
       font-size: 10px;
     }
 
     .tooltip .tip-path {
-      color: #A0AEC0;
+      color: var(--tip-muted);
       font-size: 10px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
       margin-top: 3px;
@@ -1963,7 +2586,7 @@
 
     .confirm-btns .btn-ok {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
 
@@ -2210,7 +2833,7 @@
       border-radius: 6px;
       border: 1px solid var(--accent);
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       cursor: pointer;
       font-size: 12px;
       font-weight: 700;
@@ -2300,14 +2923,14 @@
     }
 
     .settings-status.success {
-      background: #E6F4EA;
-      color: #2E7D32;
+      background: var(--ok-bg);
+      color: var(--ok);
       display: block;
     }
 
     .settings-status.error {
-      background: #FDECEA;
-      color: #C62828;
+      background: var(--danger-bg);
+      color: var(--danger);
       display: block;
     }
 
@@ -2332,7 +2955,7 @@
 
     .settings-btns .btn-save {
       background: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
       border-color: var(--accent);
     }
 
@@ -2347,13 +2970,13 @@
 
     .settings-btns .btn-clear {
       background: var(--bg-card);
-      color: #C62828;
-      border-color: #FDECEA;
+      color: var(--danger);
+      border-color: var(--danger-border);
       margin-right: auto;
     }
 
     .settings-btns .btn-clear:hover {
-      background: #FDECEA;
+      background: var(--danger-bg);
     }
 
     .analysis-error-link {
@@ -2418,7 +3041,7 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .provider-card-dot.enabled { background: #48BB78; }
+    .provider-card-dot.enabled { background: var(--ok); }
     .provider-card-dot.disabled { background: var(--text-muted); }
     .provider-card-info { flex: 1; min-width: 0; }
     .provider-card-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2430,7 +3053,7 @@
       background: var(--bg-card); color: var(--text-secondary); cursor: pointer;
     }
     .provider-card-actions button:hover { background: var(--accent-light); color: var(--accent); border-color: var(--accent); }
-    .provider-card-actions .btn-del:hover { background: #FDECEA; color: #C62828; border-color: #C62828; }
+    .provider-card-actions .btn-del:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
 
     .cli-diag {
       background: var(--bg);
@@ -2456,11 +3079,11 @@
     }
 
     .cli-diag-dot.found {
-      background: #48BB78;
+      background: var(--ok);
     }
 
     .cli-diag-dot.missing {
-      background: #CBD5E0;
+      background: var(--border);
     }
 
     .cli-diag-name {
@@ -2560,11 +3183,11 @@
     }
 
     .cli-test-result.ok {
-      color: #2E7D32;
+      color: var(--ok);
     }
 
     .cli-test-result.fail {
-      color: #C62828;
+      color: var(--danger);
     }
 
     .evt-day-header {
@@ -2620,7 +3243,7 @@
     .evt-day-select-btn.active {
       background: var(--accent);
       border-color: var(--accent);
-      color: #fff;
+      color: var(--on-accent);
     }
 
     .evt-day-select-btn svg {
@@ -2689,6 +3312,19 @@
       font-size: 12px;
     }
   </style>
+
+  <script>
+    // Stamp the saved colour scheme onto <html> before the first paint, so the
+    // window never flashes one scheme and settles into another. Deliberately
+    // tiny and dependency-free — the rest of the scheme code lives below.
+    (function () {
+      var v = null;
+      try { v = localStorage.getItem("clawd-analytics-scheme"); } catch (e) { /* private mode */ }
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.scheme =
+        (!v || v === "system") ? (prefersDark ? "nightshift" : "linen") : v;
+    })();
+  </script>
 </head>
 
 <body>
@@ -2908,6 +3544,24 @@
         the default analysis backend here, or add custom API-compatible providers below.</div>
       <div class="settings-status" id="settingsStatus"></div>
 
+      <!-- Section 0: Appearance -->
+      <div class="settings-section">
+        <h3 id="appearanceTitle">Appearance</h3>
+        <div class="settings-field">
+          <label for="settingsScheme" id="schemeLabel">Colour scheme</label>
+          <select id="settingsScheme">
+            <option value="system" id="schemeOptSystem">Follow system</option>
+            <option value="linen">Linen 素</option>
+            <option value="frost">Frost 霜</option>
+            <option value="kiln">Kiln 窑</option>
+            <option value="graphite">Graphite 墨</option>
+            <option value="nightshift">Nightshift 夜</option>
+            <option value="ember">Ember 烬</option>
+          </select>
+          <div class="field-hint" id="schemeHint">Applies as soon as you pick it, and is remembered on this machine.</div>
+        </div>
+      </div>
+
       <!-- Section 1: Local CLI Detection + default selection -->
       <div class="settings-section">
         <h3 id="localCliTitle">Local CLI Detection</h3>
@@ -3026,13 +3680,27 @@
   </div>
 
   <script>
-    const AGENT_COLORS = { "claude-code": "#E8734A", "codex": "#5B8DEF", "cursor-agent": "#9F7AEA", "copilot-cli": "#48BB78", "gemini-cli": "#F56565", "tclaude": "#D53F8C", "claude-internal": "#B7791F", "openclaw": "#ED8936", "opencode": "#38B2AC", "qwen-code": "#ECC94B" };
+    // Agent identity draws from the same fixed slot order as projects, so one
+    // scheme swap repaints both. Agents past slot 8 share --s-other; the legend
+    // always labels them, so identity never rests on colour alone.
+    const AGENT_COLORS = {
+      "claude-code": "var(--s1)", "codex": "var(--s2)", "cursor-agent": "var(--s3)",
+      "copilot-cli": "var(--s4)", "gemini-cli": "var(--s5)", "tclaude": "var(--s6)",
+      "claude-internal": "var(--s7)", "openclaw": "var(--s8)",
+      "opencode": "var(--s-other)", "qwen-code": "var(--s-other)",
+    };
     const AGENT_LABELS = { "claude-code": "Claude Code", "codex": "Codex", "cursor-agent": "Cursor", "copilot-cli": "Copilot", "gemini-cli": "Gemini", "tclaude": "tclaude", "claude-internal": "Claude Internal", "openclaw": "OpenClaw", "opencode": "opencode", "qwen-code": "Qwen Code" };
-    const PROJECT_PALETTE = ["#E8734A", "#5B8DEF", "#9F7AEA", "#48BB78", "#F6AD55", "#4FD1C5", "#FC8181", "#B794F4"];
+    const SLOT_COUNT = 8; // categorical slots; a 9th project folds into --s-other
     const WEEKDAYS_ZH = ["日", "一", "二", "三", "四", "五", "六"];
     const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const BREAKDOWN_COLORS = ["#E8734A", "#5B8DEF", "#9F7AEA", "#48BB78", "#F56565", "#ECC94B", "#4FD1C5"];
+    const BREAKDOWN_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)"];
     const LANG_STORAGE_KEY = "clawd-analytics-lang";
+    const SCHEME_STORAGE_KEY = "clawd-analytics-scheme";
+    // "system" resolves to one of these; every other value is a scheme id and is
+    // used as-is. Keep in sync with the [data-scheme] blocks in the stylesheet.
+    const SCHEME_SYSTEM_LIGHT = "linen";
+    const SCHEME_SYSTEM_DARK = "nightshift";
+    const SCHEME_IDS = ["linen", "frost", "kiln", "graphite", "nightshift", "ember"];
     const ONBOARDING_HINT_STORAGE_KEY = "clawd-analytics-onboarding-dismissed-v2";
     const PANEL_WIDTH_STORAGE_KEY = "clawd-analytics-sessions-panel-width-v1";
     const CHARTS_HEIGHT_STORAGE_KEY = "clawd-analytics-charts-row-height-v1";
@@ -3157,6 +3825,10 @@
         reportLoadingHint: "可以最小化窗口继续做别的事，完成后回来查看。",
         copy: "复制",
         close: "关闭",
+        appearanceTitle: "外观",
+        schemeLabel: "配色方案",
+        schemeSystem: "跟随系统",
+        schemeHint: "选中即生效，记在本机。深浅色都在这里切。",
         localCliTitle: "本地 CLI 检测",
         loading: "加载中…",
         defaultAnalysisProviderLabel: "默认分析器",
@@ -3366,6 +4038,10 @@
         reportLoadingHint: "Feel free to minimize this window — your report will be waiting.",
         copy: "Copy",
         close: "Close",
+        appearanceTitle: "Appearance",
+        schemeLabel: "Colour scheme",
+        schemeSystem: "Follow system",
+        schemeHint: "Applies as soon as you pick it, and is remembered on this machine. Light and dark both live here.",
         localCliTitle: "Local CLI Detection",
         loading: "Loading…",
         defaultAnalysisProviderLabel: "Default Analysis Provider",
@@ -3473,6 +4149,25 @@
       return text;
     }
 
+    // ── Colour scheme ──
+    function readSchemePref() {
+      let v = null;
+      try { v = localStorage.getItem(SCHEME_STORAGE_KEY); } catch (e) { /* private mode */ }
+      return v && (v === "system" || SCHEME_IDS.includes(v)) ? v : "system";
+    }
+    function resolveScheme(pref) {
+      if (pref !== "system") return pref;
+      const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return dark ? SCHEME_SYSTEM_DARK : SCHEME_SYSTEM_LIGHT;
+    }
+    function applyScheme(pref) {
+      document.documentElement.dataset.scheme = resolveScheme(pref);
+    }
+    function setSchemePref(pref) {
+      try { localStorage.setItem(SCHEME_STORAGE_KEY, pref); } catch (e) { /* private mode */ }
+      applyScheme(pref);
+    }
+
     function weekdayLabel(date) {
       return currentLang === "zh" ? WEEKDAYS_ZH[date.getDay()] : WEEKDAYS_EN[date.getDay()];
     }
@@ -3491,7 +4186,7 @@
     let selectedMonth = null; // {year, month} (1-indexed) when Month tab is active
     let availableMonths = null; // cached list from getAvailableMonths()
     let analysisOptions = [];
-    let projectColorMap = {};
+    let projectSlotMap = {}; // project name → "1"…"8" | "-other"
     let _inlineRenameActive = false; // suppress auto-refresh while user is editing a title
     let _deferredRefresh = false;    // true = watcher fired during rename, replay after commit
     const batchCache = {}; // `${provider}:${sessionId}` → analysis result
@@ -3534,6 +4229,10 @@
       document.getElementById("hMsgsLabel").textContent = t("statsMessages");
       document.getElementById("hToolsLabel").textContent = t("statsTools");
       document.getElementById("hAgentsLabel").textContent = t("statsAgents");
+      document.getElementById("appearanceTitle").textContent = t("appearanceTitle");
+      document.getElementById("schemeLabel").textContent = t("schemeLabel");
+      document.getElementById("schemeOptSystem").textContent = t("schemeSystem");
+      document.getElementById("schemeHint").textContent = t("schemeHint");
       document.getElementById("settingsBtn").title = t("settingsTitle");
       document.getElementById("settingsBtn").setAttribute("aria-label", t("settingsTitle"));
       document.getElementById("tabToday").textContent = t("tabToday");
@@ -4219,54 +4918,28 @@
       if (sameDate(start, end)) return `${fmtDate(start)} ${fmtTime(start)}-${fmtTime(end)}`;
       return `${fmtDate(start)} ${fmtTime(start)} - ${fmtDate(end)} ${fmtTime(end)}`;
     }
-    function agentColor(a) { return AGENT_COLORS[a] || "#A0AEC0"; }
+    function agentColor(a) { return AGENT_COLORS[a] || "var(--s-other)"; }
     function agentLabel(a) { return AGENT_LABELS[a] || a; }
     function agentClass(a) { return (a || "unknown").replace(/[^a-z0-9-]/g, ""); }
     function dayStart(ts) { const d = new Date(ts); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); }
     function sessionGroupTs(session) { return Number(session && (session.lastTs || session.firstTs)) || 0; }
     function sessDur(s) { return s.blocks && s.blocks.length ? s.blocks.reduce((a, b) => a + (b.end - b.start), 0) : s.firstTs && s.lastTs ? s.lastTs - s.firstTs : 0; }
-    function projColor(name) { return projectColorMap[name] || "#A0AEC0"; }
+    function projSlot(name) { return projectSlotMap[name] || "-other"; }
+    function projColor(name) { return `var(--s${projSlot(name)})`; }
+    function projFill(name) { return `var(--s${projSlot(name)}-fill)`; }
+    // Label ink is picked per slot at design time — white or near-black, whichever
+    // clears 4.4:1 on that fill — instead of assuming white on every block.
+    function projInk(name) { return `var(--s${projSlot(name)}-ink)`; }
 
-    // Convert hex (#RRGGBB) → HSL with cached parse
-    const _hslCache = {};
-    function hexToHSL(hex) {
-      if (_hslCache[hex]) return _hslCache[hex];
-      let r = parseInt(hex.slice(1, 3), 16) / 255;
-      let g = parseInt(hex.slice(3, 5), 16) / 255;
-      let b = parseInt(hex.slice(5, 7), 16) / 255;
-      const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      let h, s, l = (max + min) / 2;
-      if (max === min) { h = s = 0; }
-      else {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
-        else if (max === g) h = (b - r) / d + 2;
-        else h = (r - g) / d + 4;
-        h /= 6;
-      }
-      const hsl = { h: h * 360, s: s * 100, l: l * 100 };
-      _hslCache[hex] = hsl;
-      return hsl;
-    }
-
-    // Per-block color: project hue + per-session lightness/saturation jitter.
-    // Avoids the "wall of one color" problem when one project dominates the view —
-    // sessions of the same project still cluster in the same hue family but each
-    // gets a distinguishable shade.
-    function blockColor(session) {
-      const baseHex = projColor(session.project || session.title || "unknown");
-      const hsl = hexToHSL(baseHex);
-      const seed = String(session.id || session.project || "");
-      let hash = 0;
-      for (let i = 0; i < seed.length; i++) hash = ((hash * 31) + seed.charCodeAt(i)) | 0;
-      hash = Math.abs(hash);
-      const lOffset = (hash % 25) - 12;
-      const sOffset = ((hash >> 5) % 17) - 8;
-      const l = Math.max(35, Math.min(78, hsl.l + lOffset));
-      const s = Math.max(30, Math.min(95, hsl.s + sOffset));
-      return `hsl(${hsl.h.toFixed(0)}, ${s.toFixed(0)}%, ${l.toFixed(0)}%)`;
-    }
+    // A block wears its project's slot, unmodified. An earlier version jittered
+    // lightness ±12 and saturation ±8 per session to break up a "wall of one
+    // colour"; that moved each block off its slot, so one project read as several
+    // colours, the pie legend and the timeline disagreed, and the colour-blind
+    // separation the slots are chosen for no longer held. Touching sessions are
+    // now told apart by the surface ring on .time-block instead.
+    function blockColor(session) { return projColor(session.project || session.title || "unknown"); }
+    function blockFill(session) { return projFill(session.project || session.title || "unknown"); }
+    function blockInk(session) { return projInk(session.project || session.title || "unknown"); }
 
     // Compact filesystem path for inline display in blocks and tooltips.
     // Replaces home dir with ~ and trims middle segments when path is long
@@ -4469,7 +5142,10 @@
       document.getElementById("hTools").textContent = data.totalToolCalls || 0;
       document.getElementById("hAgents").textContent = agents.size;
       // Assign project colors
-      projectColorMap = {};[...projects].forEach((p, i) => { projectColorMap[p] = PROJECT_PALETTE[i % PROJECT_PALETTE.length]; });
+      // Fixed order, never cycled: a 9th project takes --s-other rather than
+      // re-using slot 1's hue, which would make two projects indistinguishable.
+      projectSlotMap = {};
+      [...projects].forEach((p, i) => { projectSlotMap[p] = i < SLOT_COUNT ? String(i + 1) : "-other"; });
     }
 
     function renderLegend(data) {
@@ -4913,7 +5589,7 @@
             const lbl = wp > 10 ? `${safeProj} · ${escapeHtml(dur)}` : safeProj;
             const blockScopeKey = scopeKey(b);
             const isSelectedBlock = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
-            bhtml += `<div class="time-block${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%;background:${blockColor(s)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
+            bhtml += `<div class="time-block${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%;background:${blockFill(s)};border-color:${blockColor(s)};color:${blockInk(s)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
           }
           return `<div class="timeline-lane">${bhtml}</div>`;
         }).join("");
@@ -5074,7 +5750,7 @@
           if (showPath) inner += `<span class="cb-path">${escapeHtml(shortPath)}</span>`;
           if (showMeta) inner += `<span class="cb-meta">${escapeHtml(dur)}</span>`;
 
-          blocksHtml += `<div class="calendar-block${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px);background:${blockColor(s)};box-shadow:0 1px 2px rgba(0,0,0,.12)" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${inner}</div>`;
+          blocksHtml += `<div class="calendar-block${isSelected ? " selected" : ""}" style="top:${topPct.toFixed(2)}%;height:${heightPct.toFixed(2)}%;left:calc(${leftPct.toFixed(2)}% + 1px);width:calc(${widthPct.toFixed(2)}% - 2px);background:${blockFill(s)};border-color:${blockColor(s)};color:${blockInk(s)}" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${inner}</div>`;
         }
 
         cols += `<div class="calendar-day-col"><div class="calendar-day-header"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div></div><div class="calendar-day-track">${blocksHtml}</div></div>`;
@@ -6349,8 +7025,8 @@
 
       // STAR: Situation + Task section (detail mode; brief results skip it)
       if (r.situation || r.task) {
-        h += '<div class="analysis-section" style="border-left:3px solid #ED8936">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#ED8936">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--warn)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--warn)">&#9873;</span>${escapeHtml(t("starContext"))}</div>`;
         h += '<ul class="analysis-insights">';
         if (r.situation) h += `<li><strong>${escapeHtml(t("starSituation"))}</strong>${escapeHtml("：")}${escapeHtml(r.situation)}</li>`;
         if (r.task) h += `<li><strong>${escapeHtml(t("starTask"))}</strong>${escapeHtml("：")}${escapeHtml(r.task)}</li>`;
@@ -6359,8 +7035,8 @@
 
       // STAR: Actions section
       if (Array.isArray(r.actions) && r.actions.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid #9F7AEA">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#9F7AEA">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s3)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s3)">&#10148;</span>${escapeHtml(t("starActions"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.actions.forEach(a => { h += `<li>${escapeHtml(String(a))}</li>`; });
         h += '</ul></div>';
@@ -6368,8 +7044,8 @@
 
       // Outcomes section (STAR: Result)
       if (r.outcomes && r.outcomes.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid #48BB78">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#48BB78">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--ok)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--ok)">&#9733;</span>${escapeHtml(t("outcomes"))}</div>`;
         h += '<ul class="analysis-insights">';
         r.outcomes.forEach(o => { h += `<li>${renderOutcomeItem(o)}</li>`; });
         h += '</ul></div>';
@@ -6377,12 +7053,12 @@
 
       // Time Breakdown section
       if (r.timeBreakdown && r.timeBreakdown.length) {
-        h += '<div class="analysis-section" style="border-left:3px solid #5B8DEF">';
-        h += `<div class="analysis-section-header"><span class="section-icon" style="color:#5B8DEF">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
+        h += '<div class="analysis-section" style="border-left:3px solid var(--s2)">';
+        h += `<div class="analysis-section-header"><span class="section-icon" style="color:var(--s2)">&#9719;</span>${escapeHtml(t("timeBreakdown"))}</div>`;
         h += '<div class="analysis-breakdown">';
-        r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length]; h += `<div class="seg" style="width:${item.percent}%;background:${c}" title="${escapeHtml(`${item.activity}: ${item.percent}%`)}">${item.percent > 10 ? escapeHtml(item.activity) : ""}</div>`; });
+        r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i] || "var(--s-other)"; h += `<div class="seg" style="width:${item.percent}%;background:${c};color:${c.replace(")", "-ink)")}" title="${escapeHtml(`${item.activity}: ${item.percent}%`)}">${item.percent > 10 ? escapeHtml(item.activity) : ""}</div>`; });
         h += '</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
-        r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length]; h += `<span style="font-size:10px;color:var(--text-secondary);display:flex;align-items:center;gap:3px"><span style="width:6px;height:6px;border-radius:2px;background:${c};display:inline-block"></span>${escapeHtml(item.activity)} ${escapeHtml(String(item.percent))}%</span>`; });
+        r.timeBreakdown.forEach((item, i) => { const c = BREAKDOWN_COLORS[i] || "var(--s-other)"; h += `<span style="font-size:10px;color:var(--text-secondary);display:flex;align-items:center;gap:3px"><span style="width:6px;height:6px;border-radius:2px;background:${c};display:inline-block"></span>${escapeHtml(item.activity)} ${escapeHtml(String(item.percent))}%</span>`; });
         h += '</div></div>';
       }
 
@@ -7300,6 +7976,8 @@
         defaultSelect.value = (cfg && cfg.defaultAnalysisProvider) || "";
       } catch (e) { console.warn("populate default-provider dropdown failed", e); }
 
+      document.getElementById("settingsScheme").value = readSchemePref();
+
       document.getElementById("settingsOverlay").style.display = "flex";
       // Kick off the diagnostic load (non-blocking — UI shows "Loading…" until done)
       loadCliDiagnostics();
@@ -7331,10 +8009,10 @@
         const label = key === "claude" ? "Claude Code" : key === "tclaude" ? "tclaude" : "Codex";
         const pathHtml = info.found
           ? `<span class="cli-diag-path" title="${escapeHtml(info.path || "")}">${escapeHtml(info.path || "")}</span>`
-          : `<span class="cli-diag-path" style="color:#C62828">${escapeHtml(t("notDetected"))}</span>`;
+          : `<span class="cli-diag-path" style="color:var(--danger)">${escapeHtml(t("notDetected"))}</span>`;
         const versionHtml = info.version ? `<span class="cli-diag-version">v${escapeHtml(info.version)}</span>` : "";
         const customTag = info.custom ? `<span class="cli-diag-tag">${escapeHtml(t("customTag"))}</span>` : "";
-        const cooldownTag = info.cooldown ? `<span class="cli-diag-tag" style="background:#FDECEA;color:#C62828">${escapeHtml(t("cooldownTag"))}</span>` : "";
+        const cooldownTag = info.cooldown ? `<span class="cli-diag-tag" style="background:var(--danger-bg);color:var(--danger)">${escapeHtml(t("cooldownTag"))}</span>` : "";
         rows.push(
           `<div class="cli-diag-row">`
           + `<span class="cli-diag-dot ${dotClass}"></span>`
@@ -7505,6 +8183,13 @@
     }
 
     document.getElementById("settingsBtn").addEventListener("click", openSettings);
+    // The scheme applies on change rather than on Save: it is a view preference,
+    // not part of the provider config the Save button writes.
+    document.getElementById("settingsScheme").addEventListener("change", e => setSchemePref(e.target.value));
+    if (window.matchMedia) {
+      window.matchMedia("(prefers-color-scheme: dark)")
+        .addEventListener("change", () => { if (readSchemePref() === "system") applyScheme("system"); });
+    }
     document.getElementById("settingsCancelBtn").addEventListener("click", closeSettings);
     document.getElementById("settingsSaveBtn").addEventListener("click", saveSettings);
     document.getElementById("settingsClearCacheBtn").addEventListener("click", clearAnalysisCaches);
@@ -7674,14 +8359,14 @@
         const r = await analyticsAPI.testCustomProvider(data);
         if (r && r.success) {
           resultEl.textContent = `✅ OK (${r.latencyMs}ms)`;
-          resultEl.style.color = "#2E7D32";
+          resultEl.style.color = "var(--ok)";
         } else {
           resultEl.textContent = `❌ ${(r && r.error) || "Failed"}`;
-          resultEl.style.color = "#C62828";
+          resultEl.style.color = "var(--danger)";
         }
       } catch (err) {
         resultEl.textContent = `❌ ${err.message}`;
-        resultEl.style.color = "#C62828";
+        resultEl.style.color = "var(--danger)";
       }
     });
 
