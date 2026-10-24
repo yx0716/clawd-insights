@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+body { padding: 6px; }
+/* dotjar's four kinds keep dotjar's colours, so a dot looks the same here
+   as on the page it opens. */
+:root {
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --text-main: #18181b;
+  --text-muted: #71717a;
+  --solid: #0c0d10;
+  --on-solid: #ffffff;
+  --note: #2f6bff;
+  --rule: #f0349a;
+  --skill: #00a878;
+  --memory: #f29d00;
+  --blend: multiply;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --card-bg: #18181b;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --card-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --text-main: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --solid: #ffffff;
+    --on-solid: #0c0d10;
+    --note: #6b9bff;
+    --rule: #ff6db5;
+    --skill: #2fd6a3;
+    --memory: #ffc53d;
+    --blend: screen;
+  }
+}
+.card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 14px;
+  padding: 14px 16px 14px 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  color: var(--text-main);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  transition: opacity 0.3s var(--ease-spring), transform 0.4s var(--ease-spring);
+}
+.card.visible { opacity: 1; transform: none; }
+.dots {
+  position: relative;
+  width: 52px;
+  height: 52px;
+}
+.dot {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--k);
+  mix-blend-mode: var(--blend);
+  transform: scale(0);
+}
+.dot.is-open {
+  background: color-mix(in srgb, var(--k) 12%, transparent);
+  box-shadow: inset 0 0 0 2.5px var(--k);
+}
+.card.visible .dot { animation: pop 0.5s var(--ease-spring) forwards; }
+@keyframes pop { to { transform: scale(1); } }
+/* A kept dot drops into Clawd's pocket. */
+.pocket {
+  position: absolute;
+  left: 8px;
+  bottom: 2px;
+  width: 36px;
+  height: 22px;
+  border: 2.5px solid var(--text-muted);
+  border-top: none;
+  border-radius: 0 0 16px 16px;
+  display: none;
+}
+.card[data-mode="kept"] .pocket { display: block; }
+.card[data-mode="kept"].visible .dot { animation: drop 0.7s cubic-bezier(0.5, 0, 0.6, 1.4) forwards; }
+@keyframes drop {
+  0% { transform: translateY(-26px) scale(1); }
+  100% { transform: translateY(8px) scale(1); }
+}
+.text { min-width: 0; }
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.message {
+  margin-top: 2px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.open {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--solid);
+  color: var(--on-solid);
+  font: 600 12.5px/1.4 inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.open:empty { display: none; }
+.close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.close:hover { background: rgba(127, 127, 127, 0.15); }
+@media (prefers-reduced-motion: reduce) {
+  .card, .dot { transition: none; animation: none !important; transform: none; }
+}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="dots" id="dots"><div class="pocket"></div></div>
+  <div class="text">
+    <div class="title" id="title"></div>
+    <div class="message" id="message"></div>
+    <div class="foot"><button class="open" id="open" type="button"></button></div>
+  </div>
+  <button class="close" id="close" type="button" aria-label="close">×</button>
+</div>
+<script>
+const card = document.getElementById("card");
+const dotsEl = document.getElementById("dots");
+const COLORS = { note: "--note", rule: "--rule", skill: "--skill", memory: "--memory" };
+// Where each of up to five dots sits in the little cluster, in px.
+const SPOTS = [
+  [[15, 15]],
+  [[6, 15], [24, 15]],
+  [[6, 22], [24, 22], [15, 6]],
+  [[6, 6], [24, 6], [6, 24], [24, 24]],
+  [[6, 6], [24, 6], [6, 24], [24, 24], [15, 15]],
+];
+
+function show(payload) {
+  card.classList.remove("visible");
+  card.dataset.mode = payload.mode || "found";
+  document.getElementById("title").textContent = payload.title || "";
+  document.getElementById("message").textContent = payload.message || "";
+  document.getElementById("open").textContent = payload.action || "";
+  for (const old of dotsEl.querySelectorAll(".dot")) old.remove();
+  const kinds = (payload.dots || []).slice(0, 5);
+  const spots = payload.mode === "kept" ? kinds.map(() => [15, 4]) : SPOTS[Math.max(0, kinds.length - 1)] || [];
+  kinds.forEach((kind, i) => {
+    const dot = document.createElement("div");
+    dot.className = "dot" + (payload.mode === "found" ? " is-open" : "");
+    dot.style.setProperty("--k", `var(${COLORS[kind] || "--note"})`);
+    dot.style.left = `${spots[i][0]}px`;
+    dot.style.top = `${spots[i][1]}px`;
+    dot.style.animationDelay = `${0.12 + i * 0.09}s`;
+    dotsEl.appendChild(dot);
+  });
+  dotsEl.style.display = kinds.length ? "" : "none";
+  requestAnimationFrame(() => {
+    card.classList.add("visible");
+    window.dotjarBubble.height(document.body.scrollHeight);
+  });
+}
+
+window.dotjarBubble.onShow(show);
+window.dotjarBubble.onHide(() => card.classList.remove("visible"));
+card.addEventListener("click", () => window.dotjarBubble.open());
+document.getElementById("close").addEventListener("click", (event) => {
+  event.stopPropagation();
+  window.dotjarBubble.close();
+});
+</script>
+</body>
+</html>

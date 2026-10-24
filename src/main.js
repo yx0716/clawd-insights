@@ -1420,6 +1420,19 @@ let _analyticsDash = null;
 let _analyticsScan = null;
 let _analyticsTitles = null;
 let _analyticsWatcher = null;
+// The timeline served to the browser (clawd-insights fork); the window above stays as the fallback.
+let _analyticsWeb = null;
+
+// Open the session timeline: in the browser when its page is being served,
+// in the dashboard window otherwise.
+function openTimeline() {
+  const url = _analyticsWeb && _analyticsWeb.url();
+  if (url) return shell.openExternal(url);
+  return _analyticsDash ? _analyticsDash.toggleDashboard() : null;
+}
+// dotjar companion (clawd-insights fork): Clawd reacts to the day's dots.
+let _dotjarBubble = null;
+let _dotjar = null;
 
 function getPendingPermissionFocusEntry(sessionId) {
   const id = String(sessionId || "");
@@ -3169,7 +3182,8 @@ const _menuCtx = {
   getActiveThemeCapabilities: () => themeRuntime.getActiveThemeCapabilities(),
   ensureUserThemesDir: () => themeLoader.ensureUserThemesDir(),
   openSettingsWindow: () => settingsWindowRuntime.open(),
-  toggleAnalyticsDashboard: () => _analyticsDash ? _analyticsDash.toggleDashboard() : null,
+  toggleAnalyticsDashboard: () => openTimeline(),
+  openDotjar: () => _dotjar ? _dotjar.open() : null,
   showTutorial: () => _tutorial.open(),
 };
 const _menu = require("./menu")(_menuCtx);
@@ -4112,16 +4126,55 @@ if (!gotTheLock) {
         analyticsWatcher: _analyticsWatcher,
       });
 
+      // The same timeline as a page in the browser, on 127.0.0.1 only.
+      try {
+        _analyticsWeb = require("./analytics-web")({
+          analytics: _analyticsDash,
+          tokenFile: path.join(clawdDir, "web-token"),
+        });
+        _analyticsWeb.listen().catch((err) => {
+          console.warn("Clawd: timeline page not served, using the window:", err && err.message);
+          _analyticsWeb = null;
+        });
+      } catch (err) {
+        console.warn("Clawd: timeline page not served, using the window:", err && err.message);
+        _analyticsWeb = null;
+      }
+
       // Register analytics dashboard shortcut
       try {
-        globalShortcut.register("CommandOrControl+Shift+Alt+A", () => {
-          if (_analyticsDash) _analyticsDash.toggleDashboard();
-        });
+        globalShortcut.register("CommandOrControl+Shift+Alt+A", () => openTimeline());
       } catch (err) {
         console.warn("Clawd: failed to register analytics shortcut:", err.message);
       }
     } catch (err) {
       console.warn("Clawd: failed to initialize analytics:", err && err.message);
+    }
+
+    // ── dotjar companion (clawd-insights fork) ──
+    // Clawd asks the local dotjar server how the day stands and reacts:
+    // a hop and a bubble of dots when something worth keeping turns up,
+    // carrying a dot off when one is kept, juggling the ones still waiting.
+    try {
+      _dotjarBubble = require("./dotjar-bubble")(_updateBubbleCtx, {
+        ipcMain,
+        getUpdateBubbleWindow: () => _updateBubble.getBubbleWindow(),
+        onOpen: () => { if (_dotjar) _dotjar.open(); },
+      });
+      _dotjar = require("./dotjar-companion")({
+        setState,
+        resolveDisplayState,
+        getSvgOverride,
+        getCurrentState: () => _state.getCurrentState(),
+        getTheme: () => (themeRuntime ? themeRuntime.getActiveTheme() : null),
+        get doNotDisturb() { return doNotDisturb; },
+        t: translate,
+        showBubble: (payload) => _dotjarBubble.show(payload),
+        openExternal: (url) => shell.openExternal(url),
+      });
+      _dotjar.start();
+    } catch (err) {
+      console.warn("Clawd: failed to start the dotjar companion:", err && err.message);
     }
 
     // Construct log monitors. We always instantiate them so toggling the
@@ -4176,7 +4229,10 @@ if (!gotTheLock) {
     _sessionHud.cleanup();
     if (_analyticsLog) _analyticsLog.cleanup();
     if (_analyticsDash) _analyticsDash.cleanup();
+    if (_analyticsWeb) _analyticsWeb.close();
     if (_analyticsWatcher) _analyticsWatcher.stop();
+    if (_dotjar) _dotjar.stop();
+    if (_dotjarBubble) _dotjarBubble.cleanup();
     agentRuntime.cleanup();
     topmostRuntime.cleanup();
     themeRuntime.cleanup();
