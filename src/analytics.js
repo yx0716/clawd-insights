@@ -12,6 +12,35 @@ const {
 module.exports = function initAnalytics(ctx) {
   let dashWin = null;
 
+  // Every handler by channel, so the same calls can be served to the
+  // timeline in a browser (analytics-web.js) as well as to this window.
+  const handlers = new Map();
+  function handle(channel, fn) {
+    handlers.set(channel, fn);
+    ipcMain.handle(channel, fn);
+  }
+
+  // Who wants to hear about new or grown sessions: this window and any
+  // browser pages. The watcher only polls while someone is listening.
+  const listeners = new Set();
+  function notifySessionsUpdated() {
+    if (ctx.analyticsScan && ctx.analyticsScan.invalidateCache) {
+      ctx.analyticsScan.invalidateCache();
+    }
+    if (dashWin && !dashWin.isDestroyed() && dashWin.webContents && !dashWin.webContents.isDestroyed()) {
+      dashWin.webContents.send("analytics-sessions-updated");
+    }
+    for (const listener of listeners) {
+      try { listener(); } catch (err) { console.warn("analytics: sessions-updated listener failed:", err && err.message); }
+    }
+  }
+  function watch() {
+    if (ctx.analyticsWatcher) ctx.analyticsWatcher.start(notifySessionsUpdated);
+  }
+  function stopWatchingIfIdle() {
+    if (!dashWin && !listeners.size && ctx.analyticsWatcher) ctx.analyticsWatcher.stop();
+  }
+
   function createWindow() {
     dashWin = new BrowserWindow({
       width: 1040,
@@ -45,22 +74,13 @@ module.exports = function initAnalytics(ctx) {
     });
 
     // Start filesystem watcher — pushes "analytics-sessions-updated" to the
-    // renderer when new JSONL files appear / grow / disappear. Scoped to the
-    // window lifecycle so we don't poll when no dashboard is open.
-    if (ctx.analyticsWatcher) {
-      ctx.analyticsWatcher.start(() => {
-        if (ctx.analyticsScan && ctx.analyticsScan.invalidateCache) {
-          ctx.analyticsScan.invalidateCache();
-        }
-        if (dashWin && !dashWin.isDestroyed() && dashWin.webContents && !dashWin.webContents.isDestroyed()) {
-          dashWin.webContents.send("analytics-sessions-updated");
-        }
-      });
-    }
+    // renderer when new JSONL files appear / grow / disappear. It keeps
+    // running after the window closes only while a browser page listens.
+    watch();
 
     dashWin.on("closed", () => {
-      if (ctx.analyticsWatcher) ctx.analyticsWatcher.stop();
       dashWin = null;
+      stopWatchingIfIdle();
     });
   }
 
@@ -78,14 +98,14 @@ module.exports = function initAnalytics(ctx) {
   }
 
   // IPC handlers
-  ipcMain.handle("analytics-get-data", async (_event, filters) => {
+  handle("analytics-get-data", async (_event, filters) => {
     const today = ctx.analyticsData.aggregateToday(filters);
     const week = ctx.analyticsData.aggregateWeek(filters);
     const computed = ctx.analyticsData.computeInsights(today, week);
     return { today, week, computed };
   });
 
-  ipcMain.handle("analytics-generate-report", async (_event, scope, sessionIds) => {
+  handle("analytics-generate-report", async (_event, scope, sessionIds) => {
     const filters = (sessionIds && sessionIds.length) ? { sessionIds } : undefined;
     const today = ctx.analyticsData.aggregateToday(filters);
     const week = ctx.analyticsData.aggregateWeek(filters);
@@ -104,8 +124,9 @@ module.exports = function initAnalytics(ctx) {
     };
   });
 
-  ipcMain.handle("analytics-pick-session-analyses-export-path", async (event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender) || dashWin || null;
+  handle("analytics-pick-session-analyses-export-path", async (event) => {
+    // From a browser page there is no window to attach the dialog to.
+    const owner = (event && event.sender && BrowserWindow.fromWebContents(event.sender)) || dashWin || null;
     const result = await dialog.showSaveDialog(owner, {
       title: "Export Session Analyses",
       defaultPath: path.join(app.getPath("documents"), makeSessionAnalysesExportFilename()),
@@ -120,7 +141,7 @@ module.exports = function initAnalytics(ctx) {
     };
   });
 
-  ipcMain.handle("analytics-export-session-analyses", async (_event, payload) => {
+  handle("analytics-export-session-analyses", async (_event, payload) => {
     const markdown = buildSessionAnalysesExportMarkdown(payload || {});
     const filePath = payload && payload.filePath;
     if (!filePath) throw new Error("missing export path");
@@ -128,7 +149,7 @@ module.exports = function initAnalytics(ctx) {
     return { ok: true, filePath, markdown };
   });
 
-  ipcMain.handle("analytics-get-ai-config", async () => {
+  handle("analytics-get-ai-config", async () => {
     const cfg = ctx.analyticsAI.getConfig();
     if (!cfg) return null;
     // Mask the API key for display
@@ -140,19 +161,19 @@ module.exports = function initAnalytics(ctx) {
     return masked;
   });
 
-  ipcMain.handle("analytics-save-ai-config", async (_event, config) => {
+  handle("analytics-save-ai-config", async (_event, config) => {
     const existing = ctx.analyticsAI.getConfig() || {};
     const merged = mergeAIConfig(existing, config || {});
     ctx.analyticsAI.setConfig(merged);
     return { ok: true };
   });
 
-  ipcMain.handle("analytics-clear-ai-config", async () => {
+  handle("analytics-clear-ai-config", async () => {
     ctx.analyticsAI.setConfig(null);
     return { ok: true };
   });
 
-  ipcMain.handle("analytics-clear-analysis-caches", async () => {
+  handle("analytics-clear-analysis-caches", async () => {
     if (!ctx.analyticsAI || !ctx.analyticsAI.clearAnalysisCaches) return { ok: false };
     return ctx.analyticsAI.clearAnalysisCaches();
   });
@@ -160,51 +181,51 @@ module.exports = function initAnalytics(ctx) {
   // Settings UI: report which CLIs were detected and what was searched, so
   // users can debug "Codex doesn't show up in the provider list" without
   // reading source code.
-  ipcMain.handle("analytics-cli-diagnostics", async () => {
+  handle("analytics-cli-diagnostics", async () => {
     if (!ctx.analyticsAI || !ctx.analyticsAI.getCliDiagnostics) return null;
     return ctx.analyticsAI.getCliDiagnostics();
   });
 
   // Settings UI: validate a user-supplied custom CLI path. Returns
   // { ok, version, error } so the form can show inline feedback before save.
-  ipcMain.handle("analytics-test-cli-path", async (_event, rawPath) => {
+  handle("analytics-test-cli-path", async (_event, rawPath) => {
     if (!ctx.analyticsAI || !ctx.analyticsAI.testCliPath) return { ok: false, error: "unsupported" };
     return ctx.analyticsAI.testCliPath(rawPath);
   });
 
-  ipcMain.handle("analytics-get-providers", async () => {
+  handle("analytics-get-providers", async () => {
     return ctx.analyticsAI.PROVIDERS;
   });
 
   // ── Custom provider registry CRUD ──
 
-  ipcMain.handle("analytics-list-custom-providers", async () => {
+  handle("analytics-list-custom-providers", async () => {
     if (!ctx.analyticsAI) return [];
     return ctx.analyticsAI.getProviderRegistry();
   });
 
-  ipcMain.handle("analytics-get-custom-provider", async (_event, id) => {
+  handle("analytics-get-custom-provider", async (_event, id) => {
     if (!ctx.analyticsAI) return null;
     return ctx.analyticsAI.getProvider(id);
   });
 
-  ipcMain.handle("analytics-add-custom-provider", async (_event, provider) => {
+  handle("analytics-add-custom-provider", async (_event, provider) => {
     if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
     return ctx.analyticsAI.addProvider(provider);
   });
 
-  ipcMain.handle("analytics-update-custom-provider", async (_event, id, updates) => {
+  handle("analytics-update-custom-provider", async (_event, id, updates) => {
     if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
     return ctx.analyticsAI.updateProvider(id, updates);
   });
 
-  ipcMain.handle("analytics-delete-custom-provider", async (_event, id) => {
+  handle("analytics-delete-custom-provider", async (_event, id) => {
     if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
     ctx.analyticsAI.deleteProvider(id);
     return { ok: true };
   });
 
-  ipcMain.handle("analytics-test-custom-provider", async (_event, provider) => {
+  handle("analytics-test-custom-provider", async (_event, provider) => {
     if (!ctx.analyticsAI) return { success: false, error: "analyticsAI not initialized" };
     try {
       return await ctx.analyticsAI.testProvider(provider);
@@ -213,18 +234,18 @@ module.exports = function initAnalytics(ctx) {
     }
   });
 
-  ipcMain.handle("analytics-get-default-provider", async (_event, mode) => {
+  handle("analytics-get-default-provider", async (_event, mode) => {
     if (!ctx.analyticsAI) return null;
     return ctx.analyticsAI.getDefaultProvider(mode);
   });
 
-  ipcMain.handle("analytics-set-default-provider", async (_event, mode, providerId) => {
+  handle("analytics-set-default-provider", async (_event, mode, providerId) => {
     if (!ctx.analyticsAI) throw new Error("analyticsAI not initialized");
     ctx.analyticsAI.setDefaultProvider(mode, providerId);
     return { ok: true };
   });
 
-  ipcMain.handle("analytics-get-conversations", async (_event, range) => {
+  handle("analytics-get-conversations", async (_event, range) => {
     if (!ctx.analyticsScan) return null;
     if (range === "week") return ctx.analyticsScan.scan7Days();
     return ctx.analyticsScan.scanToday();
@@ -247,7 +268,7 @@ module.exports = function initAnalytics(ctx) {
     return data;
   }
 
-  ipcMain.handle("analytics-get-timeline", async (_event, range, year, month, weekOffset) => {
+  handle("analytics-get-timeline", async (_event, range, year, month, weekOffset) => {
     if (!ctx.analyticsScan) return null;
     // Month tab passes year + month (1-indexed). Calendar view passes weekOffset
     // for the "week" range to navigate prev/next weeks. Extra args are backward-
@@ -272,7 +293,7 @@ module.exports = function initAnalytics(ctx) {
   // Returns the list of months that have at least one session, most recent
   // first. Used by the Month-tab dropdown so the picker only shows months
   // that contain data.
-  ipcMain.handle("analytics-get-available-months", async () => {
+  handle("analytics-get-available-months", async () => {
     if (!ctx.analyticsScan || !ctx.analyticsScan.getAvailableMonths) return [];
     return ctx.analyticsScan.getAvailableMonths();
   });
@@ -282,24 +303,24 @@ module.exports = function initAnalytics(ctx) {
   // jsonl-derived title and the firstUserMsg/project fallbacks when rendering
   // session cards. See analytics-titles.js for the rationale.
 
-  ipcMain.handle("analytics-get-local-title-map", async () => {
+  handle("analytics-get-local-title-map", async () => {
     if (!ctx.analyticsTitles) return {};
     return ctx.analyticsTitles.getAll();
   });
 
-  ipcMain.handle("analytics-set-local-title", async (_event, sessionId, title) => {
+  handle("analytics-set-local-title", async (_event, sessionId, title) => {
     if (!ctx.analyticsTitles) return { ok: false, error: "titles module unavailable" };
     const ok = ctx.analyticsTitles.setTitle(sessionId, title);
     return { ok };
   });
 
-  ipcMain.handle("analytics-clear-local-title", async (_event, sessionId) => {
+  handle("analytics-clear-local-title", async (_event, sessionId) => {
     if (!ctx.analyticsTitles) return { ok: false, error: "titles module unavailable" };
     const ok = ctx.analyticsTitles.clearTitle(sessionId);
     return { ok };
   });
 
-  ipcMain.handle("analytics-analyze-session", async (_event, sessionId, agent, preferredProvider, mode, scope) => {
+  handle("analytics-analyze-session", async (_event, sessionId, agent, preferredProvider, mode, scope) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return null;
     const detail = ctx.analyticsScan.getSessionDetail(sessionId, agent, scope);
     if (!detail) return null;
@@ -309,17 +330,17 @@ module.exports = function initAnalytics(ctx) {
     catch { return result; }
   });
 
-  ipcMain.handle("analytics-get-daily-buckets", async (_event, daysBack) => {
+  handle("analytics-get-daily-buckets", async (_event, daysBack) => {
     if (!ctx.analyticsScan || !ctx.analyticsScan.getDailyBuckets) return [];
     return ctx.analyticsScan.getDailyBuckets(daysBack);
   });
 
-  ipcMain.handle("analytics-get-weekly-buckets", async (_event, weeksBack) => {
+  handle("analytics-get-weekly-buckets", async (_event, weeksBack) => {
     if (!ctx.analyticsScan || !ctx.analyticsScan.getWeeklyBuckets) return [];
     return ctx.analyticsScan.getWeeklyBuckets(weeksBack);
   });
 
-  ipcMain.handle("analytics-analyze-ranges", async (_event, ranges, preferredProvider, rangeKind) => {
+  handle("analytics-analyze-ranges", async (_event, ranges, preferredProvider, rangeKind) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return null;
     if (!Array.isArray(ranges) || !ranges.length) return null;
     const refs = ctx.analyticsScan.getSessionRefsForRanges(ranges);
@@ -337,7 +358,7 @@ module.exports = function initAnalytics(ctx) {
     catch { return result; }
   });
 
-  ipcMain.handle("analytics-analyze-selected", async (_event, sessionRefs, preferredProvider, scope) => {
+  handle("analytics-analyze-selected", async (_event, sessionRefs, preferredProvider, scope) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return null;
     if (!Array.isArray(sessionRefs) || sessionRefs.length === 0) return null;
     const details = [];
@@ -357,17 +378,17 @@ module.exports = function initAnalytics(ctx) {
     catch { return result; }
   });
 
-  ipcMain.handle("analytics-get-analysis-provider", async () => {
+  handle("analytics-get-analysis-provider", async () => {
     if (!ctx.analyticsAI) return null;
     return ctx.analyticsAI.getAnalysisProvider();
   });
 
-  ipcMain.handle("analytics-get-analysis-options", async () => {
+  handle("analytics-get-analysis-options", async () => {
     if (!ctx.analyticsAI || !ctx.analyticsAI.getAvailableAnalysisProviders) return [];
     return ctx.analyticsAI.getAvailableAnalysisProviders();
   });
 
-  ipcMain.handle("analytics-get-oneliners", async (_event, sessionIds) => {
+  handle("analytics-get-oneliners", async (_event, sessionIds) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return {};
     const results = {};
     // Batched: one AI call per ~10 sessions instead of one CLI spawn per
@@ -389,7 +410,7 @@ module.exports = function initAnalytics(ctx) {
     return results;
   });
 
-  ipcMain.handle("analytics-knowledge-compound", async (_event, sessionIds, options) => {
+  handle("analytics-knowledge-compound", async (_event, sessionIds, options) => {
     if (!ctx.analyticsScan || !ctx.analyticsAI) return { error: true, summary: "模块未加载" };
     const details = [];
     for (const { id, agent } of sessionIds) {
@@ -414,7 +435,25 @@ module.exports = function initAnalytics(ctx) {
     }
   }
 
-  return { toggleDashboard, cleanup };
+  // The same calls, for the timeline served to a browser.
+  function call(channel, args = []) {
+    const fn = handlers.get(channel);
+    if (!fn) throw new Error(`unknown analytics call: ${channel}`);
+    return fn({ sender: null }, ...args);
+  }
+  function has(channel) {
+    return handlers.has(channel);
+  }
+  function subscribe(listener) {
+    listeners.add(listener);
+    watch();
+    return () => {
+      listeners.delete(listener);
+      stopWatchingIfIdle();
+    };
+  }
+
+  return { toggleDashboard, cleanup, call, has, subscribe };
 };
 
 module.exports.__test = {

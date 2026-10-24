@@ -419,8 +419,31 @@ module.exports = function initAnalyticsScan(ctx) {
 
   // ── Codex Scanner ──
 
+  // Codex keeps each conversation's name in an index beside its sessions; a
+  // renamed conversation gets a new line, so the last one counts.
+  function codexThreadNames() {
+    const names = new Map();
+    if (!CODEX_SESSIONS) return names;
+    let text;
+    try { text = fs.readFileSync(path.join(path.dirname(CODEX_SESSIONS), "session_index.jsonl"), "utf8"); }
+    catch { return names; }
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      try {
+        const rec = JSON.parse(line);
+        if (rec && rec.id && rec.thread_name) names.set(String(rec.id), String(rec.thread_name));
+      } catch { /* a line being written right now */ }
+    }
+    return names;
+  }
+
+  // What Codex puts in front of the person's first words: the AGENTS.md it
+  // loaded and its environment notes. Not what the session was about.
+  const CODEX_INJECTED = /^\s*(# AGENTS\.md instructions|<environment_context>|<user_instructions>|<permissions instructions>|<external_[a-z_]+)/;
+
   function scanCodex(startTs, endTs) {
     const sessions = [];
+    const threadNames = codexThreadNames();
     const startDate = new Date(startTs);
     const endDate = new Date(endTs);
 
@@ -484,6 +507,7 @@ module.exports = function initAnalyticsScan(ctx) {
                       sess.firstUserMsg = INTERNAL_ANALYTICS_SUMMARY_MARKER;
                       continue;
                     }
+                    if (CODEX_INJECTED.test(text)) continue;
                     const meaningful = extractMeaningfulText(text);
                     if (meaningful) sess.firstUserMsg = meaningful.slice(0, FIRST_MSG_MAX);
                   }
@@ -500,6 +524,8 @@ module.exports = function initAnalyticsScan(ctx) {
         }
 
         sess.blocks = splitIntoBlocks(allTimestamps);
+        const threadId = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(sess.id);
+        if (threadId && threadNames.has(threadId[1])) sess.title = threadNames.get(threadId[1]);
 
         if (sess.messages < 6) continue;
         if (sess.lastTs && sess.lastTs < startTs) continue;

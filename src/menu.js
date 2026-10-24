@@ -200,8 +200,12 @@ module.exports = function initMenu(ctx) {
     // confused.
     const workGroup = [
       {
-        label: "🐾 " + t("analytics"),
+        label: "🕒 " + t("analytics"),
         click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
+      {
+        label: "🫧 " + t("dotjarMenu"),
+        click: () => { if (ctx.openDotjar) ctx.openDotjar(); },
       },
       {
         label: t("openDashboard"),
@@ -417,8 +421,12 @@ module.exports = function initMenu(ctx) {
 
     const workGroup = [
       {
-        label: "🐾 " + t("analytics"),
+        label: "🕒 " + t("analytics"),
         click: () => { if (ctx.toggleAnalyticsDashboard) ctx.toggleAnalyticsDashboard(); },
+      },
+      {
+        label: "🫧 " + t("dotjarMenu"),
+        click: () => { if (ctx.openDotjar) ctx.openDotjar(); },
       },
       {
         label: t("openDashboard"),
