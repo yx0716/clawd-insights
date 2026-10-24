@@ -195,3 +195,9 @@ test("a dotjar that stops answering is looked for again, quietly", async () => {
   assert.equal(h.calls.length, 1, "started at most once");
   assert.deepEqual(h.bubbles, []);
 });
+
+test("the dots are juggled with the balls-in-the-air animation in every bundled theme", () => {
+  const picks = ["clawd", "calico", "cloudling"].map((name) => require("../src/dotjar-companion").jugglingFile(require(`../themes/${name}/theme.json`)));
+  assert.deepEqual(picks, ["clawd-working-juggling.svg", "calico-working-juggling.apng", "cloudling-juggling.svg"]);
+  assert.equal(require("../src/dotjar-companion").jugglingFile({ states: { juggling: ["x-groove.svg"] } }), null, "no juggling art: the state's own animation is used");
+});

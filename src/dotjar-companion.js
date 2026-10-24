@@ -17,6 +17,18 @@ const JUGGLE_EVERY_MS = 25 * 60 * 1000;
 const JUGGLE_FOR_MS = 6000;
 const OPEN_WAIT_MS = 6000;
 
+// The juggling animation proper (balls in the air), wherever the theme keeps
+// it: some themes give the plain "juggling" state a different first tier,
+// such as Clawd's headphones groove.
+function jugglingFile(theme) {
+  if (!theme) return null;
+  const files = [
+    ...(Array.isArray(theme.jugglingTiers) ? theme.jugglingTiers.map((tier) => tier && tier.file) : []),
+    ...(theme.states && Array.isArray(theme.states.juggling) ? theme.states.juggling : []),
+  ];
+  return files.find((file) => typeof file === "string" && /juggl/i.test(file)) || null;
+}
+
 function fill(text, n) {
   return String(text || "").replace(/\{n\}/g, String(n));
 }
@@ -120,7 +132,8 @@ module.exports = function initDotjarCompanion(ctx, deps = {}) {
     if (!next || !(next.open > 0) || ctx.doNotDisturb || !petIsIdle()) return;
     if (now() - juggledAt < JUGGLE_EVERY_MS) return;
     juggledAt = now();
-    ctx.setState("juggling");
+    const balls = typeof ctx.getTheme === "function" ? jugglingFile(ctx.getTheme()) : null;
+    ctx.setState("juggling", balls || undefined);
     if (juggleTimer) cancel(juggleTimer);
     juggleTimer = later(() => {
       juggleTimer = null;
@@ -167,4 +180,5 @@ module.exports = function initDotjarCompanion(ctx, deps = {}) {
   return { start, stop, pulse, open, get link() { return current; } };
 };
 
+module.exports.jugglingFile = jugglingFile;
 module.exports.__test = { fill, POLL_MS, JUGGLE_EVERY_MS, JUGGLE_FOR_MS };

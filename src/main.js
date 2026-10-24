@@ -4166,6 +4166,7 @@ if (!gotTheLock) {
         resolveDisplayState,
         getSvgOverride,
         getCurrentState: () => _state.getCurrentState(),
+        getTheme: () => (themeRuntime ? themeRuntime.getActiveTheme() : null),
         get doNotDisturb() { return doNotDisturb; },
         t: translate,
         showBubble: (payload) => _dotjarBubble.show(payload),
