@@ -13,9 +13,21 @@ Clawd 是一个 Electron 桌宠：通过 hook、日志轮询、plugin 和 extens
 - **数据流**：`src/state.js` 的 `updateSession` → `ctx.logAnalyticsEvent` → `src/analytics-log.js` 写 `~/.clawd/analytics.jsonl`；看板还会离线扫描 `~/.claude` / `~/.codex` / `~/.cursor` 历史并可调用 LLM 生成会话摘要。
 - **模块**：`src/analytics-*.js`（log / data / ai / scan / titles / watcher / export / config）+ `src/analytics.js`（dashboard 窗口，IPC 频道全部以 `analytics-` 前缀，无冲突）+ `src/analytics.html` + `src/preload-analytics.js`。
 - **接线点（嵌在上游核心文件里）**：`src/main.js`（`app.whenReady` 初始化 7 个模块、注册 `Ctrl+Shift+Alt+A` 快捷键、`before-quit` 清理）、`_stateCtx.logAnalyticsEvent`、`_menuCtx.toggleAnalyticsDashboard`、`src/state.js` 状态变更埋点、`src/menu.js` + `src/i18n.js` 的 “Analytics” 菜单项。
+- **网页版**：菜单「Agent 会话时间轴」和 `Ctrl+Shift+Alt+A` 默认在浏览器里打开。`src/analytics-web.js` 只监听 `127.0.0.1:4848`（被占用就往后找），令牌存 `~/.clawd/web-token`（首次访问换成 HttpOnly cookie），POST 必须带 `x-clawd: 1` 且同源；`/` 返回注入了 `src/analytics-web-bridge.js` 的 `analytics.html`，bridge 用 fetch 实现和 `preload-analytics.js` 同名的 `window.analyticsAPI`（两边方法清单由测试强制一致），新会话推送走 `/events`（SSE）。`analytics.js` 的 handler 统一经 `handle()` 注册，网页调用复用同一批 handler（`call` / `has` / `subscribe`）；文件监视器只在窗口或网页有人在看时运行。网页服务起不来时退回原来的 Electron 窗口。
 - **持久化**：AI provider 配置存 `~/.clawd/ai-config.json`（独立文件，不进 settings schema）；本地会话标题覆盖存 `~/.clawd/session-titles.json`。
 - **测试**：`test/analytics-*.test.js`、`test/provider-management.test.js`。
 - **已知缺口**：上游重构了 permission/bubble 架构，fork 原有的“每日反思气泡”（`showReflectionBubble`）暂未迁移到新架构；核心看板不依赖它。
+
+### dotjar 陪伴（clawd-insights fork 专属）
+
+dotjar 是独立的本地网页（github.com/yx0716/dotjar，作为 `package.json` 里固定版本的 `dotjar` 依赖随 Clawd 一起装，打包时在 `asarUnpack` 里解压），把每天和 agent 一起工作里值得留下的思考方式整理成彩色“波点”。Clawd 只通过 dotjar 的本机接口和它交流，不共享代码：
+
+- **数据流**：`src/dotjar-link.js` 读 `~/.dotjar/web.pid`（端口）和 `~/.dotjar/web-token`（令牌，`DOTJAR_HOME` 可改），每 20 秒 `POST /api/pulse` 一次；`diffPulse` 只把“新出现的波点”和“刚落库的波点”当成事件，第一次读和跨天都不算。
+- **反应**（`src/dotjar-companion.js`）：新波点 → `setState("attention")` + dotjar 气泡；落库 → `setState("carrying")` + 气泡；还有待落库、宠物空闲且不在 DND 时，最多每 25 分钟 `setState("juggling")` 6 秒，之后 `resolveDisplayState()` 还原。只走 `setState`，不碰 session、hook 或权限链路。
+- **气泡**：`src/dotjar-bubble.js` + `src/dotjar-bubble.html` + `src/preload-dotjar-bubble.js`，独立窗口，复用 `update-bubble.js` 导出的 `computeUpdateBubbleBounds` 定位；更新气泡在显示时不弹；跟随宠物期间每 200ms 重排，9 秒后自动收起；点击打开 dotjar。
+- **接线点**：`src/main.js`（`app.whenReady` 里 analytics 之后初始化、`before-quit` 清理）、`_menuCtx.openDotjar`、`src/menu.js` 两处 “Agent 知识沉淀池” 菜单项（会话分析看板的菜单名也改成了 “Agent 会话时间轴”）、`src/i18n.js` 的 `dotjar*` 文案（五种语言都要有，缺键不会回退英文）。
+- **拉起 dotjar**：没在运行时，按 `DOTJAR_BIN`、`DOTJAR_DIR`、dotjar 上次启动时写下的 `~/.dotjar/install.json`、随 Clawd 安装的依赖（打包后优先 `app.asar.unpacked` 里的那份）的顺序找命令（只认绝对路径、文件名必须是 `dotjar.js`），用 `ELECTRON_RUN_AS_NODE=1` 后台启动一次。数据目录 `~/.dotjar`；只有改名前的 `~/.strata` 时继续用它，`STRATA_HOME` 也照认。
+- **测试**：`test/dotjar-companion.test.js`。
 
 ## Common Commands
 

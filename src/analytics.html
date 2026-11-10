@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Insights</title>
+  <title>Agent 会话时间轴</title>
   <style>
     /* ── Design tokens ──────────────────────────────────────────────────────
        Every colour on this page comes from here. Chrome roles (surfaces, ink,
@@ -3175,6 +3175,235 @@
       color: var(--text-muted);
       font-size: 12px;
     }
+    /* ── Glass skin (clawd-insights fork) ───────────────────────────────────
+       The timeline wears the same look as dotjar, its sibling page: frosted
+       glass panels over soft colour light, one sans family, big quiet numbers,
+       pill controls. Only layout and surfaces live here; colour roles still
+       come from the scheme blocks above, so every scheme keeps working.
+       ------------------------------------------------------------------------ */
+    :root {
+      --glass: rgba(255, 255, 255, 0.62);
+      --glass-strong: rgba(255, 255, 255, 0.86);
+      --glass-edge: rgba(255, 255, 255, 0.92);
+      --glass-shadow: 0 30px 80px -42px rgba(22, 28, 48, 0.34), 0 1px 3px rgba(22, 28, 48, 0.05);
+      --track: rgba(0, 0, 0, 0.035);
+      --aura-1: rgba(120, 156, 255, 0.42);
+      --aura-2: rgba(255, 150, 205, 0.34);
+      --aura-3: rgba(120, 220, 200, 0.30);
+      --aura-4: rgba(255, 214, 120, 0.26);
+      --page: #eef1f6;
+      --sans: "PingFang SC", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --round: ui-rounded, "SF Pro Rounded", var(--sans);
+    }
+    [data-scheme="nightshift"] {
+      --glass: rgba(32, 34, 41, 0.62);
+      --glass-strong: rgba(58, 60, 70, 0.92);
+      --glass-edge: rgba(255, 255, 255, 0.12);
+      --glass-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.7), 0 1px 3px rgba(0, 0, 0, 0.3);
+      --track: rgba(255, 255, 255, 0.05);
+      --aura-1: rgba(70, 100, 220, 0.34);
+      --aura-2: rgba(200, 70, 140, 0.24);
+      --aura-3: rgba(40, 150, 130, 0.22);
+      --aura-4: rgba(200, 150, 40, 0.16);
+      --page: #0c0d11;
+    }
+
+    body {
+      font-family: var(--sans);
+      font-size: 13.5px;
+      background:
+        radial-gradient(60vw 50vh at 8% 0%, var(--aura-1), transparent 70%),
+        radial-gradient(50vw 45vh at 96% 6%, var(--aura-2), transparent 70%),
+        radial-gradient(55vw 50vh at 0% 100%, var(--aura-3), transparent 70%),
+        radial-gradient(45vw 40vh at 100% 96%, var(--aura-4), transparent 70%),
+        var(--page);
+      background-attachment: fixed;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container {
+      max-width: 1240px;
+      padding: 40px 28px 56px;
+      gap: 20px 18px;
+    }
+
+    /* Panels: frosted glass, no hard border. */
+    .timeline-card,
+    .events-card,
+    .analysis-panel,
+    .onboarding-card,
+    .panel {
+      background: var(--glass);
+      border: 0;
+      border-radius: 24px;
+      box-shadow: var(--glass-shadow), inset 0 0 0 1px var(--glass-edge);
+      -webkit-backdrop-filter: blur(28px) saturate(1.5);
+      backdrop-filter: blur(28px) saturate(1.5);
+    }
+    .timeline-card {
+      padding: 22px 24px 18px;
+    }
+    .panel {
+      padding: 20px 22px;
+    }
+
+    /* Header: open, not boxed; a big title and quiet big numbers. */
+    .header-block {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      padding: 0 4px 8px;
+      gap: 32px;
+      align-items: flex-end;
+    }
+    .header-title .sub {
+      font-size: 13px;
+      letter-spacing: 0;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+    .header-title h1 {
+      font-size: 44px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.08;
+    }
+    .header-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 30px;
+      margin-left: auto;
+    }
+    .hstat {
+      background: transparent;
+      padding: 0;
+      min-width: 0;
+    }
+    .hstat .hl {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .hstat .hv {
+      font: 600 24px/1.2 var(--round);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.01em;
+    }
+
+    /* Pill controls, the way dotjar's are. */
+    .header-report-btn,
+    .settings-btn,
+    .week-nav-btn,
+    .week-nav-today {
+      border: 0;
+      background: var(--glass);
+      box-shadow: inset 0 0 0 1px var(--glass-edge), 0 1px 2px rgba(0, 0, 0, 0.04);
+      color: var(--text);
+      font-weight: 500;
+    }
+    .header-report-btn {
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+    .settings-btn {
+      width: 36px;
+      height: 36px;
+    }
+    .header-report-btn:hover,
+    .settings-btn:hover {
+      background: var(--glass-strong);
+    }
+    .tabs,
+    .lang-toggle,
+    .timeline-view-toggle {
+      background: var(--glass);
+      border: 0;
+      border-radius: 999px;
+      padding: 4px;
+      gap: 2px;
+      box-shadow: inset 0 0 0 1px var(--glass-edge);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+    }
+    .tab,
+    .lang-btn,
+    .timeline-view-toggle button {
+      border: 0;
+      border-radius: 999px;
+      padding: 7px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: transparent;
+    }
+    .lang-btn {
+      padding: 6px 12px;
+    }
+    .timeline-view-toggle button + button {
+      border-left: 0;
+    }
+    .tab.active,
+    .lang-btn.active,
+    .timeline-view-toggle button.active {
+      background: var(--glass-strong);
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    .date-label {
+      color: var(--text-muted);
+    }
+
+    /* The timeline: days as quiet rows, sessions as rounded bars. */
+    .timeline-day {
+      margin-bottom: 14px;
+    }
+    .day-label .wd {
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .day-label .day-meta {
+      display: none;
+    }
+    .timeline-lane {
+      height: 26px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--track);
+      margin-bottom: 3px;
+    }
+    .time-block {
+      top: 2px;
+      height: 22px;
+      border-radius: 999px;
+      padding: 0 9px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    /* Timers and other unattended runs: a faint thread above the day's lanes,
+       not a headline. */
+    .timeline-lane.is-ambient {
+      height: 8px;
+      background: transparent;
+      margin-bottom: 4px;
+    }
+    .time-block.is-automation {
+      top: 2px;
+      height: 4px;
+      padding: 0;
+      color: transparent;
+      opacity: 0.45;
+    }
+    .time-block.is-automation:hover {
+      opacity: 0.9;
+    }
+    .time-axis-label {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .tooltip {
+      border-radius: 14px;
+    }
+
   </style>
 
   <script>
@@ -3592,9 +3821,9 @@
     const MIN_SESSIONS_ROW_HEIGHT = 240;
     const I18N = {
       zh: {
-        documentTitle: "Agent 洞察",
+        documentTitle: "Agent 会话时间轴",
         headerSub: "Agent 使用情况",
-        headerTitle: "洞察",
+        headerTitle: "会话时间轴",
         reportDay: "日报",
         reportWeek: "周报",
         statsActiveSpan: "活跃跨度",
@@ -3812,9 +4041,9 @@
         useFirstAvailable: "（使用第一个可用 provider）",
       },
       en: {
-        documentTitle: "Agent Insights",
+        documentTitle: "Agent Session Timeline",
         headerSub: "Agent Usage",
-        headerTitle: "Insights",
+        headerTitle: "Session Timeline",
         reportDay: "Daily",
         reportWeek: "Weekly",
         statsActiveSpan: "Active Span",
@@ -5489,8 +5718,11 @@
       for (const dts of sortedDays) {
         const items = dayMap.get(dts), d = new Date(dts), wd = WEEKDAYS_ZH[d.getDay()];
         const axisStart = dts + rangeStart, axisEnd = dts + rangeStart + rangeLen;
-        const packedLanes = packTimelineLanes(items, axisStart, axisEnd);
-        if (!packedLanes.length) continue;
+        // Unattended runs get a thin thread of their own at the top of the day
+        // instead of a whole lane.
+        const ambient = items.filter(isAutomationSession);
+        const packedLanes = packTimelineLanes(items.filter((s) => !isAutomationSession(s)), axisStart, axisEnd);
+        if (!packedLanes.length && !ambient.length) continue;
         const dayMeta = packedLanes.length > 1 ? `<div class="day-meta">${escapeHtml(t("searchedLaneCount", { count: packedLanes.length }))}</div>` : "";
         const lanes = packedLanes.map(list => {
           let bhtml = "";
@@ -5502,15 +5734,27 @@
             const tipTitle = escapeHtml(proj);
             const tipDetail = escapeHtml(t("tooltipDetail", { agent: agentLabel(s.agent), time: `${fmtTime(b.start)}-${fmtTime(b.end)}`, duration: dur, messages: s.messages }));
             const tipPath = (s.fullPath || s.cwd) ? escapeHtml(s.fullPath || s.cwd) : "";
-            // Always show session name; CSS overflow:hidden + ellipsis handles narrow blocks
-            const lbl = wp > 10 ? `${safeProj} · ${escapeHtml(dur)}` : safeProj;
+            // Wide blocks say what and how long, middling ones just what; a sliver
+            // stays a bare capsule (the tooltip still names it) rather than
+            // showing two clipped letters.
+            const lbl = wp > 10 ? `${safeProj} · ${escapeHtml(dur)}` : wp > 3.5 ? safeProj : "";
             const blockScopeKey = scopeKey(b);
             const isSelectedBlock = selectedSessionId === s.id && (selectedScopeKey() === "full" || selectedScopeKey() === blockScopeKey);
-            bhtml += `<div class="time-block ${blockSlotClass(s)}${isSelectedBlock ? " selected" : ""}" style="left:${lp}%;width:${wp}%" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
+            bhtml += `<div class="time-block ${blockSlotClass(s)}${isSelectedBlock ? " selected" : ""}${isAutomationSession(s) ? " is-automation" : ""}" style="left:${lp}%;width:${wp}%" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${blockScopeKey}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path="${tipPath}">${lbl}</div>`;
           }
           return `<div class="timeline-lane">${bhtml}</div>`;
         }).join("");
-        html += `<div class="timeline-day"><div class="day-label"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div>${dayMeta}</div><div class="timeline-tracks">${lanes}</div></div>`;
+        const threads = ambient.map((s) => {
+          const b = s._block;
+          const st = Math.max(b.start, axisStart), en = Math.min(b.end, axisEnd);
+          if (en <= st) return "";
+          const lp = ((st - axisStart) / rangeLen) * 100, wp = Math.max(((en - st) / rangeLen) * 100, .4);
+          const tipTitle = escapeHtml(resolveTitle(s).text || "session");
+          const tipDetail = escapeHtml(t("tooltipDetail", { agent: agentLabel(s.agent), time: `${fmtTime(b.start)}-${fmtTime(b.end)}`, duration: fmtDur(en - st), messages: s.messages }));
+          return `<div class="time-block ${blockSlotClass(s)} is-automation" style="left:${lp}%;width:${wp}%" data-sid="${s.id}" data-agent="${s.agent}" data-scope-key="${scopeKey(b)}" data-scope-start="${Number(b.start)}" data-scope-end="${Number(b.end)}" data-tip-title="${tipTitle}" data-tip-detail="${tipDetail}" data-tip-path=""></div>`;
+        }).join("");
+        const ambientLane = threads ? `<div class="timeline-lane is-ambient">${threads}</div>` : "";
+        html += `<div class="timeline-day"><div class="day-label"><div class="wd">${escapeHtml(weekdayLabel(d))}</div><div class="dt">${fmtDate(dts)}</div>${dayMeta}</div><div class="timeline-tracks">${ambientLane}${lanes}</div></div>`;
       }
       c.innerHTML = html;
       c.querySelectorAll(".time-block").forEach(el => { el.addEventListener("mouseenter", showTip); el.addEventListener("mouseleave", hideTip); el.addEventListener("click", onBlockClick); });
@@ -5912,6 +6156,13 @@
     // Returns { text, source } — source drives the CSS data-source styling
     // ("local" gets the accent color, "firstMsg" gets a lighter weight).
     // The pencil-button title also reads `source` to explain where the text came from.
+    // Timers and other unattended runs (an agent re-reading HEARTBEAT.md on a
+    // schedule, say) are drawn as a faint thread so they do not read as work.
+    function isAutomationSession(s) {
+      const first = String((s && s.firstUserMsg) || "");
+      return /\bHEARTBEAT\.md\b/i.test(first) || /^\s*\[clawd-analytics-internal/.test(first);
+    }
+
     function resolveTitle(s) {
       if (!s) return { text: "", source: "project" };
       if (s.localTitle && String(s.localTitle).trim()) return { text: String(s.localTitle).trim(), source: "local" };

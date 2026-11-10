@@ -441,6 +441,8 @@ module.exports = function initUpdateBubble(ctx) {
 };
 
 module.exports.registerUpdateBubbleIpc = registerUpdateBubbleIpc;
+// Shared with the dotjar bubble (clawd-insights fork), which sits in the same place.
+module.exports.computeUpdateBubbleBounds = computeUpdateBubbleBounds;
 
 module.exports.__test = {
   computeAutoCloseRemainingMs,

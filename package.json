@@ -161,7 +161,8 @@
       "hooks/**/*",
       "extensions/**/*",
       "agents/**/*",
-      "themes/**/*"
+      "themes/**/*",
+      "node_modules/dotjar/**/*"
     ],
     "extraResources": [
       {
@@ -187,6 +188,7 @@
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.66.0",
+    "dotjar": "github:yx0716/dotjar#v0.3.1",
     "electron-updater": "^6.8.3",
     "htmlparser2": "^12.0.0",
     "koffi": "^2.15.2",
