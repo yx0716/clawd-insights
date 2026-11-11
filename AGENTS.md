@@ -20,13 +20,13 @@ Clawd 是一个 Electron 桌宠：通过 hook、日志轮询、plugin 和 extens
 
 ### dotjar 陪伴（clawd-insights fork 专属）
 
-dotjar 是独立的本地网页（github.com/yx0716/dotjar，作为 `package.json` 里固定版本的 `dotjar` 依赖随 Clawd 一起装，打包时在 `asarUnpack` 里解压），把每天和 agent 一起工作里值得留下的思考方式整理成彩色“波点”。Clawd 只通过 dotjar 的本机接口和它交流，不共享代码：
+dotjar 是独立的本地网页（github.com/yx0716/dotjar，作为 `package.json` 里固定 v0.4.0 的 `dotjar` 依赖随 Clawd 一起装，打包时在 `asarUnpack` 里解压），把每天和 agent 一起工作里值得留下的思考方式整理成彩色“波点”。Clawd 只通过 dotjar 的本机接口和它交流，不共享代码：
 
 - **数据流**：`src/dotjar-link.js` 读 `~/.dotjar/web.pid`（端口）和 `~/.dotjar/web-token`（令牌，`DOTJAR_HOME` 可改），每 20 秒 `POST /api/pulse` 一次；`diffPulse` 只把“新出现的波点”和“刚落库的波点”当成事件，第一次读和跨天都不算。
 - **反应**（`src/dotjar-companion.js`）：新波点 → `setState("attention")` + dotjar 气泡；落库 → `setState("carrying")` + 气泡；还有待落库、宠物空闲且不在 DND 时，最多每 25 分钟 `setState("juggling")` 6 秒，之后 `resolveDisplayState()` 还原。只走 `setState`，不碰 session、hook 或权限链路。
 - **气泡**：`src/dotjar-bubble.js` + `src/dotjar-bubble.html` + `src/preload-dotjar-bubble.js`，独立窗口，复用 `update-bubble.js` 导出的 `computeUpdateBubbleBounds` 定位；更新气泡在显示时不弹；跟随宠物期间每 200ms 重排，9 秒后自动收起；点击打开 dotjar。
 - **接线点**：`src/main.js`（`app.whenReady` 里 analytics 之后初始化、`before-quit` 清理）、`_menuCtx.openDotjar`、`src/menu.js` 两处 “Agent 知识沉淀池” 菜单项（会话分析看板的菜单名也改成了 “Agent 会话时间轴”）、`src/i18n.js` 的 `dotjar*` 文案（五种语言都要有，缺键不会回退英文）。
-- **拉起 dotjar**：没在运行时，按 `DOTJAR_BIN`、`DOTJAR_DIR`、dotjar 上次启动时写下的 `~/.dotjar/install.json`、随 Clawd 安装的依赖（打包后优先 `app.asar.unpacked` 里的那份）的顺序找命令（只认绝对路径、文件名必须是 `dotjar.js`），用 `ELECTRON_RUN_AS_NODE=1` 后台启动一次。数据目录 `~/.dotjar`；只有改名前的 `~/.strata` 时继续用它，`STRATA_HOME` 也照认。
+- **拉起 dotjar**：没在运行时，按 `DOTJAR_BIN`、`DOTJAR_DIR`、dotjar 上次启动时写下的 `~/.dotjar/install.json`、随 Clawd 安装的依赖（打包后优先 `app.asar.unpacked` 里的那份）的顺序找命令（只认绝对路径、文件名必须是 `dotjar.js`），内置/源码副本用 `ELECTRON_RUN_AS_NODE=1` 后台启动；托管版的 `launcher/bin/dotjar.js` 使用同一安装根下 `installation.json` 记录的 Node（缺失时报错，不回退 Electron）。启动前检查数据目录的 `operations/update.json`：更新进程仍存活时不抢启动；进程已退出则允许稳定启动器恢复。重新启动沿用 `install.json` 的有效端口；打开页面前探测本机接口，旧 `web.pid` 不代表服务仍可用。数据目录 `~/.dotjar`；只有改名前的 `~/.strata` 时继续用它，`STRATA_HOME` 也照认。
 - **测试**：`test/dotjar-companion.test.js`。
 
 ## Common Commands

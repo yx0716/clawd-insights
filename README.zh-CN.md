@@ -83,7 +83,11 @@ npm start # 启动运行
 | **批量预分析** | 对最近会话批量预生成摘要,通过 provider 隔离的缓存支持复用 |
 | **成本追踪** | 显示每次 AI 分析的 token 用量与费用 |
 | **在浏览器里看** | 右键菜单「Agent 会话时间轴」在浏览器里打开时间轴，只在本机 `127.0.0.1` 上提供，靠本机令牌授权 |
-| **和 dotjar 一起用** | Clawd 自带 [dotjar](https://github.com/yx0716/dotjar)（一个本地网页，把每天和 agent 一起干活里值得留下的思考方式挑成彩色波点）。它运行时，Clawd 会跟着反应：捡到新波点时开心一下并冒出气泡，你落库一条它就把波点搬走，还有波点等你挑时偶尔拿来杂耍。右键菜单「Agent 知识沉淀池」或点气泡打开 dotjar。dotjar 没在运行时，Clawd 会自己把它拉起来 |
+| **和 dotjar 一起用** | Clawd 自带 [dotjar v0.4.0](https://github.com/yx0716/dotjar/releases/tag/v0.4.0)（一个本地网页，把每天和 agent 一起干活里值得留下的思考方式挑成彩色波点）。它运行时，Clawd 会跟着反应：捡到新波点时开心一下并冒出气泡，你落库一条它就把波点搬走，还有波点等你挑时偶尔拿来杂耍。右键菜单「Agent 知识沉淀池」或点气泡打开 dotjar。dotjar 没在运行时，Clawd 会自己把它拉起来 |
+
+### dotjar 的版本更新
+
+Clawd 内置的 dotjar 随 Clawd 版本更新，不会由 dotjar 覆盖应用包。若希望独立更新，可按 [dotjar 安装与迁移说明](https://github.com/yx0716/dotjar/blob/main/docs/updates.md) 一次性迁移到 macOS 托管版；之后在 dotjar 页面里「更新并重启」。Clawd 会沿用 dotjar 记录的稳定启动器和 Node 路径，在升级切换期间等待它恢复，不重复启动，也不因重连把已有星星当成新发现。
 
 ### 使用示例
 

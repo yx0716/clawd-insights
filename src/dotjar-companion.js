@@ -57,15 +57,16 @@ module.exports = function initDotjarCompanion(ctx, deps = {}) {
   }
 
   // Start dotjar once if it is not running and this machine has it.
-  function maybeStart() {
-    if (triedStart) return false;
+  function maybeStart(explicit = false) {
+    if ((!explicit && triedStart) || link.isUpdating()) return false;
     const bin = link.findBin();
     if (!bin) return false;
-    triedStart = true;
     try {
-      link.start(bin);
+      if (link.start(bin) === null) return false;
+      triedStart = true;
       return true;
     } catch {
+      triedStart = true;
       return false;
     }
   }
@@ -81,7 +82,7 @@ module.exports = function initDotjarCompanion(ctx, deps = {}) {
       next = await link.call(current, "pulse");
     } catch {
       current = null; // restarted on another port, or stopped: look again next time
-      if (!locate()) maybeStart();
+      maybeStart();
       return null;
     }
     if (stopped) return null;
@@ -145,15 +146,22 @@ module.exports = function initDotjarCompanion(ctx, deps = {}) {
 
   // Open dotjar in the browser, starting it first if need be.
   async function open() {
-    if (!current && !locate()) {
-      if (maybeStart()) {
-        for (let waited = 0; waited < OPEN_WAIT_MS && !locate(); waited += 300) {
+    async function reachable() {
+      if (!locate()) return false;
+      try { await link.call(current, "pulse"); return true; }
+      catch { current = null; return false; }
+    }
+    if (!(await reachable())) {
+      if (maybeStart(true) || link.isUpdating()) {
+        for (let waited = 0; waited < OPEN_WAIT_MS; waited += 300) {
           await new Promise((resolve) => later(resolve, 300));
+          if (await reachable()) break;
         }
       }
     }
     if (!current) {
-      ctx.showBubble({ mode: "missing", dots: [], title: t("dotjarMissingTitle"), message: t("dotjarMissingSub"), action: "" });
+      const updating = link.isUpdating();
+      ctx.showBubble({ mode: updating ? "updating" : "missing", dots: [], title: t(updating ? "dotjarUpdatingTitle" : "dotjarMissingTitle"), message: t(updating ? "dotjarUpdatingSub" : "dotjarMissingSub"), action: "" });
       return false;
     }
     ctx.openExternal(link.pageUrl(current));

@@ -83,7 +83,11 @@ Once it starts, a little crab appears on your desktop — right-click it and ope
 | **Batch pre-analysis** | Pre-generate summaries for recent sessions in bulk; provider-scoped caching makes them reusable |
 | **Cost tracking** | Shows token usage and cost for every AI analysis |
 | **In the browser** | "Agent Session Timeline" in the right-click menu opens the timeline in your browser, served on `127.0.0.1` only and authorized by a local token |
-| **With dotjar** | Clawd ships with [dotjar](https://github.com/yx0716/dotjar), a local page that picks out the ways of thinking worth keeping from each day's work with agents, as coloured dots. When it runs, Clawd plays along: a happy hop and a bubble when new dots turn up, carrying one off when you keep it, and juggling the ones still waiting now and then. Open dotjar from the bubble or "Agent Knowledge Pool" in the right-click menu. If dotjar isn't running, Clawd starts it |
+| **With dotjar** | Clawd ships with [dotjar v0.4.0](https://github.com/yx0716/dotjar/releases/tag/v0.4.0), a local page that picks out the ways of thinking worth keeping from each day's work with agents, as coloured dots. When it runs, Clawd plays along: a happy hop and a bubble when new dots turn up, carrying one off when you keep it, and juggling the ones still waiting now and then. Open dotjar from the bubble or "Agent Knowledge Pool" in the right-click menu. If dotjar isn't running, Clawd starts it |
+
+### Updating dotjar
+
+The bundled dotjar updates with Clawd; dotjar never overwrites Clawd's application bundle. For independent updates, follow the [one-time migration guide](https://github.com/yx0716/dotjar/blob/main/docs/updates.md) to a managed macOS installation, then use **Update & restart** in dotjar. Clawd uses the recorded stable launcher and Node executable, waits during the update handoff, and does not announce existing stars again after reconnecting.
 
 ### Usage examples
 
