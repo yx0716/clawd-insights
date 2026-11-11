@@ -105,16 +105,55 @@ function findBin(env = process.env, read = (f) => fs.readFileSync(f, "utf8"), ex
   return candidates.find((file) => typeof file === "string" && path.isAbsolute(file) && path.basename(file) === "dotjar.js" && exists(file)) || null;
 }
 
-// Start dotjar's server in the background. Inside Electron the executable is
-// Electron itself, so it is asked to behave as plain Node; dotjar detaches
-// the server and the command returns straight away.
+// A managed updater temporarily removes web.pid while changing versions.
+// Let its supervisor do the restart; a second launcher can race the switch.
+// A dead updater is different: starting the stable launcher lets it recover.
+function isUpdating(env = process.env, read = (f) => fs.readFileSync(f, "utf8"), alive = (pid) => {
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code !== "ESRCH"; }
+}) {
+  try {
+    const job = JSON.parse(read(path.join(dotjarHome(env), "operations", "update.json")));
+    return Boolean(job && typeof job.id === "string" && Number.isInteger(job.pid) && job.pid > 0 && alive(job.pid));
+  } catch (err) {
+    // A partly written gate must not invite a second process into the switch.
+    return err.code !== "ENOENT";
+  }
+}
+
+// Bundled/source copies use Electron as Node. A managed launcher must use
+// its recorded Node executable so future Clawd app updates cannot invalidate
+// the executable running dotjar's supervisor and updater.
 function start(bin, options = {}) {
   const run = options.spawn || spawn;
-  const child = run(process.execPath, [bin, "web", "--no-open"], {
+  const env = options.env || process.env;
+  const read = options.read || ((f) => fs.readFileSync(f, "utf8"));
+  const exists = options.exists || fs.existsSync;
+  if (isUpdating(env, read, options.alive)) return null;
+  let executable = options.execPath || process.execPath;
+  const childEnv = { ...env, ELECTRON_RUN_AS_NODE: "1" };
+  const parent = path.dirname(bin);
+  if (path.basename(parent) === "bin" && path.basename(path.dirname(parent)) === "launcher") {
+    const base = path.resolve(parent, "../..");
+    const install = JSON.parse(read(path.join(base, "installation.json")));
+    if (!install || install.protocol !== 1 || typeof install.node !== "string" || !path.isAbsolute(install.node) || !exists(install.node)) {
+      throw new Error("Managed dotjar's Node executable is missing; repair its installation before starting it.");
+    }
+    executable = install.node;
+    delete childEnv.ELECTRON_RUN_AS_NODE;
+  }
+  const args = [bin, "web", "--no-open"];
+  try {
+    const port = JSON.parse(read(path.join(dotjarHome(env), "install.json"))).port;
+    if (Number.isInteger(port) && port > 0 && port <= 65535) args.push("--port", String(port));
+  } catch {
+    // Older installations did not persist a port; keep their default.
+  }
+  const child = run(executable, args, {
     detached: true,
     stdio: "ignore",
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: childEnv,
   });
+  if (child && typeof child.once === "function") child.once("error", () => {});
   if (child && typeof child.unref === "function") child.unref();
   return child;
 }
@@ -149,4 +188,4 @@ function diffPulse(prev, next) {
   return { found, kept };
 }
 
-module.exports = { KINDS, dotjarHome, readLink, call, findBin, start, pageUrl, diffPulse, cleanDots };
+module.exports = { KINDS, dotjarHome, readLink, call, findBin, isUpdating, start, pageUrl, diffPulse, cleanDots };

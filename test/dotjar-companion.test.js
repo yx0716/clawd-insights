@@ -105,8 +105,9 @@ function harness(pulses, options = {}) {
       clearInterval: () => {},
       link: {
         dotjarHome: () => "/s",
-        readLink: () => (options.noDotjar ? null : { port: 1, token: "ab" }),
+        readLink: () => (options.noDotjar ? null : { port: options.port || 1, token: "ab" }),
         findBin: () => options.bin || null,
+        isUpdating: () => Boolean(options.updating),
         start: (bin) => calls.push(["start", bin]),
         call: async () => {
           if (options.down) throw new Error("ECONNREFUSED");
@@ -194,6 +195,103 @@ test("a dotjar that stops answering is looked for again, quietly", async () => {
   await h.companion.pulse();
   assert.equal(h.calls.length, 1, "started at most once");
   assert.deepEqual(h.bubbles, []);
+});
+
+test("upgrade downtime does not start a second service or replay old stars", async () => {
+  const options = { bin: "/managed/launcher/bin/dotjar.js" };
+  const unchanged = pulseOf([dot("a", "note")]);
+  const h = harness([unchanged, unchanged], options);
+  await h.companion.pulse();
+  options.down = true;
+  options.updating = true;
+  options.noDotjar = true;
+  await h.companion.pulse();
+  await h.companion.pulse();
+  assert.deepEqual(h.calls, [], "the updater owns restart while its gate is live");
+  options.down = false;
+  options.updating = false;
+  options.noDotjar = false;
+  options.port = 2;
+  await h.companion.pulse();
+  assert.deepEqual(h.bubbles, []);
+  assert.equal(h.companion.link.port, 2);
+});
+
+test("a stale pid file is probed before opening and does not prevent restart", async () => {
+  const options = { down: true, bin: "/bin/dotjar.js" };
+  const h = harness([], options);
+  const opening = h.companion.open();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.calls, [["start", "/bin/dotjar.js"]]);
+  options.down = false;
+  options.port = 2;
+  h.pending.shift()();
+  assert.equal(await opening, true);
+  assert.deepEqual(h.calls[1], ["open", "http://127.0.0.1:2/?t=ab"]);
+});
+
+test("an update deferral does not consume the companion's automatic startup attempt", async () => {
+  const options = { noDotjar: true, updating: true, bin: "/managed/launcher/bin/dotjar.js" };
+  const h = harness([], options);
+  await h.companion.pulse();
+  assert.deepEqual(h.calls, []);
+  options.updating = false;
+  await h.companion.pulse();
+  assert.deepEqual(h.calls, [["start", options.bin]]);
+});
+
+test("opening during a long update explains the wait rather than suggesting another start", async () => {
+  const h = harness([], { noDotjar: true, updating: true, bin: "/managed/launcher/bin/dotjar.js" });
+  let done = false;
+  const opening = h.companion.open().finally(() => { done = true; });
+  for (let i = 0; i < 100 && !done; i++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    if (h.pending.length) h.pending.shift()();
+  }
+  assert.equal(await opening, false);
+  assert.deepEqual(h.calls, []);
+  assert.equal(h.bubbles[0].mode, "updating");
+  assert.equal(h.bubbles[0].title, "dotjarUpdatingTitle");
+});
+
+test("dotjar startup respects live update gates and the managed Node executable", () => {
+  const env = { DOTJAR_HOME: "/data", ELECTRON_RUN_AS_NODE: "1" };
+  const files = {};
+  const read = (file) => {
+    if (file in files) return JSON.stringify(files[file]);
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+  const gate = path.join("/data", "operations", "update.json");
+  const child = new (require("node:events").EventEmitter)();
+  child.unref = () => {};
+  const calls = [];
+  const options = { env, read, alive: () => true, execPath: "/Clawd/Electron", exists: (p) => p === "/usr/local/bin/node", spawn: (...args) => { calls.push(args); return child; } };
+  dotjarLink.start("/bundled/bin/dotjar.js", options);
+  assert.equal(calls[0][0], "/Clawd/Electron");
+  assert.equal(calls[0][2].env.ELECTRON_RUN_AS_NODE, "1");
+  assert.doesNotThrow(() => child.emit("error", Error("spawn failed")));
+  const base = path.resolve("/managed");
+  const bin = path.join(base, "launcher", "bin", "dotjar.js");
+  files[path.join(base, "installation.json")] = { protocol: 1, node: "/usr/local/bin/node", dataDir: "/data" };
+  dotjarLink.start(bin, options);
+  assert.equal(calls[1][0], "/usr/local/bin/node");
+  assert.deepEqual(calls[1][1], [bin, "web", "--no-open"]);
+  assert.equal(calls[1][2].env.ELECTRON_RUN_AS_NODE, undefined);
+  assert.equal(calls[1][2].env.DOTJAR_HOME, "/data");
+  assert.equal(env.ELECTRON_RUN_AS_NODE, "1", "the parent's environment stays intact");
+  files[path.join("/data", "install.json")] = { bin, port: 4755 };
+  dotjarLink.start(bin, options);
+  assert.deepEqual(calls[2][1], [bin, "web", "--no-open", "--port", "4755"], "restart on the user's recorded port");
+  files[path.join("/data", "install.json")].port = 65536;
+  dotjarLink.start(bin, options);
+  assert.deepEqual(calls[3][1], [bin, "web", "--no-open"], "invalid ports are not passed through");
+  files[gate] = { id: "update", pid: 123 };
+  assert.equal(dotjarLink.start(bin, options), null);
+  assert.equal(calls.length, 4);
+  assert.equal(dotjarLink.isUpdating(env, read, () => false), false, "a dead updater can be recovered by the stable launcher");
+  delete files[gate];
+  assert.throws(() => dotjarLink.start(bin, { ...options, exists: () => false }), /Node executable/);
+  assert.equal(calls.length, 4, "a missing managed Node must not fall back to Clawd's executable");
 });
 
 test("the dots are juggled with the balls-in-the-air animation in every bundled theme", () => {
